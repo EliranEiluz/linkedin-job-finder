@@ -25,8 +25,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
-import search  # reuse the fcntl-locked _atomic_merge_json + RESULTS_FILE / SEEN_FILE
+# Add backend/ to sys.path so we can import sibling `search` module.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import search  # noqa: E402 — needs the path shim above
 
 
 def _read_stdin_json() -> dict:

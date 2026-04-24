@@ -28,10 +28,12 @@ from email.message import EmailMessage
 from html import escape
 from pathlib import Path
 
+# State files live at the project ROOT (one level up from backend/).
 HERE = Path(__file__).parent
-RESULTS_FILE = HERE / "results.json"
-NEW_IDS_FILE = HERE / "new_ids.json"
-DIGEST_FILE = HERE / "digest.html"
+ROOT = HERE.parent
+RESULTS_FILE = ROOT / "results.json"
+NEW_IDS_FILE = ROOT / "new_ids.json"
+DIGEST_FILE = ROOT / "digest.html"
 
 # ---------- DESIGN TOKENS ----------
 # All inline-styled because every email client (especially Gmail and Outlook)

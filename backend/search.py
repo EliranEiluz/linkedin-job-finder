@@ -271,7 +271,7 @@ FIT_NEGATIVE = [
 #   2. Anthropic SDK with ANTHROPIC_API_KEY env var.
 #   3. Regex fallback (check_fit/check_msc below).
 
-CV_FILE = Path(__file__).parent / "cv.txt"
+CV_FILE = Path(__file__).parent.parent / "cv.txt"  # at project root
 BATCH_SIZE = 8                # jobs per Claude call — big enough to rank, small enough to fit
 DESC_CHAR_LIMIT = 3500        # per-job description truncation inside a batch
 
@@ -564,13 +564,18 @@ window.chrome = {runtime: {}};
 
 # ---------- END CONFIG ----------
 
+# `HERE` points at backend/. All persistent state files live at the
+# project ROOT (one level up) so the layout stays familiar and external
+# tooling — README walkthroughs, manual edits, the Vite dev server's
+# symlinks — all reference plain filenames at the repo root.
 HERE = Path(__file__).parent
-SEEN_FILE = HERE / "seen_jobs.json"
-RESULTS_FILE = HERE / "results.json"
-SESSION_FILE = HERE / "linkedin_session.json"
-CONFIG_FILE = HERE / "config.json"
-RUN_HISTORY_FILE = HERE / "run_history.json"
-DEFAULTS_FILE = HERE / "defaults.json"
+ROOT = HERE.parent
+SEEN_FILE = ROOT / "seen_jobs.json"
+RESULTS_FILE = ROOT / "results.json"
+SESSION_FILE = ROOT / "linkedin_session.json"
+CONFIG_FILE = ROOT / "config.json"
+RUN_HISTORY_FILE = ROOT / "run_history.json"
+DEFAULTS_FILE = ROOT / "defaults.json"
 
 # Keys editable from the UI. Order matters for `--print-defaults` output.
 _CONFIGURABLE_KEYS = (

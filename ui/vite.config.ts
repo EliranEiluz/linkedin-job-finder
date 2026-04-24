@@ -9,19 +9,23 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 // Personal-tool dev-only middleware. Lets the UI read/write the scraper's
 // config.json on disk during `npm run dev`. NOT compiled into the production
 // build — `npm run build` is just a static bundle.
+// After the 2026-04 reorg: Python lives under backend/. State files
+// (config.json, cv.txt, scrape_status.json, scrape_logs/) stay at the
+// project root so the layout stays familiar.
 const REPO_ROOT = path.resolve(__dirname, '..');
+const BACKEND_DIR = path.join(REPO_ROOT, 'backend');
 const CONFIG_PATH = path.join(REPO_ROOT, 'config.json');
 const CV_PATH = path.join(REPO_ROOT, 'cv.txt');
 const STATUS_PATH = path.join(REPO_ROOT, 'scrape_status.json');
 const LOG_DIR = path.join(REPO_ROOT, 'scrape_logs');
-const SEARCH_SCRIPT = path.join(REPO_ROOT, 'search.py');
-const SCHEDULER_CTL = path.join(REPO_ROOT, 'scheduler_ctl.py');
+const SEARCH_SCRIPT = path.join(BACKEND_DIR, 'search.py');
+const SCHEDULER_CTL = path.join(BACKEND_DIR, 'ctl', 'scheduler_ctl.py');
 const SCHEDULER_TIMEOUT_MS = 10_000;
-const ONBOARDING_CTL = path.join(REPO_ROOT, 'onboarding_ctl.py');
+const ONBOARDING_CTL = path.join(BACKEND_DIR, 'ctl', 'onboarding_ctl.py');
 const ONBOARDING_GENERATE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes — Claude call
 const ONBOARDING_SAVE_TIMEOUT_MS = 10_000;
-const PROFILE_CTL = path.join(REPO_ROOT, 'profile_ctl.py');
-const CORPUS_CTL = path.join(REPO_ROOT, 'corpus_ctl.py');
+const PROFILE_CTL = path.join(BACKEND_DIR, 'ctl', 'profile_ctl.py');
+const CORPUS_CTL = path.join(BACKEND_DIR, 'ctl', 'corpus_ctl.py');
 const CORPUS_TIMEOUT_MS = 8_000;
 const PROFILE_TIMEOUT_MS = 10_000;
 

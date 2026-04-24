@@ -14,6 +14,7 @@ config.json
 config.json.backup
 config.json.premigrate
 active_profile.txt
+scheduler_state.json
 
 # ---- LinkedIn auth + personal data ----
 linkedin_session.json

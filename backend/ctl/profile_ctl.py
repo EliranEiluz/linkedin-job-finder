@@ -54,11 +54,12 @@ import shutil
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-CONFIGS_DIR = HERE / "configs"
-ACTIVE_FILE = HERE / "active_profile.txt"
-CONFIG_SYMLINK = HERE / "config.json"
-DEFAULTS_FILE = HERE / "defaults.json"
+HERE = Path(__file__).resolve().parent  # backend/ctl/
+ROOT = HERE.parent.parent               # project root (state lives here)
+CONFIGS_DIR = ROOT / "configs"
+ACTIVE_FILE = ROOT / "active_profile.txt"
+CONFIG_SYMLINK = ROOT / "config.json"
+DEFAULTS_FILE = ROOT / "defaults.json"
 
 # Names that could collide with filesystem quirks or break the symlink logic.
 # Keep the regex strict; users can rename later.

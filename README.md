@@ -55,9 +55,9 @@ digest. Multi-profile — keep a separate config for each role search.
                                             │ Vite dev middleware (Node)  │     │
                                             ▼                              │     │
    ┌──────────┐    ┌──────────────────────────────────────────────────────┴───┐ │
-   │ launchd  │───▶│  Python control surfaces (each a tiny JSON-CLI):         │ │
-   │ (12h     │    │   search.py · scheduler_ctl.py · profile_ctl.py          │ │
-   │  cron)   │    │   onboarding_ctl.py · corpus_ctl.py · send_email.py      │ │
+   │ launchd  │───▶│  Python control surfaces under backend/ (tiny JSON-CLIs):│ │
+   │ (12h     │    │   search.py, send_email.py, ctl/{scheduler,profile,     │ │
+   │  cron)   │    │   onboarding,corpus}_ctl.py                              │ │
    └──────────┘    └──────┬──────────────┬──────────────────┬─────────────┬───┘ │
                           │              │                  │             │     │
                           ▼              ▼                  ▼             ▼     │
@@ -109,7 +109,7 @@ ln -sf ../../defaults.json     ui/public/defaults.json
 ln -sf ../../config.json       ui/public/config.json
 
 # Generate defaults.json (UI's "Reset to defaults" reads this)
-python3 search.py --print-defaults > defaults.json
+python3 backend/search.py --print-defaults > defaults.json
 ```
 
 ### Pick an LLM auth path (you need ONE)
@@ -176,17 +176,17 @@ Skip this if you only want the UI.
 ## CLI shortcuts
 
 ```bash
-python3 search.py --mode=guest                  # no LinkedIn account, no browser
-python3 search.py --mode=loggedin               # personalized; uses linkedin_session.json
-python3 search.py --mode=guest --no-enrich      # skip description fetching (faster)
-python3 search.py --mode=guest --all-time       # drop the 7-day window; any posting date
-python3 search.py --print-defaults              # dump the hardcoded defaults to stdout
+python3 backend/search.py --mode=guest                  # no LinkedIn account, no browser
+python3 backend/search.py --mode=loggedin               # personalized; uses linkedin_session.json
+python3 backend/search.py --mode=guest --no-enrich      # skip description fetching (faster)
+python3 backend/search.py --mode=guest --all-time       # drop the 7-day window; any posting date
+python3 backend/search.py --print-defaults              # dump the hardcoded defaults to stdout
 
-python3 send_email.py                           # build digest + send (needs SMTP env)
-python3 scheduler_ctl.py status                 # JSON status of the launchd job
-python3 profile_ctl.py list                     # show profiles + active
-python3 corpus_ctl.py rate < /dev/null          # show CLI usage
-python3 phase_d_test.py                         # run the regression test suite
+python3 backend/send_email.py                           # build digest + send (needs SMTP env)
+python3 backend/ctl/scheduler_ctl.py status                 # JSON status of the launchd job
+python3 backend/ctl/profile_ctl.py list                     # show profiles + active
+python3 backend/ctl/corpus_ctl.py rate < /dev/null          # show CLI usage
+python3 backend/tests/phase_d_test.py                         # run the regression test suite
 ```
 
 For `--mode=loggedin`, the first run opens a Chromium window so you can
@@ -197,35 +197,41 @@ sign in once; the session is then cached in `linkedin_session.json`.
 ## What lives where
 
 ```
-search.py              scraper + Claude scoring (CLI + SDK fallback)
-onboarding_ctl.py      CV → config.json generator (used by Setup tab)
-profile_ctl.py         multi-profile management (list/create/activate/rename/delete)
-corpus_ctl.py          per-job mutations (rate, delete) for the row-actions popover
-scheduler_ctl.py       install/uninstall/configure the launchd schedule
-send_email.py          digest builder + SMTP send
-rescue_unscored.py     one-shot: re-fetch + score any unscored jobs in the corpus
-backfill_source.py     one-shot: tag pre-source-tagging jobs as `loggedin`
-debug_query.py         on-demand JYMBII / banner / eBP inspector for one query
-probe_guest_api.py     direct GET against /jobs-guest/jobs/api/seeMoreJobPostings/search
-probe_guest_detail.py  direct GET against /jobs-guest/jobs/api/jobPosting/<id>
-phase_d_test.py        end-to-end regression suite (33 cases)
+backend/                          all Python — scraper, control CLIs, tests
+├── requirements.txt              Python deps
+├── search.py                     scraper + Claude scoring (CLI + SDK fallback)
+├── send_email.py                 digest builder + SMTP send
+├── ctl/                          control CLIs the UI shells to
+│   ├── scheduler_ctl.py          install/uninstall/configure the launchd schedule
+│   ├── profile_ctl.py            multi-profile management
+│   ├── onboarding_ctl.py         CV → config.json generator
+│   └── corpus_ctl.py             per-job mutations (rate, delete)
+├── probes/                       diagnostic / debug tools
+│   ├── debug_query.py            on-demand JYMBII / banner / eBP inspector
+│   ├── probe_guest_api.py        direct GET against /jobs-guest/.../search
+│   └── probe_guest_detail.py     direct GET against /jobs-guest/.../jobPosting/<id>
+├── tools/                        one-shot maintenance helpers
+│   └── rescue_unscored.py        re-fetch + score any unscored jobs in corpus
+├── tests/
+│   └── phase_d_test.py           end-to-end regression suite (33 cases)
+└── launchd/                      macOS scheduling
+    └── run.sh                    launchd wrapper — sources ~/.linkedin-jobs.env
 
-ui/                    React + Vite app; the dev middleware in vite.config.ts
-                       shells to all the *_ctl.py scripts
-ui/src/                React components: 4 tabs + reusable atoms
-ui/public/             symlinks to gitignored state files (results, history, etc.)
+ui/                               React + Vite app
+├── vite.config.ts                dev middleware — shells to backend/ctl/* scripts
+├── src/                          components: 4 tabs (Corpus, Crawler Config,
+│                                 Run History, Setup) + reusable atoms
+└── public/                       symlinks to gitignored state files
 
-run.sh                 launchd wrapper — sources ~/.linkedin-jobs.env, runs
-                       search.py then send_email.py
-com.eliran.linkedinjobs.plist  LaunchAgent template — copied into
-                                ~/Library/LaunchAgents/ by `scheduler_ctl.py install`
-
-requirements.txt       playwright, requests, beautifulsoup4, certifi,
-                       defusedxml, lxml, anthropic
-.linkedin-jobs.env.example   SMTP creds template
-
-CODE_REVIEW.md         architectural audit + test strategy notes
+defaults.json                     scraper defaults (regenerate via
+                                  `python3 backend/search.py --print-defaults`)
+.linkedin-jobs.env.example        SMTP creds template
 ```
+
+The LaunchAgent plist is **generated** by `scheduler_ctl.py install` at
+runtime — no template file in the repo. The generated plist is written
+to `~/Library/LaunchAgents/com.linkedinjobs.plist` with paths computed
+from the cloner's project root, so the same code works on any machine.
 
 ### Gitignored personal state (only exists locally)
 

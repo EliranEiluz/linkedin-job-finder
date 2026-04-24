@@ -23,7 +23,24 @@ import sys
 import time
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent  # backend/tests/
+ROOT = HERE.parent.parent                # project root
+BACKEND = ROOT / "backend"
+
+# So `import search` etc. work from this test file.
+sys.path.insert(0, str(BACKEND))
+sys.path.insert(0, str(BACKEND / "ctl"))
+sys.path.insert(0, str(BACKEND / "probes"))
+sys.path.insert(0, str(BACKEND / "tools"))
+
+# Convenience paths used as `cwd=` when shelling to the various CLIs.
+SEARCH_PY = BACKEND / "search.py"
+SEND_EMAIL_PY = BACKEND / "send_email.py"
+SCHEDULER_PY = BACKEND / "ctl" / "scheduler_ctl.py"
+ONBOARDING_PY = BACKEND / "ctl" / "onboarding_ctl.py"
+PROFILE_PY = BACKEND / "ctl" / "profile_ctl.py"
+CORPUS_PY = BACKEND / "ctl" / "corpus_ctl.py"
+
 RESULTS = []  # list of (category, name, ok, detail)
 
 GREEN = "\033[92m"
@@ -51,8 +68,10 @@ def section(title):
 
 
 def _run(*argv, timeout=30, input_=None, cwd=None):
+    # Run from project ROOT by default — most CLIs assume cwd is the
+    # project root (where results.json, config.json, configs/ etc. live).
     p = subprocess.run(list(argv), capture_output=True, text=True,
-                       timeout=timeout, input=input_, cwd=cwd or str(HERE))
+                       timeout=timeout, input=input_, cwd=cwd or str(ROOT))
     return p.returncode, p.stdout, p.stderr
 
 
@@ -86,7 +105,7 @@ for fn, label in [(i_search, "search.py"), (i_scheduler, "scheduler_ctl.py"),
 section("2. Schema + config migration")
 
 def t_defaults_shape():
-    rc, out, err = _run("python3", "search.py", "--print-defaults")
+    rc, out, err = _run("python3", str(SEARCH_PY), "--print-defaults")
     assert rc == 0, err
     d = json.loads(out)
     required = {"categories", "claude_scoring_prompt", "fit_positive_patterns",
@@ -116,9 +135,9 @@ def t_migrate_legacy():
 
 def t_malformed_config():
     # load_config must not crash on malformed JSON.
-    tmp = HERE / "config.json.test-malformed"
+    tmp = ROOT / "config.json.test-malformed"
     tmp.write_text("{not json")
-    orig_cfg = HERE / "config.json"
+    orig_cfg = ROOT / "config.json"
     backup = None
     if orig_cfg.exists():
         backup = orig_cfg.read_text()
@@ -179,29 +198,29 @@ check("pipeline", "_classify_card eBP + banner override", t_classify_card_ebp)
 section("4. Scheduler / launchd")
 
 def t_sched_status():
-    rc, out, _ = _run("python3", "scheduler_ctl.py", "status")
+    rc, out, _ = _run("python3", str(SCHEDULER_PY), "status")
     assert rc == 0
     d = json.loads(out)
     assert d["ok"] is True
     return f"interval={d['interval_label']}, mode={d['mode']}, loaded={d['loaded']}"
 
 def t_sched_set_interval_roundtrip():
-    _run("python3", "scheduler_ctl.py", "set-interval", "21600")
-    rc, out, _ = _run("python3", "scheduler_ctl.py", "status")
+    _run("python3", str(SCHEDULER_PY), "set-interval", "21600")
+    rc, out, _ = _run("python3", str(SCHEDULER_PY), "status")
     d = json.loads(out)
     assert d["interval_seconds"] == 21600, d
-    _run("python3", "scheduler_ctl.py", "set-interval", "43200")  # restore
-    rc, out, _ = _run("python3", "scheduler_ctl.py", "status")
+    _run("python3", str(SCHEDULER_PY), "set-interval", "43200")  # restore
+    rc, out, _ = _run("python3", str(SCHEDULER_PY), "status")
     d = json.loads(out)
     assert d["interval_seconds"] == 43200, d
     return "6h → 12h round-trip clean"
 
 def t_sched_set_mode_roundtrip():
-    _run("python3", "scheduler_ctl.py", "set-mode", "loggedin")
-    rc, out, _ = _run("python3", "scheduler_ctl.py", "status")
+    _run("python3", str(SCHEDULER_PY), "set-mode", "loggedin")
+    rc, out, _ = _run("python3", str(SCHEDULER_PY), "status")
     d = json.loads(out)
     assert d["mode"] == "loggedin"
-    _run("python3", "scheduler_ctl.py", "set-mode", "guest")  # restore
+    _run("python3", str(SCHEDULER_PY), "set-mode", "guest")  # restore
     return "loggedin → guest round-trip clean"
 
 check("scheduler", "status command returns JSON", t_sched_status)
@@ -212,7 +231,7 @@ check("scheduler", "set-mode round-trip", t_sched_set_mode_roundtrip)
 section("5. Onboarding (meta-prompt / Claude)")
 
 def t_onboarding_validates_short_cv():
-    rc, out, _ = _run("python3", "onboarding_ctl.py", "generate", timeout=15,
+    rc, out, _ = _run("python3", str(ONBOARDING_PY), "generate", timeout=15,
                       input_=json.dumps({"cv": "too short", "intent": "also short"}))
     assert rc == 1
     d = json.loads(out)
@@ -230,7 +249,7 @@ if os.environ.get("PHASE_D_FULL_CLAUDE"):
               "Technion 2020. Interested in applied crypto, distributed systems.")
         intent = ("Senior backend or security-research roles at Israeli hi-tech. "
                   "No sales, no DevOps, no people management.")
-        rc, out, _ = _run("python3", "onboarding_ctl.py", "generate",
+        rc, out, _ = _run("python3", str(ONBOARDING_PY), "generate",
                           timeout=240,
                           input_=json.dumps({"cv": cv, "intent": intent}))
         assert rc == 0
@@ -265,9 +284,9 @@ def t_email_smtp_live():
         if "=" in line and not line.startswith("#"):
             k, v = line.split("=", 1)
             env[k.strip()] = v.strip()
-    p = subprocess.run(["python3", "send_email.py", "--all-today"],
+    p = subprocess.run(["python3", str(SEND_EMAIL_PY), "--all-today"],
                        env=env, capture_output=True, text=True,
-                       timeout=60, cwd=str(HERE))
+                       timeout=60, cwd=str(ROOT))
     assert p.returncode == 0, f"send_email exit {p.returncode}: {p.stderr[-200:]}"
     assert "Sent to" in p.stdout, p.stdout[-300:]
     return p.stdout.strip().splitlines()[-1][:80]
@@ -281,7 +300,7 @@ if os.environ.get("PHASE_D_SEND_EMAIL", "1") == "1":
 section("7. UI build")
 
 def t_ui_build():
-    p = subprocess.run(["npm", "run", "build"], cwd=str(HERE / "ui"),
+    p = subprocess.run(["npm", "run", "build"], cwd=str(ROOT / "ui"),
                        capture_output=True, text=True, timeout=120)
     assert p.returncode == 0, p.stderr[-400:]
     assert "built in" in p.stdout, p.stdout[-400:]
@@ -347,20 +366,20 @@ check("endpoints", "GET /defaults.json (symlink)", t_static_defaults)
 section("9. Data integrity")
 
 def t_no_dup_ids():
-    jobs = json.loads((HERE / "results.json").read_text())
+    jobs = json.loads((ROOT / "results.json").read_text())
     ids = [j["id"] for j in jobs]
     assert len(ids) == len(set(ids)), f"duplicates: {len(ids) - len(set(ids))}"
     return f"{len(ids)} unique ids"
 
 def t_seen_is_superset():
-    jobs = json.loads((HERE / "results.json").read_text())
-    seen = set(json.loads((HERE / "seen_jobs.json").read_text()))
+    jobs = json.loads((ROOT / "results.json").read_text())
+    seen = set(json.loads((ROOT / "seen_jobs.json").read_text()))
     missing = [j["id"] for j in jobs if j["id"] not in seen]
     assert not missing, f"{len(missing)} ids in results but not in seen"
     return f"seen={len(seen)} ⊇ results"
 
 def t_run_history_append_only():
-    h = json.loads((HERE / "run_history.json").read_text())
+    h = json.loads((ROOT / "run_history.json").read_text())
     assert isinstance(h, dict) and isinstance(h.get("runs"), list)
     assert len(h["runs"]) >= 1
     return f"{len(h['runs'])} runs recorded"
@@ -377,7 +396,9 @@ def t_atomic_merge():
     target.write_text("[]")
 
     script_template = (
-        "import search, pathlib\n"
+        "import sys, pathlib\n"
+        f"sys.path.insert(0, {str(BACKEND)!r})\n"
+        "import search\n"
         "search.RESULTS_FILE = pathlib.Path(%r)\n"
         "payload = [{'id': 'job-' + str(i), 'title': 'x'}\n"
         "           for i in range(%d, %d+50)]\n"
@@ -387,7 +408,7 @@ def t_atomic_merge():
     for offset in (0, 25, 50):
         script = script_template % (str(target), offset, offset)
         p = subprocess.Popen(
-            ["python3", "-c", script], cwd=str(HERE))
+            ["python3", "-c", script], cwd=str(ROOT))
         procs.append(p)
     for p in procs:
         p.wait(timeout=30)

@@ -39,21 +39,92 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-LABEL = "com.eliran.linkedinjobs"
-SOURCE_PLIST = HERE / f"{LABEL}.plist"
+HERE = Path(__file__).resolve().parent  # backend/ctl/
+ROOT = HERE.parent.parent               # project root
+LABEL = "com.linkedinjobs"              # de-personalized 2026-04
 INSTALLED_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+RUN_SCRIPT = ROOT / "backend" / "launchd" / "run.sh"
 
-# Files used to surface "last run" state.
-LAUNCHD_OUT_LOG = HERE / "launchd.out.log"
-LAUNCHD_ERR_LOG = HERE / "launchd.err.log"
-RUN_LOG = HERE / "run.log"
+# Persistent state for the in-memory plist (interval + mode). The plist
+# template is GENERATED at install time from these — there is no on-disk
+# template file. Defaults match the prior shipped behavior.
+SCHED_STATE_FILE = ROOT / "scheduler_state.json"
+DEFAULT_INTERVAL = 43_200   # 12 h
+DEFAULT_MODE = "guest"
+
+# Files used to surface "last run" state. All at project ROOT (where
+# launchd writes them and where run.sh appends to run.log).
+LAUNCHD_OUT_LOG = ROOT / "launchd.out.log"
+LAUNCHD_ERR_LOG = ROOT / "launchd.err.log"
+RUN_LOG = ROOT / "run.log"
+
+
+def _read_sched_state() -> dict:
+    """Load persisted interval + mode. Falls back to defaults if missing."""
+    if not SCHED_STATE_FILE.exists():
+        return {"interval_seconds": DEFAULT_INTERVAL, "mode": DEFAULT_MODE}
+    try:
+        d = json.loads(SCHED_STATE_FILE.read_text())
+        return {
+            "interval_seconds": int(d.get("interval_seconds", DEFAULT_INTERVAL)),
+            "mode": str(d.get("mode", DEFAULT_MODE)),
+        }
+    except Exception:
+        return {"interval_seconds": DEFAULT_INTERVAL, "mode": DEFAULT_MODE}
+
+
+def _write_sched_state(state: dict) -> None:
+    SCHED_STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def _build_plist(interval_seconds: int, mode: str) -> str:
+    """Generate the LaunchAgent plist content as a string. No template file
+    on disk — paths are computed at install time using THIS machine's project
+    root, so a friend cloning the repo gets a plist that points at THEIR
+    paths automatically."""
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{LABEL}</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{RUN_SCRIPT}</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>{ROOT}</string>
+
+  <key>StartInterval</key>
+  <integer>{interval_seconds}</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>{LAUNCHD_OUT_LOG}</string>
+
+  <key>StandardErrorPath</key>
+  <string>{LAUNCHD_ERR_LOG}</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>LINKEDINJOBS_MODE</key>
+    <string>{mode}</string>
+  </dict>
+</dict>
+</plist>
+"""
 
 INTERVAL_LABELS = {
     3600: "1 h", 7200: "2 h", 14400: "4 h", 21600: "6 h",
@@ -85,61 +156,44 @@ def _emit(obj: dict, code: int = 0):
     sys.exit(code)
 
 
-# ---------- plist parse / mutate ----------
+# ---------- plist state ----------
+#
+# Reorg note (2026-04): there is no longer a SOURCE_PLIST file in the repo.
+# The plist is GENERATED on demand by `_build_plist()` (above) using the
+# state held in `scheduler_state.json` (interval + mode) plus the runtime-
+# computed paths. This makes the install path machine-portable: a friend
+# cloning into a different home directory gets a plist that points at THEIR
+# paths automatically.
 
-def _read_interval(plist: Path) -> int | None:
-    if not plist.exists():
-        return None
-    txt = plist.read_text()
-    # The plist is small enough to regex-parse safely. We look for the
-    # StartInterval key followed by an integer literal.
-    m = re.search(
+
+def _installed_state() -> tuple[int | None, str | None]:
+    """Best-effort read of (interval, mode) FROM the live LaunchAgent file.
+    Used to verify what's actually scheduled vs. what state thinks. Returns
+    (None, None) if the LaunchAgent isn't installed."""
+    if not INSTALLED_PLIST.exists():
+        return None, None
+    txt = INSTALLED_PLIST.read_text()
+    interval_m = re.search(
         r"<key>\s*StartInterval\s*</key>\s*<integer>\s*(\d+)\s*</integer>",
         txt, re.IGNORECASE,
     )
-    return int(m.group(1)) if m else None
-
-
-def _read_mode(plist: Path) -> str | None:
-    if not plist.exists():
-        return None
-    txt = plist.read_text()
-    m = re.search(
+    mode_m = re.search(
         r"<key>\s*LINKEDINJOBS_MODE\s*</key>\s*<string>\s*([a-z]+)\s*</string>",
         txt,
     )
-    return m.group(1) if m else None
-
-
-def _write_interval(plist: Path, seconds: int) -> None:
-    txt = plist.read_text()
-    new = re.sub(
-        r"(<key>\s*StartInterval\s*</key>\s*<integer>\s*)\d+(\s*</integer>)",
-        rf"\g<1>{seconds}\g<2>", txt, count=1, flags=re.IGNORECASE,
+    return (
+        int(interval_m.group(1)) if interval_m else None,
+        mode_m.group(1) if mode_m else None,
     )
-    if new == txt:
-        # No StartInterval block found — append one before </dict></plist>.
-        new = txt.replace(
-            "</dict>\n</plist>",
-            f"  <key>StartInterval</key>\n  <integer>{seconds}</integer>\n</dict>\n</plist>",
-        )
-    plist.write_text(new)
 
 
-def _write_mode(plist: Path, mode: str) -> None:
-    txt = plist.read_text()
-    new, n = re.subn(
-        r"(<key>\s*LINKEDINJOBS_MODE\s*</key>\s*<string>\s*)[a-z]+(\s*</string>)",
-        rf"\g<1>{mode}\g<2>", txt, count=1,
-    )
-    if n == 0:
-        # No existing entry — inject inside the EnvironmentVariables block.
-        new = re.sub(
-            r"(<key>EnvironmentVariables</key>\s*<dict>)",
-            rf"\g<1>\n    <key>LINKEDINJOBS_MODE</key>\n    <string>{mode}</string>",
-            txt, count=1,
-        )
-    plist.write_text(new)
+def _write_installed_plist(interval_seconds: int, mode: str) -> None:
+    """Render the plist content and atomic-write to the installed location."""
+    INSTALLED_PLIST.parent.mkdir(parents=True, exist_ok=True)
+    content = _build_plist(interval_seconds, mode)
+    tmp = INSTALLED_PLIST.with_suffix(".plist.tmp")
+    tmp.write_text(content)
+    tmp.replace(INSTALLED_PLIST)
 
 
 # ---------- launchctl ----------
@@ -217,8 +271,12 @@ def cmd_status(_args) -> None:
     errors: list[str] = []
     installed = INSTALLED_PLIST.exists()
     loaded = installed and _is_loaded()
-    interval = _read_interval(INSTALLED_PLIST if installed else SOURCE_PLIST)
-    mode = _read_mode(INSTALLED_PLIST if installed else SOURCE_PLIST) or "guest"
+    # Truth source priority: live installed plist (most authoritative —
+    # what's actually scheduled) → state file → defaults.
+    live_interval, live_mode = _installed_state()
+    state = _read_sched_state()
+    interval = live_interval if live_interval is not None else state["interval_seconds"]
+    mode = live_mode if live_mode else state["mode"]
     last_run = _last_run_iso()
     next_run = _next_run_iso(last_run, interval)
     label = INTERVAL_LABELS.get(interval, f"{interval} s") if interval else None
@@ -234,7 +292,6 @@ def cmd_status(_args) -> None:
         "next_run_estimate": next_run,
         "log_tail": _log_tail(RUN_LOG, max_lines=40),
         "plist_path": str(INSTALLED_PLIST),
-        "source_plist_path": str(SOURCE_PLIST),
         "label": LABEL,
         "last_exit_status": _last_exit_status_from_launchctl() if loaded else None,
         "errors": errors,
@@ -243,20 +300,24 @@ def cmd_status(_args) -> None:
 
 
 def cmd_install(_args) -> None:
-    if not SOURCE_PLIST.exists():
-        _emit({"ok": False, "error": f"source plist missing: {SOURCE_PLIST}"}, 1)
-    INSTALLED_PLIST.parent.mkdir(parents=True, exist_ok=True)
-    # If something is already loaded, unload first so the copy succeeds cleanly.
+    """Generate the plist from the persisted state and load it."""
+    state = _read_sched_state()
+    # If something is already loaded under our label (or the legacy
+    # com.eliran.linkedinjobs label), unload first so the new install
+    # succeeds cleanly even when the label changed.
     if _is_loaded():
         _unload()
-    shutil.copy2(SOURCE_PLIST, INSTALLED_PLIST)
+    _legacy_unload_if_present()
+    _write_installed_plist(state["interval_seconds"], state["mode"])
     rc, err = _load()
     if rc != 0:
         _emit({
             "ok": False, "error": f"launchctl load failed: {err}",
             "installed": True, "loaded": False,
         }, 1)
-    _emit({"ok": True, "installed": True, "loaded": True}, 0)
+    _emit({"ok": True, "installed": True, "loaded": True,
+           "interval_seconds": state["interval_seconds"],
+           "mode": state["mode"]}, 0)
 
 
 def cmd_uninstall(_args) -> None:
@@ -276,9 +337,12 @@ def cmd_uninstall(_args) -> None:
 
 
 def cmd_reload(_args) -> None:
+    """Re-render the plist from current state and reload launchd."""
     if not INSTALLED_PLIST.exists():
         _emit({"ok": False, "error": "not installed"}, 1)
+    state = _read_sched_state()
     _unload()
+    _write_installed_plist(state["interval_seconds"], state["mode"])
     rc, err = _load()
     if rc != 0:
         _emit({"ok": False, "error": f"launchctl load failed: {err}"}, 1)
@@ -289,10 +353,12 @@ def cmd_set_interval(args) -> None:
     seconds = int(args.seconds)
     if not (60 <= seconds <= 2_592_000):
         _emit({"ok": False, "error": "interval must be 60..2592000 seconds"}, 1)
-    _write_interval(SOURCE_PLIST, seconds)
+    state = _read_sched_state()
+    state["interval_seconds"] = seconds
+    _write_sched_state(state)
     if INSTALLED_PLIST.exists():
-        _write_interval(INSTALLED_PLIST, seconds)
         _unload()
+        _write_installed_plist(state["interval_seconds"], state["mode"])
         rc, err = _load()
         if rc != 0:
             _emit({"ok": False, "error": f"reload failed: {err}",
@@ -305,16 +371,32 @@ def cmd_set_mode(args) -> None:
     mode = args.mode.lower()
     if mode not in {"guest", "loggedin"}:
         _emit({"ok": False, "error": f"mode must be guest|loggedin, got {mode!r}"}, 1)
-    _write_mode(SOURCE_PLIST, mode)
+    state = _read_sched_state()
+    state["mode"] = mode
+    _write_sched_state(state)
     if INSTALLED_PLIST.exists():
-        _write_mode(INSTALLED_PLIST, mode)
-        # Env-var changes only take effect on next fire if launchd reads the
-        # plist again — easiest is to reload.
         _unload()
+        _write_installed_plist(state["interval_seconds"], state["mode"])
         rc, err = _load()
         if rc != 0:
             _emit({"ok": False, "error": f"reload failed: {err}", "mode": mode}, 1)
     _emit({"ok": True, "mode": mode}, 0)
+
+
+def _legacy_unload_if_present():
+    """Old installs used the label `com.eliran.linkedinjobs`. If that
+    label is still loaded, unload it so we can install under the new
+    generic label without conflict."""
+    legacy_label = "com.eliran.linkedinjobs"
+    legacy_plist = Path.home() / "Library" / "LaunchAgents" / f"{legacy_label}.plist"
+    rc, _, _ = _run("launchctl", "list", legacy_label)
+    if rc == 0:
+        _run("launchctl", "unload", str(legacy_plist))
+    if legacy_plist.exists():
+        try:
+            legacy_plist.unlink()
+        except Exception:
+            pass
 
 
 def main():

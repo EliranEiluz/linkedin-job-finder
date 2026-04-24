@@ -41,9 +41,11 @@ import sys
 from pathlib import Path
 
 # Reuse the scraper's own parsing + normalization so the generated config goes
-# through the exact same path load_config() would apply on next scrape.
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+# through the exact same path load_config() would apply on next scrape. After
+# the 2026-04 backend/ reorg, search.py lives one level up at backend/search.py,
+# so we add THAT directory to sys.path (HERE = backend/ctl).
+HERE = Path(__file__).resolve().parent  # backend/ctl/
+sys.path.insert(0, str(HERE.parent))    # → backend/
 
 # We only need these three helpers; don't trigger the full load_config() pass
 # at import time beyond what search.py already does (it loads the currently-

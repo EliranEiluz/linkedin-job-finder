@@ -1,9 +1,13 @@
 #!/bin/bash
 # Wrapper invoked by launchd. Runs search.py then send_email.py.
-# Logs to run.log (rolling).
+# Logs to run.log at the project root (rolling).
 
 set -u
-cd "$(dirname "$0")"
+
+# This script lives at backend/launchd/run.sh — cd up to the project ROOT
+# so all relative paths (cv.txt, results.json, run.log, etc.) resolve to
+# the same place the rest of the codebase expects them.
+cd "$(dirname "$0")/../.."
 
 # Load SMTP credentials etc. from ~/.linkedin-jobs.env
 if [ -f "$HOME/.linkedin-jobs.env" ]; then
@@ -45,7 +49,7 @@ fi
 MODE="${LINKEDINJOBS_MODE:-guest}"
 log "scraper mode: $MODE"
 
-"$PYTHON" search.py --mode="$MODE" >> run.log 2>&1
+"$PYTHON" backend/search.py --mode="$MODE" >> run.log 2>&1
 rc=$?
 log "search.py exit=$rc"
 
@@ -54,7 +58,7 @@ if [ $rc -ne 0 ]; then
   exit $rc
 fi
 
-"$PYTHON" send_email.py >> run.log 2>&1
+"$PYTHON" backend/send_email.py >> run.log 2>&1
 rc=$?
 log "send_email.py exit=$rc"
 log "=== run end ==="
