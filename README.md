@@ -279,4 +279,4 @@ Built on:
 
 ## License
 
-MIT. See [LICENSE](LICENSE) (none yet — add one if you fork this).
+[MIT](LICENSE) — © 2026 Eliran Eiluz.
