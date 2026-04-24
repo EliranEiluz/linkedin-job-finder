@@ -1,0 +1,7 @@
+playwright
+requests
+beautifulsoup4
+certifi
+defusedxml
+lxml
+anthropic

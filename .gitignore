@@ -1,0 +1,71 @@
+# ---- Personal corpus + state (per-user; never commit) ----
+results.json
+seen_jobs.json
+new_ids.json
+run_history.json
+scrape_status.json
+digest.html
+
+# ---- Profile system: configs are personal, written by the Setup wizard ----
+# The directory itself is fine to commit (helps git track structure); the
+# *.json profiles inside are gitignored.
+configs/*.json
+config.json
+config.json.backup
+config.json.premigrate
+active_profile.txt
+
+# ---- LinkedIn auth + personal data ----
+linkedin_session.json
+cv.txt
+cv.txt.backup
+
+# ---- Local SMTP / API credentials ----
+# (lives at $HOME, but belt-and-suspenders in case anyone copies it in)
+.linkedin-jobs.env
+*.env
+!.linkedin-jobs.env.example
+
+# ---- Logs ----
+run.log
+run.log.*
+launchd.out.log
+launchd.err.log
+scrape_logs/
+*.log
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Atomic-write temp files left behind by crashes ----
+*.tmp
+*.lock
+results.json.lock
+seen_jobs.json.lock
+run_history.json.lock
+
+# ---- Node / Vite ----
+ui/node_modules/
+ui/dist/
+ui/.vite/
+ui/*.log
+ui/npm-debug.log*
+
+# ---- Editor / OS ----
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- Locally-installed LaunchAgent target (template stays in repo) ----
+~/Library/LaunchAgents/com.eliran.linkedinjobs.plist
