@@ -4,9 +4,9 @@ Profile (named config) control CLI for the LinkedIn jobs scraper. Mirrors the
 stable-JSON-CLI style of scheduler_ctl.py and onboarding_ctl.py. The UI Vite
 middleware shells to this instead of reimplementing file-system logic in JS.
 
-Layout on disk:
+Layout on disk (project root):
 
-    /Users/eliranei/linkedin-jobs/
+    <repo root>/
     ├── configs/
     │   ├── crypto.json
     │   ├── frontend.json

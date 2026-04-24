@@ -68,5 +68,3 @@ ui/npm-debug.log*
 *.swo
 *~
 
-# ---- Locally-installed LaunchAgent target (template stays in repo) ----
-~/Library/LaunchAgents/com.eliran.linkedinjobs.plist

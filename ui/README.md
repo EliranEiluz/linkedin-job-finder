@@ -16,7 +16,7 @@ URL `?tab=corpus|config|history` keeps tabs shareable / browser-back-able.
 ## Run
 
 ```bash
-cd /Users/eliranei/linkedin-jobs/ui
+cd ui
 npm install
 npm run dev
 ```
@@ -36,7 +36,7 @@ Open <http://localhost:5173>.
 If symlinks are missing, recreate them:
 
 ```bash
-cd /Users/eliranei/linkedin-jobs/ui/public
+cd ui/public
 ln -sf ../../results.json results.json
 ln -sf ../../run_history.json run_history.json
 ln -sf ../../defaults.json defaults.json
@@ -45,7 +45,7 @@ ln -sf ../../defaults.json defaults.json
 Seed the run history if it doesn't exist yet:
 
 ```bash
-echo '{"runs": []}' > /Users/eliranei/linkedin-jobs/run_history.json
+echo '{"runs": []}' > run_history.json
 ```
 
 `config.json` is created by the UI on first save — no need to pre-create it.

@@ -87,13 +87,23 @@ digest. Multi-profile — keep a separate config for each role search.
 
 ## One-time setup
 
+> **Requirements:**
+> - Python ≥ 3.10 (the codebase uses PEP 604 `int | None` union syntax).
+> - Node.js (for the UI — any LTS release works).
+> - `defaults.json` and `ui/public/defaults.json` are pre-tracked in the repo,
+>   so the `--print-defaults` regenerate step below is optional unless you've
+>   changed the in-file defaults in `search.py`.
+> - **LaunchAgent installs only:** `~/.linkedin-jobs.env` may need a
+>   `PYTHON=/path/to/python3` line if your `python3` isn't at the path baked
+>   into `backend/launchd/run.sh`. See the Troubleshooting section for details.
+
 ```bash
 git clone git@github.com:<you>/linkedin-job-finder.git
 cd linkedin-job-finder
 
 # Python deps. Tested against 3.11+. If your default python3 is the
 # macOS framework build, the explicit interpreter form is the safe one:
-python3 -m pip install -r requirements.txt
+python3 -m pip install -r backend/requirements.txt
 python3 -m playwright install chromium    # only needed for --mode=loggedin
 
 # UI deps
@@ -108,7 +118,9 @@ ln -sf ../../run_history.json  ui/public/run_history.json
 ln -sf ../../defaults.json     ui/public/defaults.json
 ln -sf ../../config.json       ui/public/config.json
 
-# Generate defaults.json (UI's "Reset to defaults" reads this)
+# Generate defaults.json (UI's "Reset to defaults" reads this).
+# Optional — defaults.json is already pre-tracked; only needed if you
+# changed the in-file defaults in search.py.
 python3 backend/search.py --print-defaults > defaults.json
 ```
 

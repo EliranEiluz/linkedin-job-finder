@@ -92,7 +92,7 @@ const ErrorState = ({ message }: { message: string }) => (
     <div className="rounded border border-slate-300 bg-white p-4 text-left text-xs">
       <p className="mb-2 font-semibold text-slate-700">Likely fix — create the symlink:</p>
       <code className="block whitespace-pre-wrap rounded bg-slate-900 p-3 font-mono text-emerald-300">
-        cd /Users/eliranei/linkedin-jobs/ui/public{'\n'}
+        cd {'<repo root>'}/ui/public{'\n'}
         ln -sf ../../results.json results.json
       </code>
     </div>

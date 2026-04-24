@@ -45,6 +45,7 @@ from pathlib import Path
 # the 2026-04 backend/ reorg, search.py lives one level up at backend/search.py,
 # so we add THAT directory to sys.path (HERE = backend/ctl).
 HERE = Path(__file__).resolve().parent  # backend/ctl/
+ROOT = HERE.parent.parent               # project root (two levels up from backend/ctl/)
 sys.path.insert(0, str(HERE.parent))    # → backend/
 
 # We only need these three helpers; don't trigger the full load_config() pass
@@ -56,11 +57,11 @@ from search import (  # noqa: E402 — path juggling above
     _hardcoded_defaults,
 )
 
-CV_PATH = HERE / "cv.txt"
-CONFIG_PATH = HERE / "config.json"
-CONFIG_BACKUP_PATH = HERE / "config.json.backup"
-CONFIGS_DIR = HERE / "configs"
-ACTIVE_FILE = HERE / "active_profile.txt"
+CV_PATH = ROOT / "cv.txt"
+CONFIG_PATH = ROOT / "config.json"
+CONFIG_BACKUP_PATH = ROOT / "config.json.backup"
+CONFIGS_DIR = ROOT / "configs"
+ACTIVE_FILE = ROOT / "active_profile.txt"
 
 # Mirrors profile_ctl.py's _NAME_RE; spec calls for ^[a-zA-Z0-9_-]{1,40}$.
 # The leading-char restriction in profile_ctl is slightly stricter; we
@@ -68,7 +69,7 @@ ACTIVE_FILE = HERE / "active_profile.txt"
 # accept the same set of names.
 _PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,39}$")
 
-CLAUDE_BIN = shutil.which("claude") or "/opt/homebrew/bin/claude"
+CLAUDE_BIN = shutil.which("claude")  # None if not on PATH
 CLAUDE_MODEL = "claude-sonnet-4-5"
 CLAUDE_TIMEOUT_S = 180
 
@@ -191,8 +192,11 @@ def _build_meta_prompt(cv: str, intent: str) -> str:
 def _call_claude_cli(prompt: str) -> tuple[int, str, str]:
     """Try the local `claude` CLI. rc=127 + empty stdout signals 'not installed'
     so the caller can fall through to the SDK path."""
-    if not shutil.which(CLAUDE_BIN) and not Path(CLAUDE_BIN).exists():
-        return 127, "", f"claude CLI not found at {CLAUDE_BIN}"
+    if CLAUDE_BIN is None:
+        return 127, "", (
+            "`claude` CLI not found on PATH — install from claude.ai/download "
+            "or set ANTHROPIC_API_KEY to use the SDK instead"
+        )
     try:
         proc = subprocess.run(
             [CLAUDE_BIN, "-p", prompt,
