@@ -109,14 +109,10 @@ python3 -m playwright install chromium    # only needed for --mode=loggedin
 # UI deps
 cd ui && npm install && cd ..
 
-# Recreate the symlinks the UI uses to read state files. The targets
-# don't exist yet — they'll appear after your first scrape; the UI's
-# error states handle the meantime gracefully.
-mkdir -p ui/public
-ln -sf ../../results.json      ui/public/results.json
-ln -sf ../../run_history.json  ui/public/run_history.json
-ln -sf ../../defaults.json     ui/public/defaults.json
-ln -sf ../../config.json       ui/public/config.json
+# (No symlinks needed — the Vite dev server serves results.json,
+# run_history.json, and defaults.json from the project root via
+# middleware. Works the same on Windows where symlinks would otherwise
+# break without Developer Mode.)
 
 # Generate defaults.json (UI's "Reset to defaults" reads this).
 # Optional — defaults.json is already pre-tracked; only needed if you

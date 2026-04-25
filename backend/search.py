@@ -778,42 +778,31 @@ _ACTIVE_CONFIG = load_config()
 
 
 # ---------------------------------------------------------------------------
-# Atomic, fcntl-locked file IO so multiple scraper processes (e.g. running
-# --mode=guest and --mode=loggedin in parallel) never clobber each other's
-# state. Lock file is per-target. Uses fcntl.LOCK_EX (POSIX advisory) when
-# available (macOS/Linux). On Windows fcntl is not available; the lock is
-# silently skipped — parallel writes are still atomic via temp+rename but
-# without advisory locking.
+# Cross-platform exclusive file lock so multiple scraper processes (e.g.
+# running --mode=guest and --mode=loggedin in parallel) never clobber each
+# other's state. filelock uses fcntl on POSIX and msvcrt.locking on Windows
+# under the hood — same semantics on all three OSes, no try/except dance.
 # ---------------------------------------------------------------------------
-try:
-    import fcntl as _fcntl  # POSIX only
-except ImportError:
-    _fcntl = None  # type: ignore[assignment]  # Windows — lock ops become no-ops
+from filelock import FileLock
 
 
 def _atomic_merge_json(path: Path, mutator):
-    """fcntl-locked (POSIX) or unlocked (Windows) read-modify-write.
-    `mutator(current)` returns the new value to persist. `current` is None if
-    the file doesn't exist yet. Writes via temp+rename for atomicity."""
+    """Cross-platform exclusive-locked read-modify-write. `mutator(current)`
+    returns the new value to persist. `current` is None if the file doesn't
+    exist yet. The temp+rename ensures the write itself is atomic even if the
+    lock fails."""
     lock_path = Path(str(path) + ".lock")
-    # Open the lock file in append mode so we don't truncate it.
-    with open(lock_path, "a") as lock_fh:
-        if _fcntl is not None:
-            _fcntl.flock(lock_fh.fileno(), _fcntl.LOCK_EX)
-        try:
-            current = None
-            if path.exists():
-                try:
-                    current = json.loads(path.read_text())
-                except json.JSONDecodeError:
-                    current = None
-            new_data = mutator(current)
-            tmp = Path(str(path) + ".tmp")
-            tmp.write_text(json.dumps(new_data, indent=2, ensure_ascii=False))
-            tmp.replace(path)
-        finally:
-            if _fcntl is not None:
-                _fcntl.flock(lock_fh.fileno(), _fcntl.LOCK_UN)
+    with FileLock(str(lock_path)):
+        current = None
+        if path.exists():
+            try:
+                current = json.loads(path.read_text())
+            except json.JSONDecodeError:
+                current = None
+        new_data = mutator(current)
+        tmp = Path(str(path) + ".tmp")
+        tmp.write_text(json.dumps(new_data, indent=2, ensure_ascii=False))
+        tmp.replace(path)
 
 
 def load_seen() -> set:

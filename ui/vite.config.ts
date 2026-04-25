@@ -645,6 +645,29 @@ const profileResponse = (
 const configApiPlugin = (): Plugin => ({
   name: 'linkedin-jobs-config-api',
   configureServer(server) {
+    // Serve root-level JSON files that used to be symlinks in ui/public/.
+    // Replaces ui/public/{results,run_history,defaults}.json symlinks so
+    // Windows clones (no Developer Mode) don't end up with text stubs.
+    const rootJsonFiles: Record<string, string> = {
+      '/results.json':     path.join(REPO_ROOT, 'results.json'),
+      '/run_history.json': path.join(REPO_ROOT, 'run_history.json'),
+      '/defaults.json':    path.join(REPO_ROOT, 'defaults.json'),
+    };
+    server.middlewares.use(async (req, res, next) => {
+      const target = rootJsonFiles[req.url ?? ''];
+      if (!target) return next();
+      try {
+        const data = await fs.readFile(target, 'utf8');
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(data);
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') { res.statusCode = 404; res.end('{}'); }
+        else next(err);
+      }
+    });
+
     server.middlewares.use(async (req, res, next) => {
       const url = req.url ?? '';
       try {
