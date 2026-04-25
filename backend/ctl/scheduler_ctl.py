@@ -42,7 +42,7 @@ from pathlib import Path
 # --- paths ---------------------------------------------------------------
 HERE = Path(__file__).resolve().parent      # backend/ctl/
 ROOT = HERE.parent.parent                   # project root
-RUN_SCRIPT = ROOT / "backend" / "launchd" / "run.sh"
+RUN_SCRIPT = ROOT / "backend" / "run.py"
 SCHED_STATE_FILE = ROOT / "scheduler_state.json"
 LAUNCHD_OUT_LOG = ROOT / "launchd.out.log"
 LAUNCHD_ERR_LOG = ROOT / "launchd.err.log"
@@ -138,10 +138,10 @@ def _emit(obj: dict, code: int = 0):
 
 
 def _run_command() -> list[str]:
-    """The command the scheduler should invoke. Stage 1-3 still uses the
-    bash wrapper; Stage 4 will switch to [sys.executable, "<root>/backend/run.py"].
-    Centralised here so each backend stays agnostic."""
-    return [str(RUN_SCRIPT)]
+    """The command the scheduler should invoke — the cross-platform Python
+    launcher at backend/run.py. Pinning sys.executable means the scheduled
+    task always uses the same Python interpreter that ran the install."""
+    return [sys.executable, str(RUN_SCRIPT)]
 
 
 # --- commands --------------------------------------------------------------
