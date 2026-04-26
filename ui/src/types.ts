@@ -27,4 +27,13 @@ export interface Job {
   // 1–5 user rating, set via the row-actions popover. Persisted in
   // results.json by `corpus_ctl.py rate`. Null/undefined = unrated.
   rating?: number | null;
+  // Free-text note attached to the rating ("interesting but small team").
+  // Independent of `rating` — you can have a comment with no rating, or
+  // change the rating without touching the comment. Capped at 2000 chars
+  // server-side.
+  comment?: string | null;
+  // ISO-8601 timestamp (UTC) updated whenever rating or comment mutates.
+  // Powers the future tracker's stale-row sort + the few-shot loop's
+  // recency-weighted example selection.
+  rated_at?: string | null;
 }

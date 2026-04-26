@@ -1020,7 +1020,7 @@ const configApiPlugin = (): Plugin => ({
 
         if (url.startsWith('/api/corpus/rate') && req.method === 'POST') {
           const raw = await readJsonBody(req);
-          let body: { id?: unknown; rating?: unknown };
+          let body: { id?: unknown; rating?: unknown; comment?: unknown };
           try { body = JSON.parse(raw) as typeof body; }
           catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
           if (typeof body.id !== 'string' || !body.id) {
@@ -1038,10 +1038,27 @@ const configApiPlugin = (): Plugin => ({
               ok: false, error: 'rating must be int 1..5 or null',
             });
           }
+          // `comment` is optional. Allowed: undefined (don't touch), null, or
+          // string up to 2000 chars (server truncates further if needed).
+          const hasComment = Object.prototype.hasOwnProperty.call(body, 'comment');
+          if (hasComment && body.comment !== null && typeof body.comment !== 'string') {
+            return sendJson(res, 400, {
+              ok: false, error: 'comment must be string or null',
+            });
+          }
+          if (typeof body.comment === 'string' && body.comment.length > 2000) {
+            return sendJson(res, 400, {
+              ok: false, error: 'comment must be ≤ 2000 chars',
+            });
+          }
           const args = ['rate'];
-          const result = await runCorpusCtl(
-            args, JSON.stringify({ id: body.id, rating: body.rating }),
-          );
+          // Forward `comment` only if the client actually sent the key — that's
+          // the "don't touch" sentinel for the Python side.
+          const stdinBody: Record<string, unknown> = {
+            id: body.id, rating: body.rating,
+          };
+          if (hasComment) stdinBody.comment = body.comment;
+          const result = await runCorpusCtl(args, JSON.stringify(stdinBody));
           return corpusResponse(res, args, result);
         }
 

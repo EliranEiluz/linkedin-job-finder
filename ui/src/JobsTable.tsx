@@ -591,6 +591,20 @@ export const JobsTable = ({
                             </div>
                           </div>
                         </dl>
+                        {/* User comment from the rating popover. Read-only
+                            here — open the popover (Open ↗) to edit. Surfaces
+                            the comment in the row so you don't have to
+                            re-open the popover to remember why you rated it. */}
+                        {j.comment && (
+                          <div className="mt-3 border-t border-slate-200 pt-3">
+                            <dt className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                              Your comment{j.rating != null && ` (rated ${j.rating}/5)`}
+                            </dt>
+                            <dd className="mt-1 whitespace-pre-wrap text-xs text-slate-700">
+                              {j.comment}
+                            </dd>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   )}

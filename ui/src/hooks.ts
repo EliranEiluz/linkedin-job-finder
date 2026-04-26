@@ -101,13 +101,21 @@ export const useCorpusActions = () => {
     [fireStale],
   );
 
+  // `comment` is tri-state on the wire: undefined = don't touch the field,
+  // null = clear it, string = set it (server truncates to 2000 chars).
   const rateJob = useCallback(
-    async (id: string, rating: number | null): Promise<CorpusActionsResult> => {
+    async (
+      id: string,
+      rating: number | null,
+      comment?: string | null,
+    ): Promise<CorpusActionsResult> => {
       try {
+        const payload: Record<string, unknown> = { id, rating };
+        if (comment !== undefined) payload.comment = comment;
         const res = await fetch('/api/corpus/rate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, rating }),
+          body: JSON.stringify(payload),
         });
         const body = (await res.json()) as { ok?: boolean; error?: string };
         if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };

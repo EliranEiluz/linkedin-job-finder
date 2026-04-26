@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add backend/ to sys.path so we can import sibling `search` module.
@@ -94,19 +95,47 @@ def cmd_delete(_args) -> None:
 
 # ---------- rate ----------
 
+_COMMENT_MAX_CHARS = 2000
+
+
 def cmd_rate(_args) -> None:
+    """Set the user's rating and/or comment on a job, with a `rated_at`
+    timestamp updated on every mutation. Rating and comment are independent —
+    you can clear one while keeping the other."""
     try:
         body = _read_stdin_json()
     except json.JSONDecodeError as e:
         _emit({"ok": False, "error": f"invalid JSON on stdin: {e}"}, 1)
 
-    job_id = body.get("id") if isinstance(body, dict) else None
-    rating = body.get("rating") if isinstance(body, dict) else None
+    if not isinstance(body, dict):
+        _emit({"ok": False, "error": "body must be a JSON object"}, 1)
+
+    job_id = body.get("id")
+    rating = body.get("rating")
+    comment_in = body.get("comment", _UNSET := object())
+
     if not isinstance(job_id, str) or not job_id:
         _emit({"ok": False, "error": "id must be a non-empty string"}, 1)
     if rating is not None and not (isinstance(rating, int) and 1 <= rating <= 5):
         _emit({"ok": False, "error": "rating must be int 1..5 or null"}, 1)
 
+    # Comment normalization: undefined → don't touch field; null / "" → delete;
+    # str → store (truncated to cap). Everything else rejected.
+    update_comment = comment_in is not _UNSET
+    comment_value: str | None = None
+    if update_comment:
+        if comment_in is None:
+            comment_value = None
+        elif isinstance(comment_in, str):
+            stripped = comment_in.strip()
+            if stripped == "":
+                comment_value = None
+            else:
+                comment_value = stripped[:_COMMENT_MAX_CHARS]
+        else:
+            _emit({"ok": False, "error": "comment must be string or null"}, 1)
+
+    rated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     found = {"hit": False}
 
     def _mut(current):
@@ -117,6 +146,14 @@ def cmd_rate(_args) -> None:
                     j.pop("rating", None)
                 else:
                     j["rating"] = rating
+                if update_comment:
+                    if comment_value is None:
+                        j.pop("comment", None)
+                    else:
+                        j["comment"] = comment_value
+                # Touch rated_at on any mutation — useful for the future
+                # tracker's "stale rating" sort and the few-shot loop.
+                j["rated_at"] = rated_at
                 found["hit"] = True
                 break
         return existing
@@ -125,7 +162,11 @@ def cmd_rate(_args) -> None:
 
     if not found["hit"]:
         _emit({"ok": False, "error": f"job id {job_id!r} not found in corpus"}, 1)
-    _emit({"ok": True, "id": job_id, "rating": rating}, 0)
+    _emit({
+        "ok": True, "id": job_id, "rating": rating,
+        "comment": comment_value if update_comment else None,
+        "rated_at": rated_at,
+    }, 0)
 
 
 def main():
