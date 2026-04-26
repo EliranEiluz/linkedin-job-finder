@@ -6,6 +6,7 @@ import {
   DragOverlay,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   closestCenter,
   useDroppable,
   useSensor,
@@ -1249,9 +1250,17 @@ export const ApplicationsPage = () => {
 
   // ---- Drag handlers ----
   const sensors = useSensors(
+    // Mouse / trackpad: 5px activation distance avoids hijacking clicks on
+    // the "Open ↗" link or the card-tap-to-open-modal handler.
     useSensor(PointerSensor, {
-      // 5px activation distance avoids hijacking clicks on the "Open ↗" link.
       activationConstraint: { distance: 5 },
+    }),
+    // Touch (iPhone / iPad): require a 200ms long-press before drag starts.
+    // Quick swipes pass through to native scroll — without this, any vertical
+    // touch-move > 5px hijacks scroll and turns it into a drag, which makes
+    // a tall column (e.g. Applied with 13+ cards) un-scrollable on phone.
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 200, tolerance: 5 },
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
@@ -1500,7 +1509,7 @@ export const ApplicationsPage = () => {
           onOpenRow={handleOpenCard}
         />
       ) : (
-        <div className="flex-1 overflow-x-auto overflow-y-hidden bg-slate-50">
+        <div className="flex-1 overflow-x-auto overflow-y-auto bg-slate-50">
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
