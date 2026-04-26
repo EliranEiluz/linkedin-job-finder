@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { CorpusPage } from './CorpusPage';
+import { ApplicationsPage } from './ApplicationsPage';
 import { ConfigPage } from './ConfigPage';
 import { RunHistoryPage } from './RunHistoryPage';
 import { OnboardingPage } from './OnboardingPage';
 
-type Tab = 'corpus' | 'config' | 'history' | 'setup';
+type Tab = 'corpus' | 'tracker' | 'config' | 'history' | 'setup';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'corpus', label: 'Corpus' },
+  { id: 'tracker', label: 'Tracker' },
   { id: 'config', label: 'Crawler Config' },
   { id: 'history', label: 'Run History' },
   { id: 'setup', label: 'Setup' },
@@ -20,6 +22,7 @@ const readTabFromUrl = (): Tab => {
     t === 'config' ||
     t === 'history' ||
     t === 'corpus' ||
+    t === 'tracker' ||
     t === 'setup'
   ) {
     return t;
@@ -82,6 +85,7 @@ export const App = () => {
       {/* Active page */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {tab === 'corpus' && <CorpusPage />}
+        {tab === 'tracker' && <ApplicationsPage />}
         {tab === 'config' && <ConfigPage />}
         {tab === 'history' && <RunHistoryPage />}
         {tab === 'setup' && (
