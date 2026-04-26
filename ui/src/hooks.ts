@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AppStatus } from './types';
 
 export const useDebounced = <T>(value: T, delay = 150): T => {
   const [v, setV] = useState(value);
@@ -129,6 +130,79 @@ export const useCorpusActions = () => {
   );
 
   return { deleteJobs, rateJob };
+};
+
+/** Application-tracker mutation hook. Wraps `/api/corpus/app-status` and
+ *  `/api/corpus/applied-bulk-import`. Both fire the corpus-stale event on
+ *  success so any open page re-fetches without a manual reload.
+ *
+ *  This is a Stage 3-A primitive — `useAppliedJobs` (localStorage-based) is
+ *  intentionally left alone for backwards compat until Stage 3-B's UI lands
+ *  and the migration runs. */
+export interface AppStatusActionsResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface BulkImportResult extends AppStatusActionsResult {
+  imported?: number;
+}
+
+export const useAppStatus = () => {
+  const fireStale = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('linkedinjobs:corpus-stale'));
+  }, []);
+
+  // `note` is tri-state on the wire — undefined (key absent) means
+  // "don't touch app_notes"; null clears it; string sets it. Forwarding
+  // the key only when defined preserves that sentinel through the stack.
+  const setAppStatus = useCallback(
+    async (
+      id: string,
+      status: AppStatus,
+      note?: string | null,
+    ): Promise<AppStatusActionsResult> => {
+      try {
+        const payload: Record<string, unknown> = { id, status };
+        if (note !== undefined) payload.note = note;
+        const res = await fetch('/api/corpus/app-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = (await res.json()) as { ok?: boolean; error?: string };
+        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        fireStale();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    },
+    [fireStale],
+  );
+
+  const bulkImportApplied = useCallback(
+    async (ids: string[]): Promise<BulkImportResult> => {
+      try {
+        const res = await fetch('/api/corpus/applied-bulk-import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ applied_ids: ids }),
+        });
+        const body = (await res.json()) as {
+          ok?: boolean; error?: string; imported?: number;
+        };
+        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        fireStale();
+        return { ok: true, imported: body.imported ?? 0 };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    },
+    [fireStale],
+  );
+
+  return { setAppStatus, bulkImportApplied };
 };
 
 /** Writes the current URLSearchParams to the address bar without navigation. */

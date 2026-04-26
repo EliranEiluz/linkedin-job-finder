@@ -7,6 +7,38 @@ export type Category = string;
 export type ScoredBy = 'claude' | 'regex' | 'title-filter';
 export type Source = 'loggedin' | 'guest';
 
+// Application-tracker pipeline. 8 stages in display order — `new` is the
+// unset/default seeded by the localStorage→server migration; `take-home`
+// is its own column because security-engineer searches generate plenty of
+// take-homes that take 1–2 weeks to clear. Keep in lockstep with
+// APP_STATUS_VALUES in backend/ctl/corpus_ctl.py and the validator in
+// ui/vite.config.ts.
+export type AppStatus =
+  | 'new'
+  | 'applied'
+  | 'screening'
+  | 'interview'
+  | 'take-home'
+  | 'offer'
+  | 'rejected'
+  | 'withdrew';
+
+export const APP_STATUS_ORDER: readonly AppStatus[] = [
+  'new',
+  'applied',
+  'screening',
+  'interview',
+  'take-home',
+  'offer',
+  'rejected',
+  'withdrew',
+] as const;
+
+export interface AppStatusHistoryEntry {
+  status: AppStatus;
+  at: string;
+}
+
 export interface Job {
   id: string;
   title: string;
@@ -36,4 +68,14 @@ export interface Job {
   // Powers the future tracker's stale-row sort + the few-shot loop's
   // recency-weighted example selection.
   rated_at?: string | null;
+  // Application-tracker fields, written by `corpus_ctl.py app-status`.
+  // `app_status` undefined or "new" both mean "not yet in the pipeline".
+  // History is appended on every transition (no-op writes don't double-log)
+  // so the tracker can render "moved 4 days ago" pills without recomputing.
+  // `app_notes` is a long-form free-text field separate from the rating
+  // `comment` (different surface, different purpose); cap 4000 chars.
+  app_status?: AppStatus | null;
+  app_status_at?: string | null;
+  app_status_history?: AppStatusHistoryEntry[];
+  app_notes?: string | null;
 }

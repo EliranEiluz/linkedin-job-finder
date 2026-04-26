@@ -1062,6 +1062,84 @@ const configApiPlugin = (): Plugin => ({
           return corpusResponse(res, args, result);
         }
 
+        // ---- application tracker (Stage 3-A backend). Per-job pipeline
+        //      state stored alongside ratings on the same results.json row.
+        //      Same shell-out pattern as /rate. -----------------------------
+
+        if (url.startsWith('/api/corpus/app-status') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          let body: { id?: unknown; status?: unknown; note?: unknown };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+          if (typeof body.id !== 'string' || !body.id) {
+            return sendJson(res, 400, {
+              ok: false, error: 'id must be a non-empty string',
+            });
+          }
+          // Keep this list in lockstep with APP_STATUS_VALUES in
+          // backend/ctl/corpus_ctl.py and APP_STATUS_ORDER in src/types.ts.
+          const APP_STATUSES = [
+            'new', 'applied', 'screening', 'interview',
+            'take-home', 'offer', 'rejected', 'withdrew',
+          ] as const;
+          if (
+            typeof body.status !== 'string' ||
+            !(APP_STATUSES as readonly string[]).includes(body.status)
+          ) {
+            return sendJson(res, 400, {
+              ok: false,
+              error: `status must be one of: ${APP_STATUSES.join(', ')}`,
+            });
+          }
+          // `note` is tri-state on the wire: undefined (key absent) =
+          // don't touch app_notes; null = clear; string = set.
+          const hasNote = Object.prototype.hasOwnProperty.call(body, 'note');
+          if (hasNote && body.note !== null && typeof body.note !== 'string') {
+            return sendJson(res, 400, {
+              ok: false, error: 'note must be string or null',
+            });
+          }
+          if (typeof body.note === 'string' && body.note.length > 4000) {
+            return sendJson(res, 400, {
+              ok: false, error: 'note must be ≤ 4000 chars',
+            });
+          }
+          const args = ['app-status'];
+          const stdinBody: Record<string, unknown> = {
+            id: body.id, status: body.status,
+          };
+          if (hasNote) stdinBody.note = body.note;
+          const result = await runCorpusCtl(args, JSON.stringify(stdinBody));
+          return corpusResponse(res, args, result);
+        }
+
+        if (url.startsWith('/api/corpus/applied-bulk-import') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          let body: { applied_ids?: unknown };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+          const ids = body.applied_ids;
+          if (
+            !Array.isArray(ids) ||
+            !ids.every((i) => typeof i === 'string' && i)
+          ) {
+            return sendJson(res, 400, {
+              ok: false,
+              error: 'applied_ids must be an array of non-empty strings',
+            });
+          }
+          if (ids.length > 1000) {
+            return sendJson(res, 400, {
+              ok: false, error: 'applied_ids may not exceed 1000 entries',
+            });
+          }
+          const args = ['applied-import'];
+          const result = await runCorpusCtl(
+            args, JSON.stringify({ applied_ids: ids }),
+          );
+          return corpusResponse(res, args, result);
+        }
+
         // ---- cv save (used by the onboarding flow instead of the old
         //      combined /api/onboarding/save, which clobbers the config
         //      symlink). Tiny endpoint: just writes cv.txt atomically. ------
