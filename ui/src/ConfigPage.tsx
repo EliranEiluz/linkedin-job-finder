@@ -360,7 +360,7 @@ export const ConfigPage = () => {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4">
+      <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 pb-24 md:pb-4">
         <div className="mx-auto flex max-w-4xl flex-col gap-4">
           {/* Profile switcher — switching profiles repoints config.json to a
               different file, then we reload to pull in the new draft state. */}
@@ -566,22 +566,26 @@ export const ConfigPage = () => {
             </div>
           </Card>
 
-          {/* Action bar */}
-          <div className="sticky bottom-0 -mx-4 flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3">
+          {/* Action bar — sticks to the bottom of the scroll container.
+              Page padding-bottom (pb-24 below md) reserves room so the bar
+              never floats over content. Labels shorten on mobile so all 3
+              buttons fit on a 393px viewport; full labels return at md+. */}
+          <div className="sticky bottom-0 -mx-4 flex items-center justify-between gap-2 border-t border-slate-200 bg-white px-4 py-3">
             <button
               type="button"
               onClick={resetToDefaults}
-              className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-amber-400 hover:text-amber-700"
+              className="min-h-[44px] rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-amber-400 hover:text-amber-700"
               title="Replace draft with the in-file defaults"
             >
-              Reset to defaults
+              <span className="md:hidden">Reset</span>
+              <span className="hidden md:inline">Reset to defaults</span>
             </button>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={discard}
                 disabled={!dirty || saving}
-                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-[44px] rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Discard
               </button>
@@ -589,9 +593,9 @@ export const ConfigPage = () => {
                 type="button"
                 onClick={() => void save()}
                 disabled={!dirty || saving}
-                className="rounded bg-brand-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-[44px] rounded bg-brand-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {saving ? 'Saving…' : 'Save changes'}
+                {saving ? 'Saving…' : <><span className="md:hidden">Save</span><span className="hidden md:inline">Save changes</span></>}
               </button>
             </div>
           </div>

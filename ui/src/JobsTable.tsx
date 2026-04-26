@@ -12,6 +12,7 @@ import {
 } from '@tanstack/react-table';
 import type { Job } from './types';
 import { JobActionsPopover } from './JobActionsPopover';
+import { useViewport } from './useViewport';
 
 const fitBadge = (fit: Job['fit']) => {
   if (fit === 'good')
@@ -126,10 +127,24 @@ interface Props {
   cursorRowId?: string | null;
 }
 
+// Sortable column ids exposed by the mobile sort dropdown. Keep in lockstep
+// with the column ids declared in the columns array below — typed `as const`
+// so the dropdown options are typo-safe.
+const MOBILE_SORT_OPTIONS = [
+  { id: 'found_at', label: 'Found (newest first)', desc: true },
+  { id: 'score', label: 'Score (highest first)', desc: true },
+  { id: 'priority', label: 'Priority first', desc: true },
+  { id: 'fit', label: 'Fit (good → skip)', desc: false },
+  { id: 'company', label: 'Company (A→Z)', desc: false },
+  { id: 'title', label: 'Title (A→Z)', desc: false },
+] as const;
+
 export const JobsTable = ({
   data, applied, onToggleApplied, onSetAppliedMany, onRate, onDelete,
   categoryNamesById, emptyState, cursorRowId,
 }: Props) => {
+  const { isMobile } = useViewport();
+
   // Single popover instance at table level — anchor element is set when
   // the user clicks an Open button on a specific row.
   const [popoverState, setPopoverState] = useState<
@@ -477,149 +492,437 @@ export const JobsTable = ({
     });
   };
 
+  // ——— Mobile sort dropdown wiring ———
+  // The active dropdown selection mirrors whichever entry of `sorting`
+  // is the first NON-applied key (since `applied` is always pinned at
+  // index 0 by setSortingPinned).
+  const activeMobileSort = useMemo(() => {
+    const first = sorting.find((s) => s.id !== 'applied');
+    if (!first) return MOBILE_SORT_OPTIONS[0].id;
+    const match = MOBILE_SORT_OPTIONS.find((o) => o.id === first.id);
+    return (match?.id ?? MOBILE_SORT_OPTIONS[0].id) as typeof MOBILE_SORT_OPTIONS[number]['id'];
+  }, [sorting]);
+
+  const onMobileSortChange = (next: typeof MOBILE_SORT_OPTIONS[number]['id']) => {
+    const opt = MOBILE_SORT_OPTIONS.find((o) => o.id === next);
+    if (!opt) return;
+    // Set just this single sort key; setSortingPinned re-prepends the
+    // applied pin automatically, preserving the "applied jobs sink" rule.
+    setSortingPinned([{ id: opt.id, desc: opt.desc }]);
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-auto">
-        <table className="w-full border-collapse text-sm">
-          <thead className="sticky top-0 z-10 bg-slate-50">
-            {table.getHeaderGroups().map((hg) => (
-              <tr key={hg.id}>
-                {hg.headers.map((h) => {
-                  const canSort = h.column.getCanSort();
-                  const sort = h.column.getIsSorted();
-                  return (
-                    <th
-                      key={h.id}
-                      className={clsx(
-                        'border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600',
-                        canSort && 'cursor-pointer select-none hover:text-brand-700',
-                      )}
-                      onClick={h.column.getToggleSortingHandler()}
-                    >
-                      <span className="inline-flex items-center gap-1">
-                        {flexRender(h.column.columnDef.header, h.getContext())}
-                        {sort === 'asc' && '▲'}
-                        {sort === 'desc' && '▼'}
-                      </span>
-                    </th>
-                  );
-                })}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
+        {/* Mobile sort dropdown — only visible below md. Replaces the table
+            column headers (which can't fit on a phone). */}
+        {isMobile && (
+          <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+            <label htmlFor="mobile-sort" className="font-medium text-slate-600">
+              Sort:
+            </label>
+            <select
+              id="mobile-sort"
+              value={activeMobileSort}
+              onChange={(e) => onMobileSortChange(e.target.value as typeof MOBILE_SORT_OPTIONS[number]['id'])}
+              className="min-h-[44px] flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
+            >
+              {MOBILE_SORT_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            {/* Bulk-applied checkbox surfaced here so it stays reachable
+                without the table header. Reuses the same logic. */}
+            {onSetAppliedMany && (() => {
+              const visible = table.getRowModel().rows.map((r) => r.original.id);
+              const visibleApplied = visible.filter((id) => applied.has(id)).length;
+              const allApplied = visible.length > 0 && visibleApplied === visible.length;
+              const someApplied = visibleApplied > 0 && !allApplied;
+              const refSet = (el: HTMLInputElement | null) => {
+                if (el) el.indeterminate = someApplied;
+              };
+              return (
+                <label
+                  className="inline-flex shrink-0 items-center gap-1.5 text-xs text-slate-600"
+                  title={
+                    visible.length === 0
+                      ? 'No rows visible'
+                      : allApplied
+                      ? `Mark all ${visible.length} visible as not applied`
+                      : `Mark all ${visible.length} visible as applied`
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    ref={refSet}
+                    checked={allApplied}
+                    disabled={visible.length === 0}
+                    onChange={() => onSetAppliedMany(visible, !allApplied)}
+                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600 disabled:opacity-40"
+                  />
+                  All
+                </label>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Desktop: existing table. Mobile: card list of the same rows. */}
+        {isMobile ? (
+          <ul className="divide-y divide-slate-200">
             {table.getRowModel().rows.map((row) => {
               const j = row.original;
-              const isOpen = expanded.has(j.id);
               const isApplied = applied.has(j.id);
               const isCursor = cursorRowId === j.id;
+              const isOpen = expanded.has(j.id);
+              const isPriorityActive = j.priority && j.fit !== 'skip';
+              const isPriorityMuted = j.priority && j.fit === 'skip';
               return (
-                <Fragment key={j.id}>
-                  <tr
+                <li
+                  key={j.id}
+                  className={clsx(
+                    'relative bg-white px-3 py-3 transition-colors active:bg-slate-100',
+                    isPriorityActive && 'border-l-4 border-l-red-500',
+                    isPriorityMuted && 'border-l-4 border-l-slate-300',
+                    isApplied && 'bg-slate-50 text-slate-500 opacity-80',
+                    isCursor && 'bg-brand-50 ring-2 ring-inset ring-brand-700',
+                  )}
+                >
+                  {/* Top row: title + applied checkbox + priority emoji.
+                      The whole top row taps through to expand/collapse the
+                      card (mirrors the desktop row-click). Checkbox stops
+                      propagation. */}
+                  <div
+                    className="flex items-start gap-2"
                     onClick={() => toggleExpand(j.id)}
-                    className={clsx(
-                      'cursor-pointer border-b border-slate-100 hover:bg-slate-100',
-                      // Priority gets a red border. Applied rows are visually
-                      // muted. B9: priority+skip uses a desaturated border.
-                      j.priority && j.fit === 'skip' && 'border-l-4 border-l-slate-300',
-                      j.priority && j.fit !== 'skip' && 'border-l-4 border-l-red-500',
-                      isApplied && 'bg-slate-100 text-slate-400 opacity-70',
-                      // B4: keyboard cursor row — soft brand background tint
-                      // + accent ring on the leading edge. Doesn't compete
-                      // with the priority red border (cursor wins on ring;
-                      // border still visible to its left).
-                      isCursor && 'bg-brand-50 ring-2 ring-inset ring-brand-700',
-                    )}
                   >
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-3 py-2 align-middle">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                  {isOpen && (
-                    <tr
-                      key={`${j.id}-expand`}
-                      className={clsx(
-                        'border-b border-slate-200 bg-slate-50',
-                        j.priority && j.fit === 'skip' && 'border-l-4 border-l-slate-300',
-                        j.priority && j.fit !== 'skip' && 'border-l-4 border-l-red-500',
+                    <div className="min-w-0 flex-1">
+                      <div className="line-clamp-2 text-sm font-medium leading-snug text-slate-900">
+                        {j.title}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs text-slate-600">
+                        <span className="font-medium text-slate-700">{j.company}</span>
+                        {j.location && (
+                          <>
+                            <span className="mx-1 text-slate-400">·</span>
+                            <span>{j.location}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {j.priority && (
+                        <span
+                          className={clsx('text-base', isPriorityMuted && 'opacity-50')}
+                          title={TOOLTIPS.priority}
+                        >
+                          🔥
+                        </span>
                       )}
+                      <label
+                        className="inline-flex h-11 w-11 cursor-pointer items-center justify-center"
+                        onClick={(e) => e.stopPropagation()}
+                        title={isApplied ? 'Mark as not applied' : 'Mark as applied'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isApplied}
+                          onChange={() => onToggleApplied(j.id)}
+                          className="h-5 w-5 cursor-pointer rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
+                          aria-label={isApplied ? 'Mark as not applied' : 'Mark as applied'}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Pills row: fit, source, found relative time, score */}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                    {fitBadge(j.fit)}
+                    {sourceChip(j.source ?? null)}
+                    {j.score != null && (
+                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs tabular-nums text-slate-600">
+                        score {j.score}
+                      </span>
+                    )}
+                    <span
+                      className="text-xs text-slate-500"
+                      title={(() => {
+                        try { return new Date(j.found_at).toLocaleString(); }
+                        catch { return j.found_at; }
+                      })()}
                     >
-                      <td colSpan={row.getVisibleCells().length} className="px-6 py-3">
-                        <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-xs text-slate-700 md:grid-cols-2">
+                      · {relTime(j.found_at)}
+                    </span>
+                  </div>
+
+                  {/* Bottom action row — Open / ID copy / Del.
+                      Each button is min-h-[44px] for tap-target compliance. */}
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (j.url) window.open(j.url, '_blank', 'noopener,noreferrer');
+                        if (onRate && onDelete) {
+                          setPopoverState({ jobId: j.id, anchor: e.currentTarget });
+                        }
+                      }}
+                      className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+                    >
+                      Open ↗
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await navigator.clipboard.writeText(j.id);
+                        setCopied(j.id);
+                        window.setTimeout(
+                          () => setCopied((c) => (c === j.id ? null : c)),
+                          1200,
+                        );
+                      }}
+                      className="inline-flex min-h-[44px] items-center justify-center rounded border border-slate-300 bg-white px-3 text-sm text-slate-700 hover:bg-slate-100"
+                      title={`Copy id: ${j.id}`}
+                    >
+                      {copied === j.id ? 'copied' : 'ID'}
+                    </button>
+                    {onDelete && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleInlineDelete(j.id);
+                        }}
+                        className={clsx(
+                          'inline-flex min-h-[44px] items-center justify-center rounded border px-3 text-sm transition-colors',
+                          confirmDeleteId === j.id
+                            ? 'border-red-300 bg-red-600 text-white'
+                            : 'border-slate-300 bg-white text-slate-500 hover:bg-red-50 hover:text-red-700 hover:border-red-300',
+                        )}
+                      >
+                        {confirmDeleteId === j.id ? 'confirm?' : 'Del'}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Expanded detail (same content as desktop's expand row,
+                      stacked single-column for the narrow viewport). */}
+                  {isOpen && (
+                    <div className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700">
+                      <div className="mb-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                          Fit reasons
+                        </div>
+                        <div className="mt-1">
+                          {j.fit_reasons.length === 0 ? (
+                            <span className="italic text-slate-400">none</span>
+                          ) : (
+                            <ul className="list-disc pl-5">
+                              {j.fit_reasons.map((r, i) => (
+                                <li key={i}>{r}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                      <dl className="space-y-1">
+                        <div>
+                          <span className="font-semibold text-slate-500">Query: </span>
+                          <code className="rounded bg-white px-1.5 py-0.5 text-[11px] break-all">
+                            {j.query}
+                          </code>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-500">Category: </span>
+                          {categoryNamesById?.get(j.category) ?? catLabel(j.category)}
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-500">Scored by: </span>
+                          {j.scored_by ?? <em className="text-slate-400">none</em>}
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-500">Found at: </span>
+                          {j.found_at}
+                        </div>
+                        {j.scraped_at && (
                           <div>
-                            <dt className="font-semibold text-slate-500">Fit reasons</dt>
-                            <dd className="mt-1">
-                              {j.fit_reasons.length === 0 ? (
-                                <span className="italic text-slate-400">none</span>
-                              ) : (
-                                <ul className="list-disc pl-5">
-                                  {j.fit_reasons.map((r, i) => (
-                                    <li key={i}>{r}</li>
-                                  ))}
-                                </ul>
-                              )}
-                            </dd>
-                          </div>
-                          <div className="space-y-1.5">
-                            <div>
-                              <span className="font-semibold text-slate-500">Query: </span>
-                              <code className="rounded bg-white px-1.5 py-0.5 text-[11px]">
-                                {j.query}
-                              </code>
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-500">Scored by: </span>
-                              {j.scored_by ?? <em className="text-slate-400">none</em>}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-500">Found at: </span>
-                              {j.found_at}
-                            </div>
-                            {j.scraped_at && (
-                              <div>
-                                <span className="font-semibold text-slate-500">Scraped at: </span>
-                                {j.scraped_at}
-                              </div>
-                            )}
-                            <div>
-                              <span className="font-semibold text-slate-500">Job ID: </span>
-                              <code className="rounded bg-white px-1.5 py-0.5 text-[11px]">
-                                {j.id}
-                              </code>
-                            </div>
-                          </div>
-                        </dl>
-                        {/* User comment from the rating popover. Read-only
-                            here — open the popover (Open ↗) to edit. Surfaces
-                            the comment in the row so you don't have to
-                            re-open the popover to remember why you rated it. */}
-                        {j.comment && (
-                          <div className="mt-3 border-t border-slate-200 pt-3">
-                            <dt className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                              Your comment{j.rating != null && ` (rated ${j.rating}/5)`}
-                            </dt>
-                            <dd className="mt-1 whitespace-pre-wrap text-xs text-slate-700">
-                              {j.comment}
-                            </dd>
+                            <span className="font-semibold text-slate-500">Scraped at: </span>
+                            {j.scraped_at}
                           </div>
                         )}
-                      </td>
-                    </tr>
+                        <div>
+                          <span className="font-semibold text-slate-500">Job ID: </span>
+                          <code className="rounded bg-white px-1.5 py-0.5 text-[11px] break-all">
+                            {j.id}
+                          </code>
+                        </div>
+                      </dl>
+                      {j.comment && (
+                        <div className="mt-3 border-t border-slate-200 pt-2">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                            Your comment{j.rating != null && ` (rated ${j.rating}/5)`}
+                          </div>
+                          <div className="mt-1 whitespace-pre-wrap text-xs">
+                            {j.comment}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
-                </Fragment>
+                </li>
               );
             })}
             {table.getRowModel().rows.length === 0 && (
-              <tr>
-                <td colSpan={columns.length} className="px-6 py-12 text-center text-sm text-slate-500">
-                  {emptyState ?? 'No jobs match the current filters.'}
-                </td>
-              </tr>
+              <li className="px-6 py-12 text-center text-sm text-slate-500">
+                {emptyState ?? 'No jobs match the current filters.'}
+              </li>
             )}
-          </tbody>
-        </table>
+          </ul>
+        ) : (
+          <table className="w-full border-collapse text-sm">
+            <thead className="sticky top-0 z-10 bg-slate-50">
+              {table.getHeaderGroups().map((hg) => (
+                <tr key={hg.id}>
+                  {hg.headers.map((h) => {
+                    const canSort = h.column.getCanSort();
+                    const sort = h.column.getIsSorted();
+                    return (
+                      <th
+                        key={h.id}
+                        className={clsx(
+                          'border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600',
+                          canSort && 'cursor-pointer select-none hover:text-brand-700',
+                        )}
+                        onClick={h.column.getToggleSortingHandler()}
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          {flexRender(h.column.columnDef.header, h.getContext())}
+                          {sort === 'asc' && '▲'}
+                          {sort === 'desc' && '▼'}
+                        </span>
+                      </th>
+                    );
+                  })}
+                </tr>
+              ))}
+            </thead>
+            <tbody>
+              {table.getRowModel().rows.map((row) => {
+                const j = row.original;
+                const isOpen = expanded.has(j.id);
+                const isApplied = applied.has(j.id);
+                const isCursor = cursorRowId === j.id;
+                return (
+                  <Fragment key={j.id}>
+                    <tr
+                      onClick={() => toggleExpand(j.id)}
+                      className={clsx(
+                        'cursor-pointer border-b border-slate-100 hover:bg-slate-100',
+                        // Priority gets a red border. Applied rows are visually
+                        // muted. B9: priority+skip uses a desaturated border.
+                        j.priority && j.fit === 'skip' && 'border-l-4 border-l-slate-300',
+                        j.priority && j.fit !== 'skip' && 'border-l-4 border-l-red-500',
+                        isApplied && 'bg-slate-100 text-slate-400 opacity-70',
+                        // B4: keyboard cursor row — soft brand background tint
+                        // + accent ring on the leading edge. Doesn't compete
+                        // with the priority red border (cursor wins on ring;
+                        // border still visible to its left).
+                        isCursor && 'bg-brand-50 ring-2 ring-inset ring-brand-700',
+                      )}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <td key={cell.id} className="px-3 py-2 align-middle">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                    {isOpen && (
+                      <tr
+                        key={`${j.id}-expand`}
+                        className={clsx(
+                          'border-b border-slate-200 bg-slate-50',
+                          j.priority && j.fit === 'skip' && 'border-l-4 border-l-slate-300',
+                          j.priority && j.fit !== 'skip' && 'border-l-4 border-l-red-500',
+                        )}
+                      >
+                        <td colSpan={row.getVisibleCells().length} className="px-6 py-3">
+                          <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-xs text-slate-700 md:grid-cols-2">
+                            <div>
+                              <dt className="font-semibold text-slate-500">Fit reasons</dt>
+                              <dd className="mt-1">
+                                {j.fit_reasons.length === 0 ? (
+                                  <span className="italic text-slate-400">none</span>
+                                ) : (
+                                  <ul className="list-disc pl-5">
+                                    {j.fit_reasons.map((r, i) => (
+                                      <li key={i}>{r}</li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </dd>
+                            </div>
+                            <div className="space-y-1.5">
+                              <div>
+                                <span className="font-semibold text-slate-500">Query: </span>
+                                <code className="rounded bg-white px-1.5 py-0.5 text-[11px]">
+                                  {j.query}
+                                </code>
+                              </div>
+                              <div>
+                                <span className="font-semibold text-slate-500">Scored by: </span>
+                                {j.scored_by ?? <em className="text-slate-400">none</em>}
+                              </div>
+                              <div>
+                                <span className="font-semibold text-slate-500">Found at: </span>
+                                {j.found_at}
+                              </div>
+                              {j.scraped_at && (
+                                <div>
+                                  <span className="font-semibold text-slate-500">Scraped at: </span>
+                                  {j.scraped_at}
+                                </div>
+                              )}
+                              <div>
+                                <span className="font-semibold text-slate-500">Job ID: </span>
+                                <code className="rounded bg-white px-1.5 py-0.5 text-[11px]">
+                                  {j.id}
+                                </code>
+                              </div>
+                            </div>
+                          </dl>
+                          {/* User comment from the rating popover. Read-only
+                              here — open the popover (Open ↗) to edit. Surfaces
+                              the comment in the row so you don't have to
+                              re-open the popover to remember why you rated it. */}
+                          {j.comment && (
+                            <div className="mt-3 border-t border-slate-200 pt-3">
+                              <dt className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                Your comment{j.rating != null && ` (rated ${j.rating}/5)`}
+                              </dt>
+                              <dd className="mt-1 whitespace-pre-wrap text-xs text-slate-700">
+                                {j.comment}
+                              </dd>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+              {table.getRowModel().rows.length === 0 && (
+                <tr>
+                  <td colSpan={columns.length} className="px-6 py-12 text-center text-sm text-slate-500">
+                    {emptyState ?? 'No jobs match the current filters.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {/* Pagination footer */}

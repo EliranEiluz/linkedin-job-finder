@@ -346,12 +346,16 @@ export const ScrapeRunPanel = () => {
         </span>
       </div>
 
-      <div className="mb-3 flex flex-wrap gap-2">
+      {/* Mobile: stack the three "Run …" buttons full-width so each is a
+          comfortable tap target and the row doesn't leave one button
+          orphaned on its own line. The reload (↻) sits in its own row to
+          stay reachable. Desktop (md+): unchanged inline layout. */}
+      <div className="mb-3 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
         <button
           type="button"
           onClick={() => void startScrape('loggedin')}
           disabled={busy !== null || runningModes.has('loggedin')}
-          className="inline-flex items-center gap-1.5 rounded border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto md:justify-start"
         >
           🔐 Run logged-in mode
         </button>
@@ -359,7 +363,7 @@ export const ScrapeRunPanel = () => {
           type="button"
           onClick={() => void startScrape('guest')}
           disabled={busy !== null || runningModes.has('guest')}
-          className="inline-flex items-center gap-1.5 rounded border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto md:justify-start"
         >
           🌐 Run guest mode
         </button>
@@ -371,14 +375,14 @@ export const ScrapeRunPanel = () => {
             runningModes.has('loggedin') ||
             runningModes.has('guest')
           }
-          className="inline-flex items-center gap-1.5 rounded bg-brand-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded bg-brand-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto md:justify-start"
         >
           ⚡ Run both
         </button>
         <button
           type="button"
           onClick={() => void reload()}
-          className="ml-auto rounded border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+          className="self-end rounded border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 md:ml-auto md:self-auto"
           title="Re-poll status"
         >
           ↻

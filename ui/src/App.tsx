@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { CorpusPage } from './CorpusPage';
 import { ApplicationsPage } from './ApplicationsPage';
@@ -8,12 +8,16 @@ import { OnboardingPage } from './OnboardingPage';
 
 type Tab = 'corpus' | 'tracker' | 'config' | 'history' | 'setup';
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'corpus', label: 'Corpus' },
-  { id: 'tracker', label: 'Tracker' },
-  { id: 'config', label: 'Crawler Config' },
-  { id: 'history', label: 'Run History' },
-  { id: 'setup', label: 'Setup' },
+// Two label fields: `label` is the desktop wordmark, `short` is what we render
+// below md so the tab strip can fit. Same width-shrinking trick we use in
+// other places (responsive truncation via clsx + responsive utility classes
+// would be wordier than just picking one of two strings).
+const TABS: { id: Tab; label: string; short: string }[] = [
+  { id: 'corpus', label: 'Corpus', short: 'Corpus' },
+  { id: 'tracker', label: 'Tracker', short: 'Tracker' },
+  { id: 'config', label: 'Crawler Config', short: 'Config' },
+  { id: 'history', label: 'Run History', short: 'History' },
+  { id: 'setup', label: 'Setup', short: 'Setup' },
 ];
 
 const readTabFromUrl = (): Tab => {
@@ -32,6 +36,10 @@ const readTabFromUrl = (): Tab => {
 
 export const App = () => {
   const [tab, setTab] = useState<Tab>(readTabFromUrl);
+  // Per-tab refs so we can scroll the active tab into view on mobile when
+  // the user navigates via URL change / popstate / first paint. Keeps the
+  // active tab visible inside the horizontal-scroll strip.
+  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
 
   const switchTab = useCallback((next: Tab) => {
     if (next === tab) return;
@@ -58,28 +66,51 @@ export const App = () => {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
+  // Scroll the active tab button into view inside the horizontal nav strip
+  // whenever the active tab changes. Only meaningful on mobile (where the
+  // strip overflows horizontally); on desktop the parent doesn't scroll so
+  // this is a no-op visually.
+  useEffect(() => {
+    const el = tabRefs.current[tab];
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }, [tab]);
+
   return (
     <div className="flex h-screen flex-col bg-slate-50">
-      {/* Tab nav (above the page header) */}
-      <nav className="flex items-center gap-0 border-b border-slate-200 bg-white px-4">
-        <h1 className="mr-6 py-2.5 text-base font-semibold text-slate-900">
-          <span className="text-brand-700">●</span> Jobs Browser
+      {/* Tab nav (above the page header)
+          Mobile: horizontal scroll strip, wordmark collapses to a dot.
+          Desktop (md+): unchanged — full wordmark + inline tabs. */}
+      <nav className="flex items-stretch border-b border-slate-200 bg-white">
+        <h1 className="flex shrink-0 items-center px-4 py-2.5 text-base font-semibold text-slate-900 md:mr-2">
+          <span className="text-brand-700">●</span>
+          {/* Hide wordmark below md so the tab strip gets the room. */}
+          <span className="ml-1.5 hidden md:inline">Jobs Browser</span>
         </h1>
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => switchTab(t.id)}
-            className={clsx(
-              'relative -mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition-colors',
-              tab === t.id
-                ? 'border-brand-700 text-brand-700'
-                : 'border-transparent text-slate-600 hover:text-brand-700',
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
+        <div className="no-scrollbar flex flex-1 items-stretch overflow-x-auto">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              ref={(el) => {
+                tabRefs.current[t.id] = el;
+              }}
+              type="button"
+              onClick={() => switchTab(t.id)}
+              className={clsx(
+                'relative -mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors md:py-2.5',
+                tab === t.id
+                  ? 'border-brand-700 text-brand-700'
+                  : 'border-transparent text-slate-600 hover:text-brand-700',
+              )}
+            >
+              {/* Short label below md, full label at md+. Picks one or the
+                  other so screen readers don't announce both. */}
+              <span className="md:hidden">{t.short}</span>
+              <span className="hidden md:inline">{t.label}</span>
+            </button>
+          ))}
+        </div>
       </nav>
 
       {/* Active page */}

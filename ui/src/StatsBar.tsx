@@ -22,7 +22,7 @@ const Chip = ({
   tooltip?: string;
 }) => (
   <div
-    className={`inline-flex items-baseline gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${color}`}
+    className={`inline-flex shrink-0 items-baseline gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${color}`}
     title={tooltip}
   >
     <span className="font-semibold tabular-nums">{value}</span>
@@ -73,8 +73,17 @@ export const StatsBar = ({ all, filtered, applied, categoryNamesById }: Props) =
 
   return (
     <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
-      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
-        <div className="mr-2 flex items-baseline gap-1.5">
+      {/* Mobile: single horizontal-scroll row (no wrap, no scrollbar) so
+          the strip doesn't eat 5 lines of the viewport. Desktop: unchanged
+          flex-wrap behavior. The whitespace-nowrap below md keeps every
+          chip on the same baseline. */}
+      <div
+        className={
+          'no-scrollbar flex items-center gap-2 overflow-x-auto whitespace-nowrap px-4 py-2.5 ' +
+          'md:flex-wrap md:overflow-visible md:whitespace-normal'
+        }
+      >
+        <div className="mr-2 flex shrink-0 items-baseline gap-1.5">
           <span className="text-xl font-semibold tabular-nums text-brand-700">
             {filtered.length.toLocaleString()}
           </span>
@@ -82,12 +91,12 @@ export const StatsBar = ({ all, filtered, applied, categoryNamesById }: Props) =
             of {all.length.toLocaleString()} jobs
           </span>
         </div>
-        <div className="h-6 w-px bg-slate-200" />
+        <div className="h-6 w-px shrink-0 bg-slate-200" />
         <Chip label="good" value={byFit.good} color="bg-emerald-100 text-emerald-800" />
         <Chip label="ok" value={byFit.ok} color="bg-amber-100 text-amber-800" />
         <Chip label="skip" value={byFit.skip} color="bg-slate-200 text-slate-600" />
         <Chip label="unscored" value={byFit.unscored} color="bg-slate-100 text-slate-500" />
-        <div className="h-6 w-px bg-slate-200" />
+        <div className="h-6 w-px shrink-0 bg-slate-200" />
         <Chip
           label="priority"
           value={priorityCount}
@@ -100,7 +109,7 @@ export const StatsBar = ({ all, filtered, applied, categoryNamesById }: Props) =
           color="bg-emerald-100 text-emerald-800"
           tooltip="Jobs you've ticked the Applied checkbox on (stored locally)"
         />
-        <div className="h-6 w-px bg-slate-200" />
+        <div className="h-6 w-px shrink-0 bg-slate-200" />
         <Chip
           label="🔐 loggedin"
           value={bySource.loggedin}
@@ -113,7 +122,7 @@ export const StatsBar = ({ all, filtered, applied, categoryNamesById }: Props) =
           color="bg-emerald-100 text-emerald-800"
           tooltip="Job scraped via the unauthenticated /jobs-guest API"
         />
-        {catIds.length > 0 && <div className="h-6 w-px bg-slate-200" />}
+        {catIds.length > 0 && <div className="h-6 w-px shrink-0 bg-slate-200" />}
         {catIds.map((cid, i) => (
           <Chip
             key={cid}
@@ -122,7 +131,7 @@ export const StatsBar = ({ all, filtered, applied, categoryNamesById }: Props) =
             color={CATEGORY_PALETTE[i % CATEGORY_PALETTE.length]}
           />
         ))}
-        <div className="h-6 w-px bg-slate-200" />
+        <div className="h-6 w-px shrink-0 bg-slate-200" />
         <Chip label="companies" value={companies.size} />
       </div>
     </div>
