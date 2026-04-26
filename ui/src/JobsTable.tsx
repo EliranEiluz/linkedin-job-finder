@@ -163,6 +163,35 @@ export const JobsTable = ({
     }, []);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState<string | null>(null);
+  // Inline-delete: first click puts the row's button into "confirm?" state
+  // for 4s; second click within that window fires onDelete. Same single-
+  // click-confirm pattern as JobActionsPopover, just available without
+  // opening the popover first.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const confirmDeleteTimerRef = useRef<number | null>(null);
+  const handleInlineDelete = useCallback(
+    (id: string) => {
+      if (!onDelete) return;
+      if (confirmDeleteId === id) {
+        if (confirmDeleteTimerRef.current) {
+          window.clearTimeout(confirmDeleteTimerRef.current);
+          confirmDeleteTimerRef.current = null;
+        }
+        setConfirmDeleteId(null);
+        void onDelete(id);
+        return;
+      }
+      if (confirmDeleteTimerRef.current) {
+        window.clearTimeout(confirmDeleteTimerRef.current);
+      }
+      setConfirmDeleteId(id);
+      confirmDeleteTimerRef.current = window.setTimeout(() => {
+        setConfirmDeleteId(null);
+        confirmDeleteTimerRef.current = null;
+      }, 4000);
+    },
+    [confirmDeleteId, onDelete],
+  );
 
   const columns = useMemo(
     () => [
@@ -391,12 +420,31 @@ export const JobsTable = ({
               >
                 {copied === j.id ? 'copied!' : 'ID'}
               </button>
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={() => handleInlineDelete(j.id)}
+                  className={clsx(
+                    'rounded border px-2 py-0.5 text-xs transition-colors',
+                    confirmDeleteId === j.id
+                      ? 'border-red-300 bg-red-600 text-white hover:bg-red-700'
+                      : 'border-slate-300 bg-white text-slate-500 hover:bg-red-50 hover:text-red-700 hover:border-red-300',
+                  )}
+                  title={
+                    confirmDeleteId === j.id
+                      ? 'Click again to confirm permanent delete'
+                      : 'Delete from corpus (also pinned in seen so it won\'t re-appear)'
+                  }
+                >
+                  {confirmDeleteId === j.id ? 'confirm?' : 'Del'}
+                </button>
+              )}
             </div>
           );
         },
       }),
     ],
-    [copied, applied, onToggleApplied, categoryNamesById],
+    [copied, confirmDeleteId, handleInlineDelete, onDelete, applied, onToggleApplied, categoryNamesById],
   );
 
   // The applied-pinned sort + per-column sortingFn handle all ordering.
