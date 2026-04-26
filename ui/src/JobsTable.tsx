@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import {
@@ -466,9 +466,8 @@ export const JobsTable = ({
               const isApplied = applied.has(j.id);
               const isCursor = cursorRowId === j.id;
               return (
-                <>
+                <Fragment key={j.id}>
                   <tr
-                    key={j.id}
                     onClick={() => toggleExpand(j.id)}
                     className={clsx(
                       'cursor-pointer border-b border-slate-100 hover:bg-slate-100',
@@ -547,7 +546,7 @@ export const JobsTable = ({
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
             {table.getRowModel().rows.length === 0 && (

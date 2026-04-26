@@ -42,6 +42,21 @@ const safeRel = (iso: string | null): string => {
   }
 };
 
+// "Next run" framing: a future timestamp reads "in 7h"; a past one means
+// the scheduler missed its window (e.g. Mac was asleep — launchd's
+// StartInterval doesn't fire missed runs while sleeping). Render that as
+// "overdue X" so the UI doesn't show the misleading "5 hours ago".
+const safeRelFuture = (iso: string | null): string => {
+  if (!iso) return '—';
+  try {
+    const date = parseISO(iso);
+    const distance = formatDistanceToNowStrict(date);
+    return date <= new Date() ? `overdue ${distance}` : `in ${distance}`;
+  } catch {
+    return iso;
+  }
+};
+
 const Toast = ({ msg, kind }: { msg: string; kind: 'ok' | 'err' }) => (
   <div
     className={clsx(
@@ -433,7 +448,7 @@ export const SchedulerCard = () => {
                 Next run (est.)
               </div>
               <div className="text-sm text-slate-900">
-                {status.next_run_estimate ? safeRel(status.next_run_estimate) : (
+                {status.next_run_estimate ? safeRelFuture(status.next_run_estimate) : (
                   <span className="text-slate-400">unknown</span>
                 )}
               </div>

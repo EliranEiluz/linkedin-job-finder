@@ -654,7 +654,9 @@ const configApiPlugin = (): Plugin => ({
       '/defaults.json':    path.join(REPO_ROOT, 'defaults.json'),
     };
     server.middlewares.use(async (req, res, next) => {
-      const target = rootJsonFiles[req.url ?? ''];
+      // Strip cache-busting query string (UI fetches use `?t=Date.now()`).
+      const pathOnly = (req.url ?? '').split('?')[0];
+      const target = rootJsonFiles[pathOnly];
       if (!target) return next();
       try {
         const data = await fs.readFile(target, 'utf8');
