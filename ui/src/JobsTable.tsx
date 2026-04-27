@@ -475,24 +475,6 @@ export const JobsTable = ({
               >
                 Open ↗
               </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(j.id);
-                  setCopied(j.id);
-                  window.setTimeout(
-                    () => setCopied((c) => (c === j.id ? null : c)),
-                    1200,
-                  );
-                }}
-                className={clsx(
-                  ROW_ACTION_BTN_BASE,
-                  'border-slate-300 bg-white text-slate-700 hover:bg-slate-100',
-                )}
-                title={`Copy id: ${j.id}`}
-              >
-                {copied === j.id ? 'copied!' : 'ID'}
-              </button>
               {onDelete && (
                 <button
                   type="button"
@@ -508,8 +490,24 @@ export const JobsTable = ({
                       ? 'Click again to confirm permanent delete'
                       : 'Delete from corpus (also pinned in seen so it won\'t re-appear)'
                   }
+                  aria-label="Delete from corpus"
                 >
-                  {confirmDeleteId === j.id ? 'confirm?' : 'Del'}
+                  {confirmDeleteId === j.id ? (
+                    <span className="text-[11px] font-medium">confirm?</span>
+                  ) : (
+                    <svg
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-3.5 w-3.5"
+                      aria-hidden="true"
+                    >
+                      <path d="M2.5 4h11M5.5 4V2.5h5V4M3.7 4l.5 9.5a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9l.5-9.5M6.5 7v4M9.5 7v4" />
+                    </svg>
+                  )}
                 </button>
               )}
             </div>

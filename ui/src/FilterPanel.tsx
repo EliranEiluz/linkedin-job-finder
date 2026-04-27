@@ -108,7 +108,10 @@ const TriToggle = ({
         type="button"
         onClick={() => onChange(k)}
         className={clsx(
-          'px-2.5 py-1 transition-colors',
+          // `inline-flex items-center` + `leading-5` pin a concrete 28px
+          // button height. Without these the children rendered at 8px tall
+          // (post-polish baseline-collapse bug) and the toggle was invisible.
+          'inline-flex items-center px-2.5 py-1 leading-5 transition-colors',
           value === k
             ? 'bg-brand-700 text-white'
             : 'bg-white text-slate-700 hover:bg-slate-100',

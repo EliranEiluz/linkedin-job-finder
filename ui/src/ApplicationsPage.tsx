@@ -391,7 +391,7 @@ const OverlayCard = ({ job, stale }: CardProps) => (
     className={clsx(
       'rounded-md border border-slate-300 bg-white p-2 shadow-lg ring-1 ring-slate-300',
       'cursor-grabbing',
-      'w-[260px]',
+      'w-[290px]',
       stale && 'border-l-4 border-l-amber-400',
     )}
   >
@@ -1170,6 +1170,18 @@ const AppDetailModal = ({
           ) : (
             <span className="text-[11px] text-slate-400">no URL</span>
           )}
+          {/* Quick "Remove from tracker" — same effect as Move-to → New
+              but visible as a one-click button. Sets app_status='new'
+              which hides the job from the kanban (history preserved). */}
+          <button
+            type="button"
+            disabled={statusBusy}
+            onClick={() => void handleStatusChange('new')}
+            className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Remove from tracker (status history preserved)"
+          >
+            Remove from tracker
+          </button>
         </div>
       </div>
     </div>
