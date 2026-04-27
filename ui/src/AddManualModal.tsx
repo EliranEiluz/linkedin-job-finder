@@ -241,12 +241,16 @@ export const AddManualModal = ({ open, onClose }: Props) => {
           </div>
         </div>
 
+        {/* Footer — both buttons share the SAME border-box height. The
+            primary `Add` button keeps a `border-transparent` so its
+            border-box matches the secondary `Cancel`'s 1px border (round-1
+            mismatch was 26px vs 24px from missing-border on Add). */}
         <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2.5">
           <button
             type="button"
             onClick={onClose}
             disabled={state.kind === 'fetching'}
-            className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+            className="inline-flex items-center justify-center rounded border border-slate-300 bg-white px-3 py-1 text-xs font-medium leading-5 text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-700 focus-visible:ring-offset-1 disabled:opacity-40"
           >
             {state.kind === 'success' ? 'Done' : 'Cancel'}
           </button>
@@ -255,7 +259,7 @@ export const AddManualModal = ({ open, onClose }: Props) => {
               type="button"
               onClick={() => void handleSubmit()}
               disabled={!canSubmit}
-              className="rounded bg-brand-700 px-3 py-1 text-xs font-medium text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center justify-center rounded border border-transparent bg-brand-700 px-3 py-1 text-xs font-medium leading-5 text-white transition-colors hover:bg-brand-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-700 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {state.kind === 'fetching' ? 'Adding…' : 'Add'}
             </button>

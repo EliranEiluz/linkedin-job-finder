@@ -53,6 +53,28 @@ const relTime = (iso: string) => {
   }
 };
 
+// Shared classes for the per-row Action buttons (Open / ID / Del). All three
+// must read as one button group: identical padding, line-height, font-weight,
+// border-box height. The Del confirm-state variant flips colors but stays
+// the exact same size, since it overrides only `border-color` and `bg`.
+//
+// `leading-5` (=20px line-height on text-xs) pins the rendered glyph height,
+// so the `↗` arrow on "Open" no longer makes that button taller than its
+// siblings. focus-visible: ring shows on keyboard nav only; mouse-click
+// focus is silent. Per round-2 audit (heights were 38/22/22).
+const ROW_ACTION_BTN_BASE =
+  'inline-flex items-center justify-center whitespace-nowrap rounded border px-2 py-0.5 ' +
+  'text-xs font-medium leading-5 transition-colors ' +
+  'focus-visible:outline-none focus-visible:ring-2 ' +
+  'focus-visible:ring-brand-700 focus-visible:ring-offset-1';
+
+// Mobile card variant — same shape, just tap-target sized.
+const ROW_ACTION_BTN_BASE_MOBILE =
+  'inline-flex min-h-[44px] flex-1 items-center justify-center whitespace-nowrap rounded border ' +
+  'px-3 text-sm font-medium leading-5 transition-colors ' +
+  'focus-visible:outline-none focus-visible:ring-2 ' +
+  'focus-visible:ring-brand-700 focus-visible:ring-offset-1';
+
 // Display label for a category id. Known legacy ids get tight aliases;
 // anything else (user-defined categories from config.json) renders the id
 // as-is, just de-snaked for readability.
@@ -234,16 +256,19 @@ export const JobsTable = ({
         header: '!',
         cell: (info) => {
           if (!info.getValue()) return '';
-          // B9: desaturate 🔥 when fit=skip — the company is on the priority
-          // list but Claude already triaged it as "skip" so it's a low-value
-          // target. Stays visible but visually demoted.
+          // B9: desaturated for fit=skip (the company is on the priority
+          // list but Claude already triaged it as "skip"). Per round-2:
+          // 🔥 emoji replaced with a small red `bad` dot — the row's
+          // `border-l-red-500` left edge is the actual priority cue, so
+          // the column just needs a quiet semantic marker, not a glyph.
           const isSkip = info.row.original.fit === 'skip';
           return (
             <span
-              className={clsx(isSkip && 'text-slate-400 opacity-50')}
+              className="inline-flex items-center"
               title={TOOLTIPS.priority}
+              aria-label={isSkip ? 'priority (deprioritized: skip)' : 'priority'}
             >
-              🔥
+              <Dot color={isSkip ? 'neutral' : 'bad'} size="sm" />
             </span>
           );
         },
@@ -435,7 +460,10 @@ export const JobsTable = ({
                     setPopoverState({ jobId: j.id, anchor: e.currentTarget });
                   }
                 }}
-                className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+                className={clsx(
+                  ROW_ACTION_BTN_BASE,
+                  'border-slate-300 bg-white text-slate-700 hover:bg-brand-50 hover:text-brand-700',
+                )}
                 title="Open in new tab + show row actions"
               >
                 Open ↗
@@ -450,7 +478,10 @@ export const JobsTable = ({
                     1200,
                   );
                 }}
-                className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-100"
+                className={clsx(
+                  ROW_ACTION_BTN_BASE,
+                  'border-slate-300 bg-white text-slate-700 hover:bg-slate-100',
+                )}
                 title={`Copy id: ${j.id}`}
               >
                 {copied === j.id ? 'copied!' : 'ID'}
@@ -460,7 +491,7 @@ export const JobsTable = ({
                   type="button"
                   onClick={() => handleInlineDelete(j.id)}
                   className={clsx(
-                    'rounded border px-2 py-0.5 text-xs transition-colors',
+                    ROW_ACTION_BTN_BASE,
                     confirmDeleteId === j.id
                       ? 'border-red-300 bg-red-600 text-white hover:bg-red-700'
                       : 'border-slate-300 bg-white text-slate-500 hover:bg-red-50 hover:text-red-700 hover:border-red-300',
@@ -634,11 +665,20 @@ export const JobsTable = ({
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       {j.priority && (
+                        // Per round-2: 🔥 emoji replaced with a quiet
+                        // semantic dot. The card already has the red
+                        // `border-l-red-500` left edge for priority — the
+                        // dot is just a redundant scan cue, no glyph noise.
                         <span
-                          className={clsx('text-base', isPriorityMuted && 'opacity-50')}
+                          className="inline-flex items-center"
                           title={TOOLTIPS.priority}
+                          aria-label={
+                            isPriorityMuted
+                              ? 'priority (deprioritized: skip)'
+                              : 'priority'
+                          }
                         >
-                          🔥
+                          <Dot color={isPriorityMuted ? 'neutral' : 'bad'} size="sm" />
                         </span>
                       )}
                       <label
@@ -678,8 +718,13 @@ export const JobsTable = ({
                   </div>
 
                   {/* Bottom action row — Open / ID copy / Del.
-                      Each button is min-h-[44px] for tap-target compliance. */}
-                  <div className="mt-2.5 flex items-center gap-2">
+                      Each button uses ROW_ACTION_BTN_BASE_MOBILE so all three
+                      share the same min-height, padding, font-weight, border
+                      treatment, and focus-visible ring. flex-1 on every button
+                      makes the row read as an even 3-segment group instead of
+                      a dominant Open + two tiny tail buttons (round-1 issue:
+                      Open=158px, ID=40px, Del=47px on iPhone). */}
+                  <div className="mt-2.5 flex items-stretch gap-2">
                     <button
                       type="button"
                       onClick={(e) => {
@@ -689,7 +734,10 @@ export const JobsTable = ({
                           setPopoverState({ jobId: j.id, anchor: e.currentTarget });
                         }
                       }}
-                      className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+                      className={clsx(
+                        ROW_ACTION_BTN_BASE_MOBILE,
+                        'border-slate-300 bg-white text-slate-700 hover:bg-brand-50 hover:text-brand-700',
+                      )}
                     >
                       Open ↗
                     </button>
@@ -704,7 +752,10 @@ export const JobsTable = ({
                           1200,
                         );
                       }}
-                      className="inline-flex min-h-[44px] items-center justify-center rounded border border-slate-300 bg-white px-3 text-sm text-slate-700 hover:bg-slate-100"
+                      className={clsx(
+                        ROW_ACTION_BTN_BASE_MOBILE,
+                        'border-slate-300 bg-white text-slate-700 hover:bg-slate-100',
+                      )}
                       title={`Copy id: ${j.id}`}
                     >
                       {copied === j.id ? 'copied' : 'ID'}
@@ -717,7 +768,7 @@ export const JobsTable = ({
                           handleInlineDelete(j.id);
                         }}
                         className={clsx(
-                          'inline-flex min-h-[44px] items-center justify-center rounded border px-3 text-sm transition-colors',
+                          ROW_ACTION_BTN_BASE_MOBILE,
                           confirmDeleteId === j.id
                             ? 'border-red-300 bg-red-600 text-white'
                             : 'border-slate-300 bg-white text-slate-500 hover:bg-red-50 hover:text-red-700 hover:border-red-300',
