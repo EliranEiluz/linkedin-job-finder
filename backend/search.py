@@ -2185,12 +2185,35 @@ def process_one_job(
         job.pop("_desc", None)
         job.pop("_diag", None)
 
+    # Stage 4.5 — derive `hot` from the just-applied fit/score/priority.
+    # Single source of truth: the frontend reads `j.hot` directly rather
+    # than recomputing the formula in TypeScript (avoids drift).
+    job["hot"] = _compute_hot(job)
+
     # Stage 5 — atomic-merge persistence (single-row writes are safe to
     # interleave with batched scraper writes thanks to the fcntl lock).
     if persist:
         save_results_merge([job])
         save_seen({job["id"]})
     return job
+
+
+# `hot` formula: a job is hot when Claude rated it 'good' AND either its
+# raw score crosses the threshold OR it's at a priority-list company.
+# Both clauses require fit='good' — a 'skip' job at a priority company
+# is NOT hot. Threshold is hardcoded for now; can be moved to config.json
+# later if tuning becomes useful.
+HOT_SCORE_MIN = 8
+
+def _compute_hot(job: dict) -> bool:
+    if job.get("fit") != "good":
+        return False
+    score = job.get("score")
+    if isinstance(score, (int, float)) and score >= HOT_SCORE_MIN:
+        return True
+    if job.get("priority"):
+        return True
+    return False
 
 
 def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts,

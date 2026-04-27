@@ -45,19 +45,13 @@ const fitBadge = (fit: Job['fit']) => {
   );
 };
 
-// "Hot" = a meaningful match, not just "company on my list". Computed
-// in the UI for now (backend can carry a `hot` field later if useful).
-// Formula:
-//   hot = fit === 'good' AND (score >= HOT_SCORE_MIN OR priority_company)
-// Both clauses require fit='good' — a "skip"-rated job at a priority
-// company is NOT hot. Threshold tunable from config later.
-const HOT_SCORE_MIN = 8;
-export const isHotJob = (j: Pick<Job, 'fit' | 'score' | 'priority'>): boolean => {
-  if (j.fit !== 'good') return false;
-  if (j.score != null && j.score >= HOT_SCORE_MIN) return true;
-  if (j.priority) return true;
-  return false;
-};
+// "Hot" = backend-derived match signal. The formula lives in
+// backend/search.py:_compute_hot — frontend just reads `j.hot` to keep
+// the UI in lockstep with the digest email + few-shot loop. Single
+// source of truth = no drift when the threshold or formula tunes.
+// Falls back to `false` for legacy rows persisted before the field
+// existed (the backfill should have caught them all, but defensive).
+export const isHotJob = (j: Pick<Job, 'hot'>): boolean => j.hot === true;
 
 // Compact amber pill for the desktop "!" column + mobile card priority
 // indicator. Replaces the old red `<Dot color="bad" />` per user feedback

@@ -57,6 +57,13 @@ export interface Job {
   msc_required: boolean | null;
   fit: Fit | null;
   score: number | null;
+  // Backend-derived "noteworthy match" flag, written by
+  // search.py:_compute_hot after Claude scoring. Frontend reads this
+  // directly — no recomputation — so the UI, the digest email, and
+  // the few-shot loop never disagree about which jobs are hot.
+  // Optional for backwards-compat with rows persisted before the field
+  // existed (the one-shot backfill caught all 209 today).
+  hot?: boolean | null;
   fit_reasons: string[];
   scored_by: ScoredBy | null;
   scraped_at?: string;
