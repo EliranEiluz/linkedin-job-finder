@@ -247,6 +247,9 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
                 Based on {state.signalCount} feedback{' '}
                 {state.signalCount === 1 ? 'signal' : 'signals'} (ratings,
                 applications, manual adds).
+                {state.kind === 'ready' && (
+                  <> Pick the rows you want and click Apply — they get merged into the active profile's <code className="rounded bg-slate-100 px-1 font-mono">config.json</code>.</>
+                )}
               </div>
             ) : null}
           </div>

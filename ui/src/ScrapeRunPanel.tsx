@@ -328,7 +328,7 @@ export const ScrapeRunPanel = () => {
     <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       {toast && <Toast msg={toast.msg} kind={toast.kind} />}
 
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-1 flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-600">
           Run scraper
         </h2>
@@ -343,6 +343,10 @@ export const ScrapeRunPanel = () => {
           ⓘ what's the difference?
         </span>
       </div>
+      <p className="mb-3 text-xs text-slate-500">
+        Kick off a one-off scrape now using the active profile's config. Logged-in uses Playwright + your saved
+        LinkedIn session for richer data; guest is HTTP-only and faster. Both write into the shared corpus.
+      </p>
 
       {/* Mobile: stack the three "Run …" buttons full-width so each is a
           comfortable tap target and the row doesn't leave one button

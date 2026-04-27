@@ -299,11 +299,27 @@ const DualRange = ({
 // the same). The dot color carries the semantic cue.
 // ─────────────────────────────────────────────────────────────────────
 
-const fitMeta: Record<FitKey, { label: string; dot: DotColor }> = {
-  good: { label: 'Good', dot: 'good' },
-  ok: { label: 'OK', dot: 'warn' },
-  skip: { label: 'Skip', dot: 'neutral' },
-  unscored: { label: 'Unscored', dot: 'neutral' },
+const fitMeta: Record<FitKey, { label: string; dot: DotColor; tooltip: string }> = {
+  good: {
+    label: 'Good',
+    dot: 'good',
+    tooltip: 'Strong CV match — Claude scored "good" fit (typically score 7+)',
+  },
+  ok: {
+    label: 'OK',
+    dot: 'warn',
+    tooltip: 'Borderline match — Claude scored "ok" fit (typically score 4–6)',
+  },
+  skip: {
+    label: 'Skip',
+    dot: 'neutral',
+    tooltip: 'Poor match — Claude scored "skip" (typically score ≤3)',
+  },
+  unscored: {
+    label: 'Unscored',
+    dot: 'neutral',
+    tooltip: 'No fit yet — scoring failed, ran with --no-enrich, or job is too new',
+  },
 };
 
 const LEGACY_CAT_LABELS: Record<string, string> = {
@@ -544,6 +560,7 @@ export const FilterPanel = ({
                     key={k}
                     label={m.label}
                     dot={m.dot}
+                    tooltip={m.tooltip}
                     selected={f.fits.size === 0 || f.fits.has(k)}
                     onClick={() =>
                       onChange({ ...f, fits: cycleEnumFilter(f.fits, ALL_FITS, k) })

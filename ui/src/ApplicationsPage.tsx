@@ -59,6 +59,20 @@ const STATUS_LABEL: Record<AppStatus, string> = {
   withdrew: 'Withdrew',
 };
 
+// Hover blurbs surfaced as the column-header title=… on the kanban. One short
+// sentence each — tells the user what counts as that stage. Mobile devices
+// won't see these (no hover) but desktop scanning is the main use case.
+const STATUS_BLURB: Record<AppStatus, string> = {
+  new: 'Default state — lives in the Corpus tab, not here.',
+  applied: "You sent the application; waiting for a reply.",
+  screening: 'Recruiter or hiring manager has reached out for a screen.',
+  interview: 'In an interview round (technical, behavioural, on-site).',
+  'take-home': 'Working on (or waiting on) a take-home assignment.',
+  offer: 'You have an offer in hand.',
+  rejected: 'Closed — they passed, or you got a clear no.',
+  withdrew: 'Closed — you pulled out (no longer interested or accepted elsewhere).',
+};
+
 // Tailwind tints for the column accent bar. Kept inline (instead of dynamic
 // class names) so Tailwind's JIT picks them up at build time.
 const STATUS_ACCENT: Record<AppStatus, string> = {
@@ -419,7 +433,10 @@ const Column = ({ status, jobs, firstStaleId, onOpenCard }: ColumnProps) => {
       <div className="sticky top-0 z-10 bg-slate-50 pb-2">
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-1.5">
-            <span className="text-sm font-semibold text-slate-800">
+            <span
+              className="cursor-help text-sm font-semibold text-slate-800"
+              title={STATUS_BLURB[status]}
+            >
               {STATUS_LABEL[status]}
             </span>
             <span className="rounded-full bg-slate-200 px-1.5 text-[10px] font-medium text-slate-600">
@@ -1525,9 +1542,10 @@ export const ApplicationsPage = () => {
             <h2 className="text-sm font-semibold text-slate-900">
               Application Tracker
             </h2>
-            {/* Subtitle dropped per §4.2 — the SummaryStrip below already
-                shows per-stage counts. Loading/error states still surface
-                here so the user gets feedback before the strip renders. */}
+            <p className="text-xs text-slate-500">
+              Drag cards across stages, or use Move to in the detail modal. Cards turn stale after 14 days without
+              movement in active stages.
+            </p>
             {(loadState === 'loading' || loadState === 'error') && (
               <p className="text-xs text-slate-500">
                 {loadState === 'loading'

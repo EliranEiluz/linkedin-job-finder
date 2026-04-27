@@ -279,7 +279,14 @@ export const JobsTable = ({
   const columns = useMemo(
     () => [
       columnHelper.accessor('priority', {
-        header: 'Hot',
+        header: () => (
+          <span
+            title={'Hot match — Claude scored "Good" fit at high score, or it\'s a priority-list company with a "Good" fit.'}
+            className="cursor-help"
+          >
+            Hot
+          </span>
+        ),
         cell: (info) => {
           // The column accessor is still `priority` (for sorting / filtering
           // wired elsewhere), but the cell now renders the *derived* HOT

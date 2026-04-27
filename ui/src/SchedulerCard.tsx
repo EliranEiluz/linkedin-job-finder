@@ -335,7 +335,7 @@ export const SchedulerCard = () => {
     <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       {toast && <Toast msg={toast.msg} kind={toast.kind} />}
 
-      <div className="mb-3 flex items-center justify-between gap-3">
+      <div className="mb-1 flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-600">
           Scheduler
         </h2>
@@ -354,6 +354,10 @@ export const SchedulerCard = () => {
           </button>
         </div>
       </div>
+      <p className="mb-3 text-xs text-slate-500">
+        A launchd LaunchAgent that runs the scraper at the chosen interval using the active profile's config.
+        "Active" means installed and loaded. Uninstall removes the plist; the corpus and config are untouched.
+      </p>
 
       {loading && !status && (
         <div className="rounded border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">

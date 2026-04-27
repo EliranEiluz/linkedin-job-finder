@@ -85,7 +85,11 @@ export const StatsBar = ({
           tooltip="Jobs you've ticked the Applied checkbox on"
         />
         <span aria-hidden="true" className="inline-block h-4 w-px shrink-0 bg-slate-300" />
-        <SummaryNum n={companies.size} label="Companies" />
+        <SummaryNum
+          n={companies.size}
+          label="Companies"
+          tooltip="Distinct companies in the loaded corpus"
+        />
 
         {/* Right-side action cluster — Add Job + Refresh. Pushed to the
             edge with ml-auto so it survives the horizontal scroll on mobile. */}
@@ -95,7 +99,7 @@ export const StatsBar = ({
               type="button"
               onClick={onAddManual}
               className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
-              title="Paste a LinkedIn URL or job ID to ingest one job manually"
+              title="Paste a LinkedIn URL or job ID to ingest one job manually — it goes through the same description-fetch and scoring pipeline as a scraped job"
             >
               <span aria-hidden="true">＋</span> Add Job
             </button>

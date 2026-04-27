@@ -140,7 +140,7 @@ export const ProfileSwitcher = ({ onActiveChange, extraActions }: Props) => {
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-1 flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold text-slate-700">Profile</span>
           {loading && <span className="text-xs text-slate-400">loading…</span>}
@@ -152,6 +152,13 @@ export const ProfileSwitcher = ({ onActiveChange, extraActions }: Props) => {
           <span className="text-xs italic text-slate-500">{toast}</span>
         )}
       </div>
+      <p className="mb-2 text-xs text-slate-500">
+        A profile is a saved <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">config.json</code> (CV,
+        queries, priority companies, scoring prompt). The active{' '}
+        <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">config.json</code> is a symlink — switching
+        repoints it. The corpus (<code className="rounded bg-slate-100 px-1 font-mono text-[11px]">results.json</code>)
+        is shared across all profiles.
+      </p>
 
       {action.kind === 'idle' && (
         <div className="flex flex-wrap items-center gap-2">

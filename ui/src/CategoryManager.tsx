@@ -161,7 +161,7 @@ export const CategoryManager = ({
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-1 flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-600">
           Search categories
         </h2>
@@ -173,6 +173,11 @@ export const CategoryManager = ({
           + Add category
         </button>
       </div>
+      <p className="mb-3 text-xs text-slate-500">
+        Each category is a list of LinkedIn search queries. <span className="font-medium">Keyword</span> runs the term
+        through normal search and filters by title relevance; <span className="font-medium">Company</span> runs it as a
+        company-name search and only keeps matching companies.
+      </p>
 
       {categories.length === 0 ? (
         <p className="rounded border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500">
