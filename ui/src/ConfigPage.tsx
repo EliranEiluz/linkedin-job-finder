@@ -421,41 +421,13 @@ export const ConfigPage = () => {
             ? `Config last modified: ${formatDistanceToNowStrict(new Date(state.mtimeMs), { addSuffix: true })}`
             : 'config.json does not exist yet — defaults are in effect'}
         </div>
-        <div className="flex items-center gap-2">
-          {/* Claude-powered config suggester. Disabled below the threshold
-              so the user gets an explicit reason rather than a silent
-              backend rejection. The signal-count is computed client-side
-              from results.json on page load (and on every reload). */}
-          <button
-            type="button"
-            onClick={() => setSuggestOpen(true)}
-            disabled={
-              signalCount === null || signalCount < MIN_SIGNALS_FOR_SUGGEST
-            }
-            title={
-              signalCount === null
-                ? 'Loading feedback signals…'
-                : signalCount < MIN_SIGNALS_FOR_SUGGEST
-                  ? `Need ≥${MIN_SIGNALS_FOR_SUGGEST} rated/applied/manual-added jobs (you have ${signalCount})`
-                  : `Suggest tweaks from ${signalCount} feedback signals`
-            }
-            className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            ✨ Suggest from feedback
-            {signalCount !== null && signalCount >= MIN_SIGNALS_FOR_SUGGEST && (
-              <span className="ml-1 text-[10px] tabular-nums text-slate-400">
-                ({signalCount})
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
-          >
-            ↻ Reload
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+        >
+          ↻ Reload
+        </button>
       </div>
 
       <ConfigSuggestModal
@@ -468,8 +440,37 @@ export const ConfigPage = () => {
       <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 pb-24 md:pb-4">
         <div className="mx-auto flex max-w-4xl flex-col gap-4">
           {/* Profile switcher — switching profiles repoints config.json to a
-              different file, then we reload to pull in the new draft state. */}
-          <ProfileSwitcher onActiveChange={() => void load()} />
+              different file, then we reload to pull in the new draft state.
+              The "Suggest from feedback" button is mounted via the
+              extraActions slot because the suggestion is always scoped to
+              the active profile's config. */}
+          <ProfileSwitcher
+            onActiveChange={() => void load()}
+            extraActions={
+              <button
+                type="button"
+                onClick={() => setSuggestOpen(true)}
+                disabled={
+                  signalCount === null || signalCount < MIN_SIGNALS_FOR_SUGGEST
+                }
+                title={
+                  signalCount === null
+                    ? 'Loading feedback signals…'
+                    : signalCount < MIN_SIGNALS_FOR_SUGGEST
+                      ? `Need ≥${MIN_SIGNALS_FOR_SUGGEST} rated/applied/manual-added jobs (you have ${signalCount})`
+                      : `Suggest tweaks from ${signalCount} feedback signals for the active profile's config`
+                }
+                className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                ✨ Suggest from feedback
+                {signalCount !== null && signalCount >= MIN_SIGNALS_FOR_SUGGEST && (
+                  <span className="ml-1 text-[10px] tabular-nums text-slate-400">
+                    ({signalCount})
+                  </span>
+                )}
+              </button>
+            }
+          />
 
           <ScrapeRunPanel />
 

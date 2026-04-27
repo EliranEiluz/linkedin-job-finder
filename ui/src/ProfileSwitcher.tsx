@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import clsx from 'clsx';
 
 interface ProfilesResponse {
@@ -44,9 +44,13 @@ interface Props {
   // Called whenever the active profile changes so the parent (ConfigPage)
   // can refetch /api/config and refresh its form fields.
   onActiveChange?: () => void;
+  // Right-aligned slot in the action row — used by ConfigPage to mount the
+  // "Suggest from feedback" button next to the profile selector, since the
+  // suggestion is always scoped to the active profile's config.
+  extraActions?: ReactNode;
 }
 
-export const ProfileSwitcher = ({ onActiveChange }: Props) => {
+export const ProfileSwitcher = ({ onActiveChange, extraActions }: Props) => {
   const [data, setData] = useState<ProfilesResponse>({ ok: false });
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState<Action>({ kind: 'idle' });
@@ -188,6 +192,7 @@ export const ProfileSwitcher = ({ onActiveChange }: Props) => {
           >
             Delete
           </button>
+          {extraActions && <span className="ml-auto">{extraActions}</span>}
         </div>
       )}
 
