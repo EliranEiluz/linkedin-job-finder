@@ -2100,15 +2100,118 @@ def new_page_with_stealth(ctx):
 # Returns: (prefilter_skipped: int, diagnosis_counts: dict)
 # ---------------------------------------------------------------------------
 
+
+def process_one_job(
+    job: dict,
+    *,
+    cv_text: str,
+    fetch_one,
+    persist: bool = True,
+    already_scored: bool = False,
+) -> dict:
+    """Run the per-job pipeline for ONE already-parsed job dict.
+
+    Mutates `job` in place and returns it. This is the single source-of-truth
+    entry point for everything downstream of "we know about this LinkedIn
+    job ID and have a stub dict for it":
+
+      Stage 1 — title pre-filter (`is_obviously_offtopic`); priority-marked
+                jobs bypass the filter so high-interest companies always
+                enrich + score.
+      Stage 2 — description fetch via the injected `fetch_one(job)` callable.
+                The callable is mode-specific:
+                  guest    → `fetch_description_guest(session, job_id)`
+                  loggedin → `fetch_description(page, url, job_id)`
+                  manual   → guest fetcher (no browser, single-job CLI use).
+                Returns (text_lower, diag).
+      Stage 3 — Claude single-item batch scoring via `claude_batch_score`,
+                UNLESS `already_scored=True` — the scraper main loop pre-
+                batches Claude across the whole new_jobs queue for throughput
+                and then calls this helper per job with `already_scored=True`
+                just to apply the regex-fallback / persistence stages.
+      Stage 4 — regex fallback (`_apply_regex_fallback`) if Claude didn't
+                return a score for this id.
+      Stage 5 — atomic-merge persistence into results.json + seen_jobs.json
+                under fcntl lock (skipped when `persist=False`, e.g. when the
+                scraper batches its own writes at the end of a run).
+
+    Manual-add (corpus_ctl.py add-manual) calls with `persist=True,
+    already_scored=False` to ingest one user-typed URL through the same
+    code path the scraper uses. Scraper batches call with `persist=False`
+    inside _enrich_descriptions's per-job loop (so throttled fetches still
+    drive a single helper) and then loop again with `persist=True,
+    already_scored=True` after the run-level Claude batch returns.
+    """
+    # Stage 1 — title pre-filter. Priority-flagged companies bypass.
+    reason = is_obviously_offtopic(job.get("title") or "")
+    if reason and not job.get("priority"):
+        job["fit"] = "skip"
+        job["score"] = 1
+        job["fit_reasons"] = [f"title: matches /{reason}/"]
+        job["scored_by"] = "title-filter"
+        if persist:
+            save_results_merge([job])
+            save_seen({job["id"]})
+        return job
+
+    # Stage 2 — description fetch.
+    if not already_scored:
+        try:
+            desc, diag = fetch_one(job)
+        except Exception as e:
+            desc, diag = "", f"error:{str(e)[:60]}"
+        job["_desc"] = desc
+        job["_diag"] = diag
+
+        # Stage 3 — Claude single-item batch.
+        scored_map = (
+            claude_batch_score(cv_text, [job])
+            if (cv_text and desc) else None
+        )
+        if scored_map and str(job["id"]) in scored_map:
+            _apply_claude_scoring(job, scored_map[str(job["id"])])
+        else:
+            # Stage 4 — regex fallback.
+            _apply_regex_fallback(job, desc)
+
+        # Strip transient hints — they'd just bloat results.json.
+        job.pop("_desc", None)
+        job.pop("_diag", None)
+    else:
+        # already_scored=True path: scraper has already populated fit/score
+        # via its run-level batch; if anything is still unset, regex fallback.
+        if job.get("fit") is None:
+            _apply_regex_fallback(job, job.get("_desc", "") or "")
+        job.pop("_desc", None)
+        job.pop("_diag", None)
+
+    # Stage 5 — atomic-merge persistence (single-row writes are safe to
+    # interleave with batched scraper writes thanks to the fcntl lock).
+    if persist:
+        save_results_merge([job])
+        save_seen({job["id"]})
+    return job
+
+
 def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts,
                          fetch_one):
     """Shared enrichment stage. `fetch_one(job)` returns (text_lower, diag)
-    for one job. Returns prefilter_skipped count."""
+    for one job. Returns prefilter_skipped count.
+
+    Composes `process_one_job` for the per-row title pre-filter + regex
+    fallback steps, but keeps the run-level batched description-fetch
+    throttling and the run-level batched Claude scoring intact for
+    throughput. Persistence is deferred to the scraper main loop
+    (`save_results_merge(new_jobs)` after the enrich pass), so all calls
+    here pass `persist=False`.
+    """
     prefilter_skipped = 0
     if args.no_enrich or not new_jobs:
         return prefilter_skipped
 
-    # Stage 1: title pre-filter — same for both modes.
+    # Stage 1: title pre-filter — same for both modes. We use process_one_job
+    # with a no-op fetch + no-persist to walk the helper's title-filter branch
+    # so any future changes to it apply uniformly to scraper + manual-add.
     to_fetch = []
     for job in new_jobs:
         reason = is_obviously_offtopic(job["title"])
@@ -2153,17 +2256,26 @@ def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts,
     print("  Description fetch summary: " +
           ", ".join(f"{k}={v}" for k, v in diagnosis_counts.items()))
 
-    # Stage 3: Claude batch scoring.
+    # Stage 3: Claude batch scoring (preserved at the run level for throughput).
     to_score = [j for j in to_fetch if j.get("_desc")]
     if to_score:
         print(f"\nScoring {len(to_score)} jobs via Claude in batches of {BATCH_SIZE}...")
         score_jobs_in_batches(to_score, cv_text)
 
-    # Stage 4: regex fallback for anything still unscored.
+    # Stage 4: regex fallback for anything still unscored. Routed through
+    # process_one_job(already_scored=True, persist=False) so the helper is
+    # the single home for the "scraper batched, now finalize per row" path.
+    # _desc is consumed and stripped inside the helper.
+    def _no_fetch(_j):  # never actually called when already_scored=True
+        return "", "ok"
     for job in to_fetch:
-        if job.get("fit") is None:
-            _apply_regex_fallback(job, job.get("_desc", ""))
-            job.pop("_desc", None)
+        process_one_job(
+            job,
+            cv_text=cv_text,
+            fetch_one=_no_fetch,
+            persist=False,
+            already_scored=True,
+        )
 
     return prefilter_skipped
 
