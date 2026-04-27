@@ -462,7 +462,7 @@ export const ConfigPage = () => {
                 }
                 className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                ✨ Suggest from feedback
+                ✨ Improve this config from feedback
                 {signalCount !== null && signalCount >= MIN_SIGNALS_FOR_SUGGEST && (
                   <span className="ml-1 text-[10px] tabular-nums text-slate-400">
                     ({signalCount})
