@@ -2,13 +2,6 @@ import { ChipInput } from './ChipInput';
 import { newCategoryId } from './configMigrate';
 import type { Category, CategoryType } from './configTypes';
 
-const TYPE_BLURB: Record<CategoryType, string> = {
-  keyword:
-    'Runs the term through LinkedIn search and applies token-relevance filtering on titles/snippets.',
-  company:
-    "Runs the term as a company-name search; the company name in each result must contain the query.",
-};
-
 const CategoryRow = ({
   category,
   isFirst,
@@ -94,9 +87,6 @@ const CategoryRow = ({
           />
           Company search
         </label>
-        <span className="ml-1 flex-1 text-[11px] italic text-slate-500">
-          {TYPE_BLURB[category.type]}
-        </span>
       </div>
 
       <div className="px-1">
@@ -174,8 +164,9 @@ export const CategoryManager = ({
         </button>
       </div>
       <p className="mb-3 text-xs text-slate-500">
-        Each category is a group of LinkedIn search queries that run together. Pick a type per category — what
-        keyword vs. company means is shown next to each row's radio buttons.
+        Each category is a list of LinkedIn search queries. <span className="font-medium">Keyword</span> runs the term
+        through normal search and filters by title relevance; <span className="font-medium">Company</span> runs it as a
+        company-name search and only keeps matching companies.
       </p>
 
       {categories.length === 0 ? (
