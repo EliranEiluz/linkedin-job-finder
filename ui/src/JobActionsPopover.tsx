@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { Job } from './types';
+import { RatingCommentEditor } from './RatingCommentEditor';
 
 interface Props {
   job: Job;
@@ -20,48 +21,27 @@ interface Props {
   onClose: () => void;
 }
 
-const COMMENT_MAX = 2000;
-const COMMENT_AUTOSAVE_MS = 600;
-
 /**
  * Floating popover with three quick actions for one row:
  *   - applied toggle (mirrors the row's checkbox)
- *   - 1–5 star rating (persisted to results.json via /api/corpus/rate)
+ *   - 1–5 star rating + free-text comment (via <RatingCommentEditor />)
  *   - delete (with single-click confirm — second click commits)
  *
  * Click-outside or Escape dismisses. The actual "open in new tab" still
  * happens at the call site (JobsTable) — this popover is purely the
  * follow-up actions menu.
+ *
+ * The rating + comment block is the shared <RatingCommentEditor /> — same
+ * component used by ApplicationsPage's card-detail modal and JobsTable's
+ * expanded-row panel. All three write to the same results.json fields.
  */
 export const JobActionsPopover = ({
   job, isApplied, onToggleApplied, onRate, onDelete, anchorRef, onClose,
 }: Props) => {
   const popoverRef = useRef<HTMLDivElement | null>(null);
-  // Local optimistic rating — instant visual feedback; the network call
-  // is fire-and-forget. If the call fails we revert + show an inline error.
-  const [rating, setRating] = useState<number | null>(job.rating ?? null);
-  const [hoverRating, setHoverRating] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  // Comment editor state. `commentDraft` is what the user is typing;
-  // `commentSaved` is the last value successfully persisted (used to
-  // decide whether a blur/unmount flush actually has unsaved work).
-  const [commentDraft, setCommentDraft] = useState<string>(job.comment ?? '');
-  const [commentSaved, setCommentSaved] = useState<string>(job.comment ?? '');
-  const [saveStatus, setSaveStatus] =
-    useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const debounceRef = useRef<number | null>(null);
-  const savedFadeRef = useRef<number | null>(null);
-  // Stable refs for the unmount-flush callback so it always sees the
-  // latest values without re-binding the cleanup effect.
-  const draftRef = useRef(commentDraft);
-  draftRef.current = commentDraft;
-  const savedRef = useRef(commentSaved);
-  savedRef.current = commentSaved;
-  const ratingRef = useRef(rating);
-  ratingRef.current = rating;
 
   // —— positioning: place popover beneath the anchor button ——
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
@@ -102,79 +82,6 @@ export const JobActionsPopover = ({
       document.removeEventListener('keydown', onKey);
     };
   }, [anchorRef, onClose]);
-
-  const handleRate = async (n: number | null) => {
-    const previous = rating;
-    setRating(n);
-    setErr(null);
-    // Don't touch the comment field — it's saved separately on its own
-    // debounce / blur cycle.
-    const r = await onRate(job.id, n);
-    if (!r.ok) {
-      setRating(previous);
-      setErr(r.error || 'rate failed');
-    }
-  };
-
-  // Persist the current comment draft. Used by both the debounced
-  // autosave and the blur/unmount flush. No-op when nothing is dirty.
-  const saveComment = useCallback(
-    async (text: string) => {
-      if (text === savedRef.current) return; // no change
-      setSaveStatus('saving');
-      // Empty (or whitespace-only) → null = clear server-side
-      const payload: string | null = text.trim() === '' ? null : text;
-      const r = await onRate(job.id, ratingRef.current, payload);
-      if (r.ok) {
-        setCommentSaved(text);
-        setSaveStatus('saved');
-        if (savedFadeRef.current) window.clearTimeout(savedFadeRef.current);
-        savedFadeRef.current = window.setTimeout(
-          () => setSaveStatus('idle'), 1500,
-        );
-      } else {
-        setSaveStatus('error');
-        setErr(r.error || 'comment save failed');
-      }
-    },
-    [job.id, onRate],
-  );
-
-  // On unmount: flush any pending comment edit before the popover dies.
-  // Best-effort (fire-and-forget — we can't await unmount).
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) {
-        window.clearTimeout(debounceRef.current);
-        debounceRef.current = null;
-      }
-      if (savedFadeRef.current) {
-        window.clearTimeout(savedFadeRef.current);
-        savedFadeRef.current = null;
-      }
-      if (draftRef.current !== savedRef.current) {
-        void saveComment(draftRef.current);
-      }
-    };
-  }, [saveComment]);
-
-  const handleCommentChange = (text: string) => {
-    setCommentDraft(text);
-    setSaveStatus('idle');
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(() => {
-      void saveComment(text);
-      debounceRef.current = null;
-    }, COMMENT_AUTOSAVE_MS);
-  };
-
-  const handleCommentBlur = () => {
-    if (debounceRef.current) {
-      window.clearTimeout(debounceRef.current);
-      debounceRef.current = null;
-    }
-    void saveComment(commentDraft);
-  };
 
   const handleDelete = async () => {
     if (!confirmDelete) {
@@ -239,90 +146,14 @@ export const JobActionsPopover = ({
         <span className="text-slate-700">Mark as applied</span>
       </label>
 
-      {/* 1–5 rating */}
-      <div className="mt-2">
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-            Rate this option
-          </span>
-          {rating !== null && (
-            <button
-              type="button"
-              onClick={() => void handleRate(null)}
-              className="text-[11px] text-slate-400 hover:text-slate-700"
-              title="Clear rating"
-            >
-              clear
-            </button>
-          )}
-        </div>
-        <div
-          className="flex items-center gap-1"
-          onMouseLeave={() => setHoverRating(null)}
-        >
-          {[1, 2, 3, 4, 5].map((n) => {
-            const filled = (hoverRating ?? rating ?? 0) >= n;
-            return (
-              <button
-                key={n}
-                type="button"
-                onClick={() => void handleRate(n)}
-                onMouseEnter={() => setHoverRating(n)}
-                className={clsx(
-                  'flex h-7 w-7 items-center justify-center rounded text-lg leading-none transition-colors',
-                  filled
-                    ? 'text-amber-400 hover:text-amber-500'
-                    : 'text-slate-300 hover:text-slate-400',
-                )}
-                title={`${n} star${n > 1 ? 's' : ''}`}
-                aria-label={`Rate ${n} of 5`}
-              >
-                ★
-              </button>
-            );
-          })}
-        </div>
-        <p className="mt-1 text-[10px] text-slate-400">
-          Used to personalize future Claude scoring.
-        </p>
-      </div>
-
-      {/* Comment */}
-      <div className="mt-3">
-        <div className="mb-1 flex items-center justify-between">
-          <label
-            htmlFor={`comment-${job.id}`}
-            className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
-          >
-            Comment
-          </label>
-          <span
-            className={clsx(
-              'text-[10px]',
-              saveStatus === 'saving' && 'text-slate-400',
-              saveStatus === 'saved' && 'text-emerald-600',
-              saveStatus === 'error' && 'text-red-600',
-              saveStatus === 'idle' && 'text-slate-300',
-            )}
-          >
-            {saveStatus === 'saving' && 'saving…'}
-            {saveStatus === 'saved' && 'saved'}
-            {saveStatus === 'error' && 'save failed'}
-            {saveStatus === 'idle' && commentDraft !== commentSaved && 'unsaved'}
-            {saveStatus === 'idle' && commentDraft === commentSaved &&
-              `${commentDraft.length}/${COMMENT_MAX}`}
-          </span>
-        </div>
-        <textarea
-          id={`comment-${job.id}`}
-          value={commentDraft}
-          onChange={(e) => handleCommentChange(e.target.value.slice(0, COMMENT_MAX))}
-          onBlur={handleCommentBlur}
-          rows={3}
-          placeholder="Why this rating? Anything to remember about this role…"
-          className="w-full resize-y rounded border border-slate-200 px-2 py-1.5 text-xs text-slate-800 placeholder:text-slate-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-        />
-      </div>
+      {/* Shared rating + comment editor — same component used by the
+          tracker modal and the corpus row-expanded panel. */}
+      <RatingCommentEditor
+        jobId={job.id}
+        initialRating={job.rating ?? null}
+        initialComment={job.comment ?? null}
+        onSave={(rating, comment) => onRate(job.id, rating, comment)}
+      />
 
       {/* Delete */}
       <div className="mt-3 border-t border-slate-100 pt-2">

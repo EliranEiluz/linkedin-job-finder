@@ -12,6 +12,7 @@ import {
 } from '@tanstack/react-table';
 import type { Job } from './types';
 import { JobActionsPopover } from './JobActionsPopover';
+import { RatingCommentEditor } from './RatingCommentEditor';
 import { useViewport } from './useViewport';
 import { Dot } from './Dot';
 
@@ -151,9 +152,15 @@ interface Props {
   onSetAppliedMany?: (ids: string[], applied: boolean) => void;
   // Corpus mutations exposed from CorpusPage's useCorpusActions(). When
   // both are provided, clicking "Open ↗" pops over the row-actions menu
-  // (rate / delete / re-toggle applied) AFTER opening the new tab.
-  onRate?: (id: string, rating: number | null) =>
-    Promise<{ ok: boolean; error?: string }>;
+  // (rate / delete / re-toggle applied) AFTER opening the new tab. The
+  // optional `comment` is tri-state on the wire (see hooks.ts) — we
+  // forward it through so the inline editor in the row-expanded panel
+  // can persist comment edits without changing the rating.
+  onRate?: (
+    id: string,
+    rating: number | null,
+    comment?: string | null,
+  ) => Promise<{ ok: boolean; error?: string }>;
   onDelete?: (id: string) =>
     Promise<{ ok: boolean; error?: string }>;
   // category-id → human-readable name from /api/config. When provided, the
@@ -831,15 +838,31 @@ export const JobsTable = ({
                           </code>
                         </div>
                       </dl>
-                      {j.comment && (
+                      {/* Inline rating + comment editor (same as desktop
+                          expanded row). Compact density to keep the card
+                          tight. Falls back to read-only when onRate isn't
+                          wired. */}
+                      {onRate ? (
                         <div className="mt-3 border-t border-slate-200 pt-2">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                            Your comment{j.rating != null && ` (rated ${j.rating}/5)`}
-                          </div>
-                          <div className="mt-1 whitespace-pre-wrap text-xs">
-                            {j.comment}
-                          </div>
+                          <RatingCommentEditor
+                            jobId={j.id}
+                            initialRating={j.rating ?? null}
+                            initialComment={j.comment ?? null}
+                            onSave={(rating, comment) => onRate(j.id, rating, comment)}
+                            density="compact"
+                          />
                         </div>
+                      ) : (
+                        j.comment && (
+                          <div className="mt-3 border-t border-slate-200 pt-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                              Your comment{j.rating != null && ` (rated ${j.rating}/5)`}
+                            </div>
+                            <div className="mt-1 whitespace-pre-wrap text-xs">
+                              {j.comment}
+                            </div>
+                          </div>
+                        )
                       )}
                     </div>
                   )}
@@ -964,19 +987,33 @@ export const JobsTable = ({
                               </div>
                             </div>
                           </dl>
-                          {/* User comment from the rating popover. Read-only
-                              here — open the popover (Open ↗) to edit. Surfaces
-                              the comment in the row so you don't have to
-                              re-open the popover to remember why you rated it. */}
-                          {j.comment && (
+                          {/* Inline rating + comment editor — same component
+                              used by the Corpus popover and the Tracker
+                              detail modal. Compact density to fit the row.
+                              When `onRate` isn't wired, fall back to the
+                              previous read-only comment block (used by any
+                              caller that doesn't pass mutations). */}
+                          {onRate ? (
                             <div className="mt-3 border-t border-slate-200 pt-3">
-                              <dt className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                                Your comment{j.rating != null && ` (rated ${j.rating}/5)`}
-                              </dt>
-                              <dd className="mt-1 whitespace-pre-wrap text-xs text-slate-700">
-                                {j.comment}
-                              </dd>
+                              <RatingCommentEditor
+                                jobId={j.id}
+                                initialRating={j.rating ?? null}
+                                initialComment={j.comment ?? null}
+                                onSave={(rating, comment) => onRate(j.id, rating, comment)}
+                                density="compact"
+                              />
                             </div>
+                          ) : (
+                            j.comment && (
+                              <div className="mt-3 border-t border-slate-200 pt-3">
+                                <dt className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                  Your comment{j.rating != null && ` (rated ${j.rating}/5)`}
+                                </dt>
+                                <dd className="mt-1 whitespace-pre-wrap text-xs text-slate-700">
+                                  {j.comment}
+                                </dd>
+                              </div>
+                            )
                           )}
                         </td>
                       </tr>

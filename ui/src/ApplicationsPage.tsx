@@ -30,8 +30,9 @@ import {
   type SortingState,
 } from '@tanstack/react-table';
 import { APP_STATUS_ORDER, type AppStatus, type Job } from './types';
-import { useAppStatus } from './hooks';
+import { useAppStatus, useCorpusActions } from './hooks';
 import { Dot, type DotColor } from './Dot';
+import { RatingCommentEditor } from './RatingCommentEditor';
 
 // ---- Constants ------------------------------------------------------------
 
@@ -837,6 +838,16 @@ interface AppDetailModalProps {
     id: string,
     next: AppStatus,
   ) => Promise<{ ok: boolean; error?: string }>;
+  // Rating + rating-comment writer. Distinct from app_notes — different
+  // results.json fields (rating + comment) and different surface
+  // (also editable from the Corpus popover and row-expanded panel). The
+  // <RatingCommentEditor /> below owns its own autosave timers, so its
+  // saves and the app_notes saves don't share state.
+  onRate: (
+    id: string,
+    rating: number | null,
+    comment?: string | null,
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 // Centered overlay modal — picked over an anchored popover because it
@@ -851,7 +862,7 @@ interface AppDetailModalProps {
 //   - status indicator: saving… / saved / save failed / unsaved / N/MAX
 //   - empty / whitespace-only normalizes to null = clears app_notes
 const AppDetailModal = ({
-  job, onClose, onSaveNotes, onChangeStatus,
+  job, onClose, onSaveNotes, onChangeStatus, onRate,
 }: AppDetailModalProps) => {
   const status = (job.app_status ?? 'new') as AppStatus;
 
@@ -1033,6 +1044,20 @@ const AppDetailModal = ({
 
         {/* Body — scrollable on small viewports */}
         <div className="flex-1 overflow-y-auto px-4 py-3">
+          {/* Rating + rating-comment — same component used by the Corpus
+              popover and the JobsTable expanded row. Writes the SAME
+              results.json fields (rating, comment, rated_at), distinct
+              from app_notes below. Owns its own debounce/autosave timers
+              so it doesn't collide with the notes editor's. */}
+          <div className="mb-4 border-b border-slate-100 pb-4">
+            <RatingCommentEditor
+              jobId={job.id}
+              initialRating={job.rating ?? null}
+              initialComment={job.comment ?? null}
+              onSave={(rating, comment) => onRate(job.id, rating, comment)}
+            />
+          </div>
+
           {/* Notes textarea */}
           <div>
             <div className="mb-1 flex items-center justify-between">
@@ -1192,6 +1217,7 @@ export const ApplicationsPage = () => {
   }, []);
 
   const { setAppStatus, bulkImportApplied } = useAppStatus();
+  const { rateJob } = useCorpusActions();
 
   // ---- Toast helper ----
   const showToast = useCallback(
@@ -1586,6 +1612,7 @@ export const ApplicationsPage = () => {
           onClose={() => setOpenDetailFor(null)}
           onSaveNotes={(id, status, note) => setAppStatus(id, status, note)}
           onChangeStatus={handleChangeStatusFromModal}
+          onRate={(id, rating, comment) => rateJob(id, rating, comment)}
         />
       )}
     </div>
