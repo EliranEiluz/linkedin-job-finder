@@ -502,27 +502,24 @@ export const JobsTable = ({
                   aria-label="Delete from corpus"
                 >
                   {confirmDeleteId === j.id ? (
-                    // Confirm-state: red-filled trash with a small check
-                    // overlay reads as "tap to confirm" without the awkward
-                    // mid-bar text label that round-1 used. Same canvas size
-                    // as the idle icon so the button bar height is stable.
-                    <svg
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="h-4 w-4"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M2.5 4h11M5.5 4V2.5h5V4M3.7 4l.5 9.5a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9l.5-9.5"
-                        fill="currentColor"
-                        fillOpacity="0.25"
-                      />
-                      <path d="M5.5 9.5l1.75 1.75L10.5 8" strokeWidth="1.75" />
-                    </svg>
+                    // Confirm-state: text label so it's unmistakable. Width
+                    // grows for ~4s during the confirm window — that's the
+                    // point, it should grab the eye. Idle state is icon-only.
+                    <span className="inline-flex items-center gap-1">
+                      <svg
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-3.5 w-3.5"
+                        aria-hidden="true"
+                      >
+                        <path d="M2.5 4h11M5.5 4V2.5h5V4M3.7 4l.5 9.5a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9l.5-9.5" />
+                      </svg>
+                      <span>Delete?</span>
+                    </span>
                   ) : (
                     <svg
                       viewBox="0 0 16 16"
