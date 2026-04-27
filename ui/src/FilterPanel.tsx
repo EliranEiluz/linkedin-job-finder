@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import type { Category } from './types';
+import { Dot, type DotColor } from './Dot';
 import {
   ALL_CATEGORIES,
   ALL_FITS,
@@ -56,70 +57,148 @@ const cycleEnumFilter = <T,>(set: Set<T>, options: readonly T[], clicked: T): Se
   return next.size === options.length ? new Set() : next;
 };
 
-const SectionHeader = ({ children }: { children: React.ReactNode }) => (
-  <div className="mb-1.5 mt-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+// Section: a header with optional right-side accessory + tight gap to its
+// children. Replaces the flat `mt-4` headers — section spacing now lives on
+// the wrapper, not on the header itself, so the first section doesn't push
+// off the sidebar header.
+const Section = ({
+  title,
+  hint,
+  accessory,
+  children,
+  className,
+}: {
+  title: string;
+  hint?: string;
+  accessory?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) => (
+  <section className={clsx('flex flex-col gap-1.5', className)}>
+    <div className="flex items-baseline justify-between gap-2">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+        {title}
+        {hint && (
+          <span className="ml-1.5 text-[10px] font-normal normal-case tracking-normal text-slate-400">
+            {hint}
+          </span>
+        )}
+      </h3>
+      {accessory}
+    </div>
     {children}
-  </div>
+  </section>
 );
 
-const Check = ({
-  checked,
-  onChange,
+// Pill row used by fit / scoredBy / source / category. One row per option,
+// full-width, with a leading semantic dot, sentence-case label, and a check
+// glyph on the right when "selected" (i.e. the option survives the filter).
+//
+// Min height 32px desktop, 36px on touch (`md:min-h-8 min-h-9`) — Apple HIG
+// 44px gets satisfied via wrapping padding + tap target on the parent <li>.
+//
+// Selected = bg-slate-50 (very subtle), with leading dot + checkmark glyph.
+// Unselected = no bg, dot is at 50% opacity to telegraph "filtered out".
+const PillRow = ({
+  selected,
+  onClick,
+  dot,
   label,
   count,
   tooltip,
 }: {
-  checked: boolean;
-  onChange: () => void;
+  selected: boolean;
+  onClick: () => void;
+  dot?: DotColor;
   label: string;
   count?: number;
   tooltip?: string;
 }) => (
-  <label
-    className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-0.5 text-sm hover:bg-slate-100"
+  <button
+    type="button"
+    onClick={onClick}
     title={tooltip}
+    aria-pressed={selected}
+    className={clsx(
+      'group flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm',
+      'transition-colors focus-visible:outline-none focus-visible:ring-2',
+      'focus-visible:ring-brand-700 focus-visible:ring-offset-1 md:min-h-8',
+      selected
+        ? 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700',
+    )}
   >
-    <input
-      type="checkbox"
-      checked={checked}
-      onChange={onChange}
-      className="h-3.5 w-3.5 rounded border-slate-300 text-brand-700 focus:ring-brand-700"
-    />
+    {dot && (
+      <span className={clsx('shrink-0', !selected && 'opacity-40')}>
+        <Dot color={dot} />
+      </span>
+    )}
     <span className="flex-1 truncate">{label}</span>
     {count !== undefined && (
-      <span className="tabular-nums text-xs text-slate-400">{count}</span>
+      <span className="shrink-0 tabular-nums text-xs text-slate-400">
+        {count}
+      </span>
     )}
-  </label>
+    {selected && (
+      <svg
+        viewBox="0 0 16 16"
+        className="h-3.5 w-3.5 shrink-0 text-brand-700"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M3 8.5l3.5 3.5L13 5" />
+      </svg>
+    )}
+  </button>
 );
 
+// Tri-toggle: 3-segmented control. Selected segment fills brand; others are
+// neutral. 32px desktop / 36px mobile minimum. Equal-width via `flex-1` so
+// the buttons don't shift when their labels change widths.
 const TriToggle = ({
   value,
   onChange,
-  labels = ['all', 'yes', 'no'],
+  labels,
+  ariaLabel,
 }: {
   value: Tri;
   onChange: (v: Tri) => void;
-  labels?: [string, string, string];
+  labels: [string, string, string];
+  ariaLabel: string;
 }) => (
-  <div className="inline-flex overflow-hidden rounded border border-slate-300 text-xs">
-    {(['all', 'yes', 'no'] as const).map((k, i) => (
-      <button
-        key={k}
-        type="button"
-        onClick={() => onChange(k)}
-        className={clsx(
-          // `inline-flex items-center` + `leading-5` pin a concrete 28px
-          // button height. Without these the children rendered at 8px tall
-          // (post-polish baseline-collapse bug) and the toggle was invisible.
-          'inline-flex items-center px-2.5 py-1 leading-5 transition-colors',
-          value === k
-            ? 'bg-brand-700 text-white'
-            : 'bg-white text-slate-700 hover:bg-slate-100',
-        )}
-      >
-        {labels[i]}
-      </button>
-    ))}
+  <div
+    role="radiogroup"
+    aria-label={ariaLabel}
+    className="flex w-full overflow-hidden rounded-md border border-slate-300 bg-white text-xs font-medium"
+  >
+    {(['all', 'yes', 'no'] as const).map((k, i) => {
+      const isSel = value === k;
+      return (
+        <button
+          key={k}
+          type="button"
+          role="radio"
+          aria-checked={isSel}
+          onClick={() => onChange(k)}
+          className={clsx(
+            // Equal-width segments. `min-h-9 md:min-h-8` = 36/32px tap target.
+            'inline-flex flex-1 items-center justify-center px-2 py-1.5 leading-5',
+            'transition-colors focus-visible:outline-none focus-visible:ring-2',
+            'focus-visible:ring-inset focus-visible:ring-brand-700 min-h-9 md:min-h-8',
+            i > 0 && 'border-l border-slate-300',
+            isSel
+              ? 'bg-brand-700 text-white'
+              : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+          )}
+        >
+          {labels[i]}
+        </button>
+      );
+    })}
   </div>
 );
 
@@ -129,21 +208,26 @@ const DualRange = ({
   lo,
   hi,
   onChange,
+  isDefault: isAll,
 }: {
   min: number;
   max: number;
   lo: number;
   hi: number;
   onChange: (lo: number, hi: number) => void;
+  isDefault: boolean;
 }) => {
   const range = max - min;
   const loPct = ((lo - min) / range) * 100;
   const hiPct = ((hi - min) / range) * 100;
   return (
     <div className="px-1">
-      <div className="flex items-center justify-between text-xs text-slate-600">
-        <span className="tabular-nums">{lo}</span>
-        <span className="tabular-nums">{hi}</span>
+      <div className="mb-1 flex items-center justify-between text-xs text-slate-600">
+        <span className="tabular-nums font-medium text-slate-700">{lo}</span>
+        <span className={clsx('text-[10px] uppercase tracking-wider', isAll ? 'text-slate-400' : 'text-brand-700')}>
+          {isAll ? 'Any' : `${lo}–${hi}`}
+        </span>
+        <span className="tabular-nums font-medium text-slate-700">{hi}</span>
       </div>
       <div className="relative h-5">
         <div className="absolute left-0 right-0 top-1/2 h-1 -translate-y-1/2 rounded bg-slate-200" />
@@ -161,6 +245,7 @@ const DualRange = ({
             onChange(v, hi);
           }}
           className="range-thumb"
+          aria-label="Minimum score"
         />
         <input
           type="range"
@@ -172,51 +257,105 @@ const DualRange = ({
             onChange(lo, v);
           }}
           className="range-thumb"
+          aria-label="Maximum score"
         />
       </div>
     </div>
   );
 };
 
-const fitLabel: Record<FitKey, string> = {
-  good: 'Good',
-  ok: 'OK',
-  skip: 'Skip',
-  unscored: 'Unscored',
+// ─────────────────────────────────────────────────────────────────────
+// Label tables. Sentence case across the board (Nord/PatternFly/Carbon).
+// "OK" stays uppercase (acronym). "Logged-in" hyphenated.
+// Source labels lost their decorative emojis in §3 polish (JobsTable did
+// the same). The dot color carries the semantic cue.
+// ─────────────────────────────────────────────────────────────────────
+
+const fitMeta: Record<FitKey, { label: string; dot: DotColor }> = {
+  good: { label: 'Good', dot: 'good' },
+  ok: { label: 'OK', dot: 'warn' },
+  skip: { label: 'Skip', dot: 'neutral' },
+  unscored: { label: 'Unscored', dot: 'neutral' },
 };
-// Pretty label for a category id. Legacy ids get human-readable names;
-// user-defined category ids render title-cased from the id itself.
+
 const LEGACY_CAT_LABELS: Record<string, string> = {
   crypto: 'Crypto',
-  security_researcher: 'Security Researcher',
+  security_researcher: 'Security researcher',
   company: 'Company',
 };
 const catLabel = (id: string): string =>
   LEGACY_CAT_LABELS[id] ??
-  id.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-const byLabel: Record<ScoredByKey, string> = {
-  claude: 'Claude',
-  regex: 'Regex',
-  'title-filter': 'Title-filter',
-  none: 'None',
+  id.replace(/[_-]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+
+const byMeta: Record<ScoredByKey, { label: string; dot: DotColor; tooltip: string }> = {
+  claude: {
+    label: 'Claude',
+    dot: 'brand',
+    tooltip: 'Scored by Claude — ranked your CV vs the job description',
+  },
+  regex: {
+    label: 'Regex',
+    dot: 'neutral',
+    tooltip: 'Scored by the regex fallback (when Claude was unavailable)',
+  },
+  'title-filter': {
+    label: 'Title-filter',
+    dot: 'warn',
+    tooltip: 'Dropped by the off-topic title pre-filter — never sent to Claude',
+  },
+  none: {
+    label: 'Not scored',
+    dot: 'neutral',
+    tooltip: 'Not scored yet — ran with --no-enrich or fetch failed',
+  },
 };
-const byTooltip: Record<ScoredByKey, string> = {
-  claude: 'Scored by Claude — ranked your CV vs the job description',
-  regex: 'Scored by the regex fallback (when Claude was unavailable)',
-  'title-filter': 'Dropped by the off-topic title pre-filter — never sent to Claude',
-  none: 'Not scored yet — ran with --no-enrich or fetch failed',
+
+const srcMeta: Record<SourceKey, { label: string; dot: DotColor; tooltip: string }> = {
+  loggedin: {
+    label: 'Logged-in',
+    dot: 'brand',
+    tooltip: 'Scraped via Playwright + saved LinkedIn session',
+  },
+  guest: {
+    label: 'Guest',
+    dot: 'good',
+    tooltip: 'Scraped via the unauthenticated /jobs-guest API',
+  },
+  manual: {
+    label: 'Manual',
+    dot: 'warn',
+    tooltip: 'Added via the Corpus tab\'s "+ Add Job" button',
+  },
+  unknown: {
+    label: 'Unknown (legacy)',
+    dot: 'neutral',
+    tooltip: 'Scraped before mode-tagging existed (mid-April 2026)',
+  },
 };
-const srcLabel: Record<SourceKey, string> = {
-  loggedin: '🔐 Logged-in',
-  guest: '🌐 Guest',
-  manual: '✋ Manual',
-  unknown: 'Unknown (legacy)',
+
+const dateMeta: Record<DateQuick, string> = {
+  '24h': 'Today',
+  '7d': '7 days',
+  '30d': '30 days',
+  all: 'Anytime',
+  custom: 'Custom',
 };
-const srcTooltip: Record<SourceKey, string> = {
-  loggedin: 'Job scraped via Playwright + saved LinkedIn session',
-  guest: 'Job scraped via the unauthenticated /jobs-guest API',
-  manual: 'Added via the Corpus tab\'s "+ Add Job" button (paste a LinkedIn URL/ID)',
-  unknown: 'Scraped before mode-tagging existed (mid-April 2026)',
+
+// Active-filter count for the sidebar header badge. Mirrors `isDefault`'s
+// dimensions so a value of 0 ⇔ isDefault is true.
+const countActive = (f: FilterState): number => {
+  const d = defaultFilters();
+  let n = 0;
+  if (f.search.trim()) n++;
+  if (f.fits.size !== d.fits.size) n++;
+  if (f.priority !== d.priority) n++;
+  if (f.categories.size !== d.categories.size) n++;
+  if (f.scoredBy.size !== d.scoredBy.size) n++;
+  if (f.sources.size !== d.sources.size) n++;
+  if (f.scoreMin !== d.scoreMin || f.scoreMax !== d.scoreMax) n++;
+  if (f.dateQuick !== d.dateQuick || f.dateFrom || f.dateTo) n++;
+  if (f.applied !== d.applied) n++;
+  return n;
 };
 
 export const FilterPanel = ({
@@ -225,6 +364,9 @@ export const FilterPanel = ({
 }: Props) => {
   const [open, setOpen] = useState(false);
   const f = value;
+  const isClean = isDefault(f);
+  const activeCount = useMemo(() => countActive(f), [f]);
+
   // Prefer the dynamic list from the loaded corpus; fall back to the legacy
   // static set so the panel still renders pre-load.
   const categoryOptions: Category[] =
@@ -235,193 +377,336 @@ export const FilterPanel = ({
   const setQuick = (q: DateQuick) =>
     onChange({ ...f, dateQuick: q, ...(q !== 'custom' ? { dateFrom: '', dateTo: '' } : {}) });
 
+  const clearAll = () => onChange(defaultFilters());
+
+  const scoreIsAny = f.scoreMin === 1 && f.scoreMax === 10;
+
+  // Right-side "Reset" mini-button for individual sections — only renders when
+  // the section has been touched. Keeps the sidebar header's Clear-all as the
+  // global reset.
+  const SectionReset = ({ show, onReset }: { show: boolean; onReset: () => void }) =>
+    show ? (
+      <button
+        type="button"
+        onClick={onReset}
+        className="text-[10px] font-medium uppercase tracking-wider text-slate-400 hover:text-brand-700"
+      >
+        Reset
+      </button>
+    ) : null;
+
   const panel = (
-    <div className="flex h-full flex-col gap-1 overflow-y-auto px-3 pb-6">
-      {/* Search */}
-      <SectionHeader>Search</SectionHeader>
-      <input
-        ref={searchRef}
-        type="text"
-        placeholder="Title, company, reason…  (press /)"
-        value={f.search}
-        onChange={(e) => onChange({ ...f, search: e.target.value })}
-        className="w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
-      />
-
-      {/* Fit — empty Set = match all (uniform "auto-marked" model). */}
-      <SectionHeader>Fit</SectionHeader>
-      <div className="flex flex-col gap-0.5">
-        {ALL_FITS.map((k) => (
-          <Check
-            key={k}
-            label={fitLabel[k]}
-            checked={f.fits.size === 0 || f.fits.has(k)}
-            onChange={() =>
-              onChange({ ...f, fits: cycleEnumFilter(f.fits, ALL_FITS, k) })
-            }
-          />
-        ))}
-      </div>
-
-      {/* Priority */}
-      <SectionHeader>Priority company</SectionHeader>
-      <TriToggle
-        value={f.priority}
-        onChange={(v) => onChange({ ...f, priority: v })}
-        labels={['all', 'only', 'hide']}
-      />
-
-      {/* Category — same auto-marked semantics. New user-defined ids
-          surface automatically when the corpus reloads with them. */}
-      <SectionHeader>Category</SectionHeader>
-      <div className="flex flex-col gap-0.5">
-        {categoryOptions.map((k) => (
-          <Check
-            key={k}
-            label={categoryNamesById?.get(k) ?? catLabel(k)}
-            checked={f.categories.size === 0 || f.categories.has(k)}
-            onChange={() =>
-              onChange({
-                ...f,
-                categories: cycleEnumFilter(f.categories, categoryOptions, k),
-              })
-            }
-          />
-        ))}
-      </div>
-
-      {/* Scored by — auto-marked. */}
-      <SectionHeader>Scored by</SectionHeader>
-      <div className="flex flex-col gap-0.5">
-        {ALL_SCORED_BY.map((k) => (
-          <Check
-            key={k}
-            label={byLabel[k]}
-            tooltip={byTooltip[k]}
-            checked={f.scoredBy.size === 0 || f.scoredBy.has(k)}
-            onChange={() =>
-              onChange({
-                ...f,
-                scoredBy: cycleEnumFilter(f.scoredBy, ALL_SCORED_BY, k),
-              })
-            }
-          />
-        ))}
-      </div>
-
-      {/* Source — auto-marked. */}
-      <SectionHeader>Source</SectionHeader>
-      <div className="flex flex-col gap-0.5">
-        {ALL_SOURCES.map((k) => (
-          <Check
-            key={k}
-            label={srcLabel[k]}
-            tooltip={srcTooltip[k]}
-            checked={f.sources.size === 0 || f.sources.has(k)}
-            onChange={() =>
-              onChange({
-                ...f,
-                sources: cycleEnumFilter(f.sources, ALL_SOURCES, k),
-              })
-            }
-          />
-        ))}
-      </div>
-
-      {/* Score */}
-      <SectionHeader>Score (1–10)</SectionHeader>
-      <DualRange
-        min={1}
-        max={10}
-        lo={f.scoreMin}
-        hi={f.scoreMax}
-        onChange={(scoreMin, scoreMax) => onChange({ ...f, scoreMin, scoreMax })}
-      />
-      <p className="px-1 pt-1 text-[11px] text-slate-400">
-        Narrowing the range hides unscored jobs.
-      </p>
-
-      {/* Date */}
-      <SectionHeader>Found at</SectionHeader>
-      <div className="flex flex-wrap gap-1">
-        {(['24h', '7d', '30d', 'all', 'custom'] as DateQuick[]).map((q) => (
+    <div className="flex h-full flex-col gap-5 overflow-y-auto px-3 pb-8 pt-3">
+      {/* Search — first section, no header above it. The placeholder + kbd
+          hint do all the labeling. */}
+      <div className="relative">
+        <input
+          ref={searchRef}
+          type="text"
+          placeholder="Search title, company, reason…"
+          value={f.search}
+          onChange={(e) => onChange({ ...f, search: e.target.value })}
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 pr-16 text-sm placeholder:text-slate-400 focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
+        />
+        {f.search ? (
           <button
-            key={q}
             type="button"
-            onClick={() => setQuick(q)}
-            className={clsx(
-              'rounded border px-2 py-0.5 text-xs',
-              f.dateQuick === q
-                ? 'border-brand-700 bg-brand-700 text-white'
-                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100',
-            )}
+            onClick={() => onChange({ ...f, search: '' })}
+            aria-label="Clear search"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >
-            {q}
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
           </button>
-        ))}
+        ) : (
+          <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-400 md:inline-block">
+            /
+          </kbd>
+        )}
       </div>
-      {f.dateQuick === 'custom' && (
-        <div className="mt-1 grid grid-cols-2 gap-1.5">
-          <input
-            type="date"
-            value={f.dateFrom}
-            onChange={(e) => onChange({ ...f, dateFrom: e.target.value })}
-            className="rounded border border-slate-300 bg-white px-1.5 py-1 text-xs"
+
+      {/* ── Scope group ───────────────────────────────────── */}
+      <Section
+        title="Fit"
+        hint={f.fits.size === 0 ? 'all' : `${ALL_FITS.length - f.fits.size} hidden`}
+        accessory={
+          <SectionReset
+            show={f.fits.size > 0}
+            onReset={() => onChange({ ...f, fits: new Set() })}
           />
-          <input
-            type="date"
-            value={f.dateTo}
-            onChange={(e) => onChange({ ...f, dateTo: e.target.value })}
-            className="rounded border border-slate-300 bg-white px-1.5 py-1 text-xs"
-          />
+        }
+      >
+        <div className="flex flex-col gap-0.5">
+          {ALL_FITS.map((k) => {
+            const m = fitMeta[k];
+            return (
+              <PillRow
+                key={k}
+                label={m.label}
+                dot={m.dot}
+                selected={f.fits.size === 0 || f.fits.has(k)}
+                onClick={() =>
+                  onChange({ ...f, fits: cycleEnumFilter(f.fits, ALL_FITS, k) })
+                }
+              />
+            );
+          })}
         </div>
-      )}
+      </Section>
 
-      {/* Applied — label includes the live count so "0 applied" is obvious
-           when the filter hides everything. */}
-      <SectionHeader>
-        Applied <span className="text-[10px] font-normal tracking-normal text-slate-400">
-          ({appliedCount} marked)
-        </span>
-      </SectionHeader>
-      <TriToggle
-        value={f.applied}
-        onChange={(v) => onChange({ ...f, applied: v })}
-        labels={['all', 'applied', 'open']}
-      />
+      <Section title="Priority company">
+        <TriToggle
+          value={f.priority}
+          onChange={(v) => onChange({ ...f, priority: v })}
+          labels={['All', 'Only', 'Hide']}
+          ariaLabel="Priority company filter"
+        />
+      </Section>
 
-      {/* Clear */}
-      <div className="mt-5 border-t border-slate-200 pt-3">
-        <button
-          type="button"
-          onClick={() => onChange(defaultFilters())}
-          disabled={isDefault(f)}
-          className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Clear all filters
-        </button>
+      <Section
+        title="Category"
+        hint={f.categories.size === 0 ? 'all' : `${categoryOptions.length - f.categories.size} hidden`}
+        accessory={
+          <SectionReset
+            show={f.categories.size > 0}
+            onReset={() => onChange({ ...f, categories: new Set() })}
+          />
+        }
+      >
+        <div className="flex flex-col gap-0.5">
+          {categoryOptions.map((k) => (
+            <PillRow
+              key={k}
+              label={categoryNamesById?.get(k) ?? catLabel(k)}
+              selected={f.categories.size === 0 || f.categories.has(k)}
+              onClick={() =>
+                onChange({
+                  ...f,
+                  categories: cycleEnumFilter(f.categories, categoryOptions, k),
+                })
+              }
+            />
+          ))}
+        </div>
+      </Section>
+
+      {/* Subtle divider between scope (what jobs are) and metadata
+          (where they came from / when / scoring). */}
+      <hr className="border-slate-200" />
+
+      {/* ── Metadata group ────────────────────────────────── */}
+      <Section
+        title="Source"
+        accessory={
+          <SectionReset
+            show={f.sources.size > 0}
+            onReset={() => onChange({ ...f, sources: new Set() })}
+          />
+        }
+      >
+        <div className="flex flex-col gap-0.5">
+          {ALL_SOURCES.map((k) => {
+            const m = srcMeta[k];
+            return (
+              <PillRow
+                key={k}
+                label={m.label}
+                dot={m.dot}
+                tooltip={m.tooltip}
+                selected={f.sources.size === 0 || f.sources.has(k)}
+                onClick={() =>
+                  onChange({
+                    ...f,
+                    sources: cycleEnumFilter(f.sources, ALL_SOURCES, k),
+                  })
+                }
+              />
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section
+        title="Scored by"
+        accessory={
+          <SectionReset
+            show={f.scoredBy.size > 0}
+            onReset={() => onChange({ ...f, scoredBy: new Set() })}
+          />
+        }
+      >
+        <div className="flex flex-col gap-0.5">
+          {ALL_SCORED_BY.map((k) => {
+            const m = byMeta[k];
+            return (
+              <PillRow
+                key={k}
+                label={m.label}
+                dot={m.dot}
+                tooltip={m.tooltip}
+                selected={f.scoredBy.size === 0 || f.scoredBy.has(k)}
+                onClick={() =>
+                  onChange({
+                    ...f,
+                    scoredBy: cycleEnumFilter(f.scoredBy, ALL_SCORED_BY, k),
+                  })
+                }
+              />
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section
+        title="Score"
+        hint="1–10"
+        accessory={
+          <SectionReset
+            show={!scoreIsAny}
+            onReset={() => onChange({ ...f, scoreMin: 1, scoreMax: 10 })}
+          />
+        }
+      >
+        <DualRange
+          min={1}
+          max={10}
+          lo={f.scoreMin}
+          hi={f.scoreMax}
+          onChange={(scoreMin, scoreMax) => onChange({ ...f, scoreMin, scoreMax })}
+          isDefault={scoreIsAny}
+        />
+        {!scoreIsAny && (
+          <p className="px-1 text-[11px] text-slate-400">
+            Narrowing the range hides unscored jobs.
+          </p>
+        )}
+      </Section>
+
+      <Section
+        title="Found at"
+        accessory={
+          <SectionReset
+            show={f.dateQuick !== 'all' || !!f.dateFrom || !!f.dateTo}
+            onReset={() => onChange({ ...f, dateQuick: 'all', dateFrom: '', dateTo: '' })}
+          />
+        }
+      >
+        <div className="flex flex-wrap gap-1">
+          {(['24h', '7d', '30d', 'all', 'custom'] as DateQuick[]).map((q) => (
+            <button
+              key={q}
+              type="button"
+              onClick={() => setQuick(q)}
+              className={clsx(
+                'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                'min-h-8 focus-visible:outline-none focus-visible:ring-2',
+                'focus-visible:ring-brand-700 focus-visible:ring-offset-1',
+                f.dateQuick === q
+                  ? 'border-brand-700 bg-brand-700 text-white'
+                  : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
+              )}
+            >
+              {dateMeta[q]}
+            </button>
+          ))}
+        </div>
+        {f.dateQuick === 'custom' && (
+          <div className="mt-1 grid grid-cols-2 gap-1.5">
+            <input
+              type="date"
+              value={f.dateFrom}
+              onChange={(e) => onChange({ ...f, dateFrom: e.target.value })}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
+              aria-label="From date"
+            />
+            <input
+              type="date"
+              value={f.dateTo}
+              onChange={(e) => onChange({ ...f, dateTo: e.target.value })}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
+              aria-label="To date"
+            />
+          </div>
+        )}
+      </Section>
+
+      <Section
+        title="Applied"
+        hint={`${appliedCount} marked`}
+      >
+        <TriToggle
+          value={f.applied}
+          onChange={(v) => onChange({ ...f, applied: v })}
+          labels={['All', 'Applied', 'Open']}
+          ariaLabel="Applied filter"
+        />
+      </Section>
+    </div>
+  );
+
+  // Sidebar header — shows active-filter count + Clear-all when dirty.
+  // Replaces the silent "Filters" strip with something that actually
+  // communicates state.
+  const headerBar = (
+    <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-semibold text-slate-800">Filters</span>
+        {activeCount > 0 && (
+          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-700 px-1.5 text-[10px] font-semibold tabular-nums text-white">
+            {activeCount}
+          </span>
+        )}
       </div>
+      <button
+        type="button"
+        onClick={clearAll}
+        disabled={isClean}
+        className={clsx(
+          'rounded px-2 py-0.5 text-xs font-medium transition-colors',
+          isClean
+            ? 'cursor-not-allowed text-slate-300'
+            : 'text-brand-700 hover:bg-brand-50',
+        )}
+      >
+        Clear all
+      </button>
     </div>
   );
 
   return (
     <>
-      {/* Mobile toggle */}
+      {/* Mobile toggle bar — shows count badge so user knows filters are on. */}
       <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2 md:hidden">
         <button
           type="button"
           onClick={() => setOpen((s) => !s)}
-          className="inline-flex items-center gap-1.5 rounded border border-slate-300 bg-white px-2.5 py-1 text-sm"
+          className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
-          <span>☰</span> Filters
+          <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+            <path d="M2 4h12M4 8h8M6 12h4" />
+          </svg>
+          <span>Filters</span>
+          {activeCount > 0 && (
+            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-700 px-1 text-[10px] font-semibold tabular-nums text-white">
+              {activeCount}
+            </span>
+          )}
         </button>
+        {!isClean && (
+          <button
+            type="button"
+            onClick={clearAll}
+            className="text-xs font-medium text-brand-700 hover:underline"
+          >
+            Clear all
+          </button>
+        )}
       </div>
 
       {/* Desktop: always visible sidebar */}
-      <aside className="hidden w-64 shrink-0 border-r border-slate-200 bg-white md:flex md:flex-col">
-        <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
-          Filters
-        </div>
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
+        {headerBar}
         {panel}
       </aside>
 
@@ -429,19 +714,43 @@ export const FilterPanel = ({
       {open && (
         <div className="fixed inset-0 z-40 flex md:hidden">
           <div
-            className="flex-1 bg-black/30"
+            className="flex-1 bg-slate-900/40"
             onClick={() => setOpen(false)}
+            aria-hidden="true"
           />
-          <div className="flex w-72 flex-col bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
-              <span className="text-sm font-semibold">Filters</span>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded px-2 py-0.5 text-slate-500 hover:bg-slate-100"
-              >
-                ✕
-              </button>
+          <div className="flex w-[85vw] max-w-sm flex-col bg-white shadow-xl">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-slate-800">Filters</span>
+                {activeCount > 0 && (
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-700 px-1.5 text-[10px] font-semibold tabular-nums text-white">
+                    {activeCount}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={clearAll}
+                  disabled={isClean}
+                  className={clsx(
+                    'rounded px-2 py-1 text-xs font-medium',
+                    isClean ? 'cursor-not-allowed text-slate-300' : 'text-brand-700 hover:bg-brand-50',
+                  )}
+                >
+                  Clear all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  aria-label="Close filters"
+                  className="rounded p-1.5 text-slate-500 hover:bg-slate-100"
+                >
+                  <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M4 4l8 8M12 4l-8 8" />
+                  </svg>
+                </button>
+              </div>
             </div>
             {panel}
           </div>
