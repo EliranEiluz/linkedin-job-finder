@@ -489,9 +489,10 @@ export const JobsTable = ({
                   onClick={() => handleInlineDelete(j.id)}
                   className={clsx(
                     ROW_ACTION_BTN_BASE,
+                    'transition-transform',
                     confirmDeleteId === j.id
-                      ? 'border-red-300 bg-red-600 text-white hover:bg-red-700'
-                      : 'border-slate-300 bg-white text-slate-500 hover:bg-red-50 hover:text-red-700 hover:border-red-300',
+                      ? 'border-red-600 bg-red-600 text-white hover:bg-red-700'
+                      : 'border-slate-300 bg-white text-slate-500 hover:scale-110 hover:bg-red-50 hover:text-red-700 hover:border-red-300',
                   )}
                   title={
                     confirmDeleteId === j.id
@@ -501,8 +502,10 @@ export const JobsTable = ({
                   aria-label="Delete from corpus"
                 >
                   {confirmDeleteId === j.id ? (
-                    <span className="text-[11px] font-medium">confirm?</span>
-                  ) : (
+                    // Confirm-state: red-filled trash with a small check
+                    // overlay reads as "tap to confirm" without the awkward
+                    // mid-bar text label that round-1 used. Same canvas size
+                    // as the idle icon so the button bar height is stable.
                     <svg
                       viewBox="0 0 16 16"
                       fill="none"
@@ -510,7 +513,25 @@ export const JobsTable = ({
                       strokeWidth="1.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      className="h-3.5 w-3.5"
+                      className="h-4 w-4"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M2.5 4h11M5.5 4V2.5h5V4M3.7 4l.5 9.5a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9l.5-9.5"
+                        fill="currentColor"
+                        fillOpacity="0.25"
+                      />
+                      <path d="M5.5 9.5l1.75 1.75L10.5 8" strokeWidth="1.75" />
+                    </svg>
+                  ) : (
+                    <svg
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.25"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4"
                       aria-hidden="true"
                     >
                       <path d="M2.5 4h11M5.5 4V2.5h5V4M3.7 4l.5 9.5a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9l.5-9.5M6.5 7v4M9.5 7v4" />

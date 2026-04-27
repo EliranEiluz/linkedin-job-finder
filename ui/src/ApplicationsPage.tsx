@@ -284,16 +284,16 @@ const RatingStars = ({ rating }: { rating: number | null | undefined }) => {
 
 const CardContent = ({ job, stale }: { job: Job; stale?: boolean }) => (
   <>
-    <div className="truncate text-sm font-medium text-slate-900" title={job.title}>
+    <div className="truncate text-base font-semibold leading-snug text-slate-900" title={job.title}>
       {job.title || '(untitled)'}
     </div>
     <div
-      className="mt-0.5 truncate text-xs text-slate-500"
+      className="mt-1 truncate text-xs text-slate-500"
       title={job.company}
     >
       {job.company || '—'}
     </div>
-    <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-400">
+    <div className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-400">
       <span>moved {safeRel(job.app_status_at)}</span>
       {stale && (
         <span
@@ -305,7 +305,7 @@ const CardContent = ({ job, stale }: { job: Job; stale?: boolean }) => (
         </span>
       )}
     </div>
-    <div className="mt-1.5 flex items-center justify-between gap-2">
+    <div className="mt-2.5 flex items-center justify-between gap-2">
       <div className="flex min-w-0 items-center gap-1.5">
         <RatingStars rating={job.rating} />
         <FitPill fit={job.fit} />
@@ -317,7 +317,7 @@ const CardContent = ({ job, stale }: { job: Job; stale?: boolean }) => (
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
-          className="shrink-0 text-[10px] text-brand-700 hover:underline"
+          className="shrink-0 text-[11px] font-medium text-brand-700 hover:underline"
         >
           Open ↗
         </a>
@@ -375,7 +375,7 @@ const SortableCard = ({ job, stale, isFirstStale, onOpen }: CardProps) => {
       data-stale={stale ? '1' : undefined}
       data-first-stale={isFirstStale ? '1' : undefined}
       className={clsx(
-        'group rounded-md border border-slate-200 bg-white p-2 shadow-sm',
+        'group rounded-lg border border-slate-200 bg-white p-3.5 shadow-sm',
         'cursor-grab touch-none ring-0 hover:ring-1 hover:ring-slate-300',
         'active:cursor-grabbing',
         stale && 'border-l-4 border-l-amber-400',
@@ -389,9 +389,9 @@ const SortableCard = ({ job, stale, isFirstStale, onOpen }: CardProps) => {
 const OverlayCard = ({ job, stale }: CardProps) => (
   <div
     className={clsx(
-      'rounded-md border border-slate-300 bg-white p-2 shadow-lg ring-1 ring-slate-300',
+      'rounded-lg border border-slate-300 bg-white p-3.5 shadow-lg ring-1 ring-slate-300',
       'cursor-grabbing',
-      'w-[290px]',
+      'w-[320px]',
       stale && 'border-l-4 border-l-amber-400',
     )}
   >
@@ -414,7 +414,7 @@ interface ColumnProps {
 const Column = ({ status, jobs, firstStaleId, onOpenCard }: ColumnProps) => {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   return (
-    <div className="flex w-[260px] min-w-[240px] max-w-[280px] shrink-0 flex-col">
+    <div className="flex w-[320px] min-w-[300px] max-w-[340px] shrink-0 flex-col">
       {/* Sticky header */}
       <div className="sticky top-0 z-10 bg-slate-50 pb-2">
         <div className="flex items-center justify-between px-1">
@@ -1158,30 +1158,33 @@ const AppDetailModal = ({
               <span className="text-[11px] text-red-600">{statusErr}</span>
             )}
           </div>
-          {job.url ? (
-            <a
-              href={job.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+          {/* Order: destructive/secondary LEFT, primary action RIGHT
+              (Apple HIG / standard form-button convention). The "Remove
+              from tracker" sets app_status='new' which hides the job
+              from the kanban; status history is preserved server-side. */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={statusBusy}
+              onClick={() => void handleStatusChange('new')}
+              className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Remove from tracker (status history preserved)"
             >
-              Open ↗
-            </a>
-          ) : (
-            <span className="text-[11px] text-slate-400">no URL</span>
-          )}
-          {/* Quick "Remove from tracker" — same effect as Move-to → New
-              but visible as a one-click button. Sets app_status='new'
-              which hides the job from the kanban (history preserved). */}
-          <button
-            type="button"
-            disabled={statusBusy}
-            onClick={() => void handleStatusChange('new')}
-            className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-            title="Remove from tracker (status history preserved)"
-          >
-            Remove from tracker
-          </button>
+              Remove from tracker
+            </button>
+            {job.url ? (
+              <a
+                href={job.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded border border-brand-700 bg-brand-700 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-brand-800"
+              >
+                Open ↗
+              </a>
+            ) : (
+              <span className="text-[11px] text-slate-400">no URL</span>
+            )}
+          </div>
         </div>
       </div>
     </div>
