@@ -1,8 +1,8 @@
 {
   "categories": [
     {
-      "id": "crypto",
-      "name": "Crypto",
+      "id": "cat-mobyb81c-4",
+      "name": "Keywords",
       "type": "keyword",
       "queries": [
         "cryptography engineer",
@@ -14,8 +14,8 @@
       ]
     },
     {
-      "id": "security_researcher",
-      "name": "Security Researcher",
+      "id": "cat-mobyb81c-5",
+      "name": "Security",
       "type": "keyword",
       "queries": [
         "security researcher",
@@ -24,7 +24,7 @@
       ]
     },
     {
-      "id": "company",
+      "id": "cat-mobyb81c-6",
       "name": "Companies",
       "type": "company",
       "queries": [
@@ -45,7 +45,7 @@
     }
   ],
   "location": "",
-  "date_filter": "r604800",
+  "date_filter": "",
   "geo_id": "101620260",
   "max_pages": 3,
   "priority_companies": [
@@ -155,7 +155,7 @@
     "zksecurity",
     "zksync"
   ],
-  "claude_scoring_prompt": "You rank LinkedIn jobs for fit against Eliran's CV.\n\n<cv>\n{cv}\n</cv>\n\nYou will receive a JSON array of jobs under <jobs>. For each job, return one\nscoring object. Keep your response tight — no prose outside JSON.\n\nScoring:\n- \"good\"  = clear match against target roles (crypto / ZK / MPC / FHE /\n            confidential computing research engineer, protocol engineer,\n            or detection/vuln research with LLM-driven tooling). Score 7-10.\n- \"ok\"    = adjacent or partial match (e.g. generic backend at a crypto\n            company, AI security role without crypto depth). Score 4-6.\n- \"skip\"  = off-profile OR hits a hard filter (intern, junior, entry-level,\n            director+, VP, Head of, sales / SDR / pre-sales, DevRel,\n            evangelist, pure Solidity / smart-contract dev, DeFi product,\n            GRC / audit / compliance, SOC analyst, SIEM ops, CSPM, red team,\n            penetration tester, bug bounty, PHP / Rails / WordPress / Salesforce).\n            Score 1-3.\n\nRules:\n- One object per input job, in the same order, same \"id\" field.\n- Each reason under 8 words. At most 4 reasons per job.\n- \"msc_required\" = true if the posting requires or strongly prefers a master's.\n- Eliran HAS an M.Sc. — never treat it as a blocker.\n- \"red_flags\" surface hard-filter hits in plain language.\n\nReturn ONLY a JSON array with this exact shape (no markdown fences, no prose):\n[\n  {{\"id\": \"<job id>\", \"fit\": \"good\"|\"ok\"|\"skip\", \"score\": <int 1-10>,\n    \"reasons\": [\"short reason\", ...], \"msc_required\": true|false,\n    \"red_flags\": [\"...\"]}},\n  ...\n]\n\n<jobs>\n{jobs_json}\n</jobs>",
+  "claude_scoring_prompt": "You rank LinkedIn jobs for fit against Eliran's CV.\n\n<cv>\n{cv}\n</cv>\n{feedback_block}\nYou will receive a JSON array of jobs under <jobs>. For each job, return one\nscoring object. Keep your response tight — no prose outside JSON.\n\nScoring:\n- \"good\"  = clear match against target roles (crypto / ZK / MPC / FHE /\n            confidential computing research engineer, protocol engineer,\n            or detection/vuln research with LLM-driven tooling). Score 7-10.\n- \"ok\"    = adjacent or partial match (e.g. generic backend at a crypto\n            company, AI security role without crypto depth). Score 4-6.\n- \"skip\"  = off-profile OR hits a hard filter (intern, junior, entry-level,\n            director+, VP, Head of, sales / SDR / pre-sales, DevRel,\n            evangelist, pure Solidity / smart-contract dev, DeFi product,\n            GRC / audit / compliance, SOC analyst, SIEM ops, CSPM, red team,\n            penetration tester, bug bounty, PHP / Rails / WordPress / Salesforce).\n            Score 1-3.\n\nRules:\n- One object per input job, in the same order, same \"id\" field.\n- Each reason under 8 words. At most 4 reasons per job.\n- \"msc_required\" = true if the posting requires or strongly prefers a master's.\n- Eliran HAS an M.Sc. — never treat it as a blocker.\n- \"red_flags\" surface hard-filter hits in plain language.\n- \"priority\": true means the company is on the user's high-interest list.\n  Bump the fit one notch up (skip→ok, ok→good) and bump the score by 1\n  UNLESS the role hits a hard red flag (intern/junior/sales/director+/etc).\n\nReturn ONLY a JSON array with this exact shape (no markdown fences, no prose):\n[\n  {{\"id\": \"<job id>\", \"fit\": \"good\"|\"ok\"|\"skip\", \"score\": <int 1-10>,\n    \"reasons\": [\"short reason\", ...], \"msc_required\": true|false,\n    \"red_flags\": [\"...\"]}},\n  ...\n]\n\n<jobs>\n{jobs_json}\n</jobs>",
   "fit_positive_patterns": [
     "cryptograph",
     "zero.knowledge",
@@ -326,5 +326,6 @@
     "\\bscrum master\\b",
     "\\bproject manager\\b",
     "\\bprogram manager\\b"
-  ]
+  ],
+  "feedback_examples_max": 6
 }

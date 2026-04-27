@@ -275,12 +275,25 @@ CV_FILE = Path(__file__).parent.parent / "cv.txt"  # at project root
 BATCH_SIZE = 8                # jobs per Claude call — big enough to rank, small enough to fit
 DESC_CHAR_LIMIT = 3500        # per-job description truncation inside a batch
 
+# Default cap on user-feedback few-shot examples injected into the scoring
+# prompt. Overridable via config.json["feedback_examples_max"]. See
+# DESIGN_FEW_SHOT.md §2 for the rationale (Anthropic recommends 3-5,
+# over-prompting research caps at ~6, leaves room for stratified pos/neg).
+FEEDBACK_EXAMPLES_MAX_DEFAULT = 6
+FEEDBACK_EXAMPLE_CHAR_CAP = 250            # per-example max length
+FEEDBACK_COMMENT_CHAR_CAP = 120            # truncate user comments to this
+# app_status values that count as STRONG positive signal — the user moved a
+# card past one-click apply, real human-human exchange.
+FEEDBACK_POSITIVE_STATUSES = {"interview", "take-home", "screening", "offer"}
+# app_status values that count as negative signal (currently rare; forward-compat).
+FEEDBACK_NEGATIVE_STATUSES = {"rejected", "withdrew"}
+
 CLAUDE_BATCH_SCORING_PROMPT = """You rank LinkedIn jobs for fit against Eliran's CV.
 
 <cv>
 {cv}
 </cv>
-
+{feedback_block}
 You will receive a JSON array of jobs under <jobs>. For each job, return one
 scoring object. Keep your response tight — no prose outside JSON.
 
@@ -324,6 +337,208 @@ def _load_cv_text() -> str:
     if CV_FILE.exists():
         return CV_FILE.read_text()
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Few-shot user-feedback loop. See DESIGN_FEW_SHOT.md for the full rationale.
+#
+# Reads the persisted corpus (results.json) and surfaces a small, stratified,
+# recency-sorted, interleaved set of examples showing how the user has
+# actually rated / progressed past jobs. Injected into the scoring prompt
+# between the CV block and the rules so Claude sees the user's empirical
+# calibration evidence right after their identity.
+#
+# Signals (curated; see DESIGN_FEW_SHOT.md §1 for what was rejected and why):
+#   - explicit `rating` (1-5) + optional `comment`
+#   - `app_status` ∈ {interview, take-home, screening, offer}  → strong positive
+#   - `app_status` ∈ {rejected, withdrew}                       → strong negative
+#   - `source == "manual"` (manual-add, future feature)         → positive
+#
+# Degrades to "" on empty corpus / missing file / zero signals — caller can
+# safely concatenate it into the prompt unconditionally.
+# ---------------------------------------------------------------------------
+
+
+def _truncate(s: str, n: int) -> str:
+    s = (s or "").strip()
+    if len(s) <= n:
+        return s
+    return s[: max(0, n - 1)].rstrip() + "…"
+
+
+def _example_recency_key(row: dict) -> str:
+    """Pick the freshest timestamp available on a corpus row for ordering.
+    Falls back through rated_at → app_status_at → last app_status_history
+    entry → found_at → empty string."""
+    if row.get("rated_at"):
+        return str(row["rated_at"])
+    if row.get("app_status_at"):
+        return str(row["app_status_at"])
+    hist = row.get("app_status_history")
+    if isinstance(hist, list) and hist:
+        last = hist[-1]
+        if isinstance(last, dict) and last.get("at"):
+            return str(last["at"])
+    return str(row.get("found_at") or "")
+
+
+def _classify_feedback_row(row: dict) -> tuple[str | None, str]:
+    """Return (sentiment, summary) for a corpus row, or (None, '') if the row
+    carries no usable feedback signal.
+
+    sentiment ∈ {"pos", "neg"} drives stratification.
+    summary is the human-readable signal phrase used in the example line.
+    """
+    if not isinstance(row, dict):
+        return None, ""
+
+    rating = row.get("rating")
+    comment = (row.get("comment") or "").strip()
+    status = (row.get("app_status") or "").strip().lower()
+    source = (row.get("source") or "").strip().lower()
+
+    # Highest-priority signal: explicit star rating with optional comment.
+    if isinstance(rating, (int, float)):
+        r = int(rating)
+        if 1 <= r <= 5:
+            sentiment = "pos" if r >= 4 else ("neg" if r <= 2 else "pos")
+            # 3 stars treated as weak positive (the user bothered to rate it,
+            # didn't dismiss it). Comment, when present, is the most
+            # information-dense signal — surface it.
+            if comment:
+                summary = (
+                    f"rated {r}/5 — \"{_truncate(comment, FEEDBACK_COMMENT_CHAR_CAP)}\""
+                )
+            else:
+                summary = f"rated {r}/5"
+            return sentiment, summary
+
+    # Second-priority: kanban progress past one-click apply.
+    if status in FEEDBACK_POSITIVE_STATUSES:
+        return "pos", f"reached '{status}' in pipeline"
+    if status in FEEDBACK_NEGATIVE_STATUSES:
+        return "neg", f"ended in '{status}'"
+
+    # Third-priority: manual-add (future feature; harmless if never set).
+    if source == "manual":
+        return "pos", "manually added by user"
+
+    return None, ""
+
+
+def _format_feedback_example(row: dict, summary: str) -> str:
+    """Render one corpus row as a single sanitized line for the prompt.
+    Strips URLs, ids, location, descriptions, notes, and history (see
+    DESIGN_FEW_SHOT.md §4). Hard-capped at FEEDBACK_EXAMPLE_CHAR_CAP chars."""
+    title = _truncate(_clean_title(row.get("title", "")), 80)
+    company = _truncate((row.get("company") or "").strip(), 40)
+    category = _truncate((row.get("category") or "").strip(), 30)
+    fit = (row.get("fit") or "").strip()
+
+    parts = [f"- \"{title}\" @ {company}"]
+    if category:
+        parts.append(f"[{category}]")
+    if fit:
+        parts.append(f"(prior model fit: {fit})")
+    parts.append(f"→ {summary}")
+
+    line = " ".join(parts)
+    return _truncate(line, FEEDBACK_EXAMPLE_CHAR_CAP)
+
+
+def _build_user_feedback_examples(
+    corpus_path: Path | None = None,
+    cap: int | None = None,
+) -> str:
+    """Return a `<user_feedback_examples>...</user_feedback_examples>` block
+    (with leading + trailing newlines) summarizing the user's past
+    ratings / kanban progress, OR "" if there's nothing to show.
+
+    Stratified pos/neg, recency-sorted, interleaved. See
+    DESIGN_FEW_SHOT.md §2 for the ordering rationale.
+    """
+    path = corpus_path or RESULTS_FILE
+    try:
+        if not path.exists():
+            return ""
+        corpus = json.loads(path.read_text())
+        if not isinstance(corpus, list):
+            return ""
+    except Exception:
+        return ""
+
+    # Resolve cap. Prefer caller's value; else look at the active config;
+    # else fall back to the module-level default. Clamp to [0, 20].
+    if cap is None:
+        cfg_cap = None
+        try:
+            cfg_cap = _ACTIVE_CONFIG.get("feedback_examples_max")  # type: ignore[name-defined]
+        except Exception:
+            cfg_cap = None
+        cap = cfg_cap if isinstance(cfg_cap, int) else FEEDBACK_EXAMPLES_MAX_DEFAULT
+    cap = max(0, min(int(cap), 20))
+    if cap == 0:
+        return ""
+
+    pos: list[tuple[str, dict, str]] = []  # (recency_key, row, summary)
+    neg: list[tuple[str, dict, str]] = []
+    for row in corpus:
+        sentiment, summary = _classify_feedback_row(row)
+        if not sentiment:
+            continue
+        key = _example_recency_key(row)
+        bucket = pos if sentiment == "pos" else neg
+        bucket.append((key, row, summary))
+
+    if not pos and not neg:
+        return ""
+
+    # Recency-sort each bucket newest-first.
+    pos.sort(key=lambda t: t[0], reverse=True)
+    neg.sort(key=lambda t: t[0], reverse=True)
+
+    # Stratify: try for half + half. If one side is shorter than `half`,
+    # let the other side take the leftover slots so we always fill `cap`
+    # when enough total signals exist.
+    half = cap // 2
+    pos_quota = min(len(pos), max(half, cap - min(half, len(neg))))
+    neg_quota = min(len(neg), cap - pos_quota)
+    # Edge case: pos_quota was so generous it left 0 for neg even though
+    # neg has rows and pos exceeds quota. Re-balance toward neg.
+    if neg_quota < min(len(neg), cap - half) and pos_quota > half:
+        slack = pos_quota - half
+        give = min(slack, min(len(neg), cap - half) - neg_quota)
+        pos_quota -= give
+        neg_quota += give
+    pos_take = pos[:pos_quota]
+    neg_take = neg[:neg_quota]
+
+    # Interleave (P, N, P, N, ...) to dodge LLM recency/majority bias —
+    # neither sentiment dominates the tail of the example list.
+    interleaved: list[tuple[str, dict, str]] = []
+    for i in range(max(len(pos_take), len(neg_take))):
+        if i < len(pos_take):
+            interleaved.append(pos_take[i])
+        if i < len(neg_take):
+            interleaved.append(neg_take[i])
+        if len(interleaved) >= cap:
+            break
+    interleaved = interleaved[:cap]
+
+    if not interleaved:
+        return ""
+
+    lines = [_format_feedback_example(row, summary) for _, row, summary in interleaved]
+    body = "\n".join(lines)
+    return (
+        "\n<user_feedback_examples>\n"
+        "Past jobs the user explicitly rated or progressed in their pipeline. "
+        "Use these as calibration evidence for what the user *actually* "
+        "considers a good vs poor fit — they override generic priors when "
+        "they conflict.\n"
+        f"{body}\n"
+        "</user_feedback_examples>\n"
+    )
 
 
 def _parse_claude_json(raw: str):
@@ -402,10 +617,22 @@ def _build_batch_prompt(cv_text: str, batch: list[dict]) -> str:
         }
         for j in batch
     ]
-    return CLAUDE_BATCH_SCORING_PROMPT.format(
-        cv=cv_text,
-        jobs_json=json.dumps(items, ensure_ascii=False),
-    )
+    feedback_block = _build_user_feedback_examples()
+    # Defensive: a user-edited prompt template might have dropped the
+    # {feedback_block} placeholder. Tolerate that — ship the prompt without
+    # the few-shot block rather than crashing.
+    try:
+        return CLAUDE_BATCH_SCORING_PROMPT.format(
+            cv=cv_text,
+            feedback_block=feedback_block,
+            jobs_json=json.dumps(items, ensure_ascii=False),
+        )
+    except KeyError:
+        # Old/custom template missing {feedback_block} — try without it.
+        return CLAUDE_BATCH_SCORING_PROMPT.format(
+            cv=cv_text,
+            jobs_json=json.dumps(items, ensure_ascii=False),
+        )
 
 
 def _score_batch_via_cli(cv_text: str, batch: list[dict]) -> list | None:
@@ -618,6 +845,7 @@ def _hardcoded_defaults() -> dict:
         "fit_positive_patterns": list(FIT_POSITIVE),
         "fit_negative_patterns": list(FIT_NEGATIVE),
         "offtopic_title_patterns": list(OFFTOPIC_TITLE_PATTERNS),
+        "feedback_examples_max": FEEDBACK_EXAMPLES_MAX_DEFAULT,
     }
 
 
@@ -742,6 +970,12 @@ def load_config() -> dict:
         ),
         "offtopic_title_patterns": _str_list(
             "offtopic_title_patterns", defaults["offtopic_title_patterns"]
+        ),
+        # Few-shot feedback cap. Clamp to [0, 20]; 0 disables the feature.
+        "feedback_examples_max": (
+            max(0, min(int(user_cfg["feedback_examples_max"]), 20))
+            if isinstance(user_cfg.get("feedback_examples_max"), int)
+            else defaults["feedback_examples_max"]
         ),
     }
 
