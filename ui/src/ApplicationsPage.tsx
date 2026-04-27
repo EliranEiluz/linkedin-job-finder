@@ -33,6 +33,7 @@ import { APP_STATUS_ORDER, type AppStatus, type Job } from './types';
 import { useAppStatus, useCorpusActions } from './hooks';
 import { Dot, type DotColor } from './Dot';
 import { RatingCommentEditor } from './RatingCommentEditor';
+import { useViewport } from './useViewport';
 
 // ---- Constants ------------------------------------------------------------
 
@@ -428,7 +429,17 @@ interface ColumnProps {
 const Column = ({ status, jobs, firstStaleId, onOpenCard }: ColumnProps) => {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   return (
-    <div className="flex w-[320px] min-w-[300px] max-w-[340px] shrink-0 flex-col">
+    // Mobile: 85vw column with scroll-snap so a peek of the next column is
+    // visible and the user knows to swipe horizontally. Desktop (md+): the
+    // original fixed-width layout (320px / min 300 / max 340) so 4-5 columns
+    // fit on a 1440px viewport.
+    <div
+      className={clsx(
+        'flex shrink-0 flex-col snap-start',
+        'w-[85vw] max-w-[300px]',
+        'md:w-[320px] md:min-w-[300px] md:max-w-[340px]',
+      )}
+    >
       {/* Sticky header */}
       <div className="sticky top-0 z-10 bg-slate-50 pb-2">
         <div className="flex items-center justify-between px-1">
@@ -528,44 +539,51 @@ interface SummaryStripProps {
 // Compact row of count chips, one per visible status. Reads at a glance
 // like "applied 3 · screening 2 · …". A separately-styled stale chip
 // appends to the right when there's at least one stale row.
-const SummaryStrip = ({ counts, staleCount, onClickStale }: SummaryStripProps) => (
-  <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[11px]">
-    {COLUMNS.map((s, i) => {
-      const n = counts[s] ?? 0;
-      const muted = n === 0;
-      return (
-        <span key={s} className="inline-flex items-center gap-1">
-          {i > 0 && <span className="text-slate-300">·</span>}
-          <span
-            className={clsx(
-              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-medium',
-              muted ? 'bg-transparent text-slate-300' : STATUS_CHIP[s],
-            )}
-            title={`${STATUS_LABEL[s]}: ${n}`}
-          >
-            {!muted && <Dot color={STATUS_DOT[s]} />}
-            <span className="lowercase">{STATUS_LABEL[s]}</span>
-            <span className="tabular-nums">{n}</span>
+const SummaryStrip = ({ counts, staleCount, onClickStale }: SummaryStripProps) => {
+  const { isMobile } = useViewport();
+  // On mobile the strip wrapped to two lines; zero-count chips were just
+  // visual noise. Filter them out on mobile so the strip stays compact.
+  // Desktop still shows muted zero-count chips (the at-a-glance use case).
+  const visible = COLUMNS.filter((s) => !(isMobile && (counts[s] ?? 0) === 0));
+  return (
+    <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[11px]">
+      {visible.map((s, i) => {
+        const n = counts[s] ?? 0;
+        const muted = n === 0;
+        return (
+          <span key={s} className="inline-flex items-center gap-1">
+            {i > 0 && <span className="text-slate-300">·</span>}
+            <span
+              className={clsx(
+                'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-medium',
+                muted ? 'bg-transparent text-slate-300' : STATUS_CHIP[s],
+              )}
+              title={`${STATUS_LABEL[s]}: ${n}`}
+            >
+              {!muted && <Dot color={STATUS_DOT[s]} />}
+              <span className="lowercase">{STATUS_LABEL[s]}</span>
+              <span className="tabular-nums">{n}</span>
+            </span>
           </span>
-        </span>
-      );
-    })}
-    {staleCount > 0 && (
-      <>
-        <span className="text-slate-300">·</span>
-        <button
-          type="button"
-          onClick={onClickStale}
-          className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800 hover:bg-amber-200"
-          title={`Show stale rows (no movement in ${STALE_DAYS}+ days)`}
-        >
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
-          {staleCount} stale
-        </button>
-      </>
-    )}
-  </div>
-);
+        );
+      })}
+      {staleCount > 0 && (
+        <>
+          <span className="text-slate-300">·</span>
+          <button
+            type="button"
+            onClick={onClickStale}
+            className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800 hover:bg-amber-200"
+            title={`Show stale rows (no movement in ${STALE_DAYS}+ days)`}
+          >
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
+            {staleCount} stale
+          </button>
+        </>
+      )}
+    </div>
+  );
+};
 
 // ---- Tracker table view ---------------------------------------------------
 
@@ -750,7 +768,12 @@ const TrackerTable = ({
         </div>
       )}
       <div className="flex-1 overflow-auto bg-white">
-        <table className="w-full border-collapse text-sm">
+        {/* min-w-[800px] forces all 7 columns to render at their natural
+            width on narrow viewports; the parent's overflow-auto then gives
+            the user a horizontal scrollbar to reach Rating / Fit / Actions.
+            Without this, the table would silently clip the rightmost cells
+            on iPhone width and the "Open ↗" link would be unreachable. */}
+        <table className="w-full min-w-[800px] border-collapse text-sm">
           <thead className="sticky top-0 z-10 bg-slate-50">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
@@ -1350,12 +1373,17 @@ export const ApplicationsPage = () => {
     useSensor(PointerSensor, {
       activationConstraint: { distance: 5 },
     }),
-    // Touch (iPhone / iPad): require a 200ms long-press before drag starts.
+    // Touch (iPhone / iPad): require a 350ms long-press before drag starts.
     // Quick swipes pass through to native scroll — without this, any vertical
     // touch-move > 5px hijacks scroll and turns it into a drag, which makes
     // a tall column (e.g. Applied with 13+ cards) un-scrollable on phone.
+    // We picked 350ms (up from 200ms) deliberately: the lower threshold still
+    // let stray vertical drags hijack scroll on tall columns. The "right" fix
+    // is to disable in-column reorder on mobile and only accept cross-column
+    // drops, but that's a bigger refactor (custom collision detection +
+    // sortable-strategy swap) — bumping the long-press is the cheap win.
     useSensor(TouchSensor, {
-      activationConstraint: { delay: 200, tolerance: 5 },
+      activationConstraint: { delay: 350, tolerance: 5 },
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
@@ -1608,7 +1636,7 @@ export const ApplicationsPage = () => {
           onOpenRow={handleOpenCard}
         />
       ) : (
-        <div className="flex-1 overflow-x-auto overflow-y-auto bg-slate-50">
+        <div className="flex-1 snap-x snap-mandatory overflow-x-auto overflow-y-auto bg-slate-50 md:snap-none">
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
