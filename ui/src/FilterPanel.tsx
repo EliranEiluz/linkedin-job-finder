@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import type { Category } from './types';
 import { Dot, type DotColor } from './Dot';
@@ -33,6 +33,10 @@ interface Props {
   // back to the LEGACY_CAT_LABELS table or id-de-snaking.
   categoryNamesById?: Map<string, string>;
 }
+
+// localStorage key for the desktop sidebar collapsed state. Mobile uses
+// the in-memory `open` drawer flag — no persistence needed there.
+const SIDEBAR_COLLAPSED_KEY = 'corpus.sidebar.collapsed';
 
 const toggle = <T,>(set: Set<T>, v: T): Set<T> => {
   const next = new Set(set);
@@ -363,6 +367,23 @@ export const FilterPanel = ({
   categoryNamesById,
 }: Props) => {
   const [open, setOpen] = useState(false);
+  // Desktop-only collapse. Mobile keeps the drawer (`open`) untouched.
+  // Persisted to localStorage so reloads remember the user's pick.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+    } catch {
+      /* SSR / sandbox / localStorage blocked */
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? 'true' : 'false');
+    } catch {
+      /* localStorage blocked — non-fatal */
+    }
+  }, [collapsed]);
   const f = value;
   const isClean = isDefault(f);
   const activeCount = useMemo(() => countActive(f), [f]);
@@ -647,7 +668,8 @@ export const FilterPanel = ({
 
   // Sidebar header — shows active-filter count + Clear-all when dirty.
   // Replaces the silent "Filters" strip with something that actually
-  // communicates state.
+  // communicates state. Desktop variant also gets a small collapse chevron
+  // on the far right that flips the sidebar to its thin-rail mode.
   const headerBar = (
     <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
       <div className="flex items-center gap-2">
@@ -658,19 +680,36 @@ export const FilterPanel = ({
           </span>
         )}
       </div>
-      <button
-        type="button"
-        onClick={clearAll}
-        disabled={isClean}
-        className={clsx(
-          'rounded px-2 py-0.5 text-xs font-medium transition-colors',
-          isClean
-            ? 'cursor-not-allowed text-slate-300'
-            : 'text-brand-700 hover:bg-brand-50',
-        )}
-      >
-        Clear all
-      </button>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={clearAll}
+          disabled={isClean}
+          className={clsx(
+            'rounded px-2 py-0.5 text-xs font-medium transition-colors',
+            isClean
+              ? 'cursor-not-allowed text-slate-300'
+              : 'text-brand-700 hover:bg-brand-50',
+          )}
+        >
+          Clear all
+        </button>
+        <button
+          type="button"
+          onClick={() => setCollapsed(true)}
+          aria-expanded={true}
+          aria-label="Collapse filters sidebar"
+          title="Collapse"
+          className="hidden rounded p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-700 md:inline-flex"
+        >
+          {/* Double-chevron pointing left = collapse/hide. Matches the
+              16px/strokeWidth-2 icon language already used elsewhere in
+              this file (close glyph, search clear). */}
+          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9.5 3.5L5 8l4.5 4.5M13.5 3.5L9 8l4.5 4.5" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 
@@ -704,10 +743,58 @@ export const FilterPanel = ({
         )}
       </div>
 
-      {/* Desktop: always visible sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
-        {headerBar}
-        {panel}
+      {/* Desktop: sidebar is either the full panel (w-64) or a thin rail
+          (w-10) the user can click to expand. Persisted to localStorage
+          via the `collapsed` state. The width transition is intentionally
+          subtle (200ms) so the jobs table reflows smoothly. */}
+      <aside
+        className={clsx(
+          'hidden shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200 md:flex',
+          collapsed ? 'w-10' : 'w-64',
+        )}
+      >
+        {collapsed ? (
+          // Rail mode — the entire rail is one big button so the whole
+          // strip is a tap target. Vertical "Filters" label + count badge
+          // up top so the badge doesn't disappear when collapsed.
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            aria-expanded={false}
+            aria-label={
+              activeCount > 0
+                ? `Expand filters sidebar (${activeCount} active)`
+                : 'Expand filters sidebar'
+            }
+            title="Expand filters"
+            className="group flex h-full w-full flex-col items-center gap-3 py-3 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-700"
+          >
+            {/* Double-chevron pointing right mirrors the collapse glyph in
+                the expanded header. */}
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M6.5 3.5L11 8l-4.5 4.5M2.5 3.5L7 8l-4.5 4.5" />
+            </svg>
+            {activeCount > 0 && (
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-700 px-1.5 text-[10px] font-semibold tabular-nums text-white">
+                {activeCount}
+              </span>
+            )}
+            {/* Vertical "Filters" label — bottom-up so it reads naturally
+                when leaning your head left. tracking-wider + uppercase
+                matches the section headers' visual rhythm. */}
+            <span
+              className="select-none text-[11px] font-semibold uppercase tracking-wider text-slate-500 group-hover:text-slate-800"
+              style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+            >
+              Filters
+            </span>
+          </button>
+        ) : (
+          <>
+            {headerBar}
+            {panel}
+          </>
+        )}
       </aside>
 
       {/* Mobile: overlay drawer */}
