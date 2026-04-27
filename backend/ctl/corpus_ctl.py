@@ -37,15 +37,31 @@ Commands:
       past "new" are skipped. Empty array is a valid no-op.
       -> {"ok": true, "imported": <int>, "skipped_already_set": <int>,
           "skipped_not_in_corpus": <int>}
+
+  python3 corpus_ctl.py add-manual
+      stdin: {"url_or_id": "<LinkedIn URL or 8–12 digit job id>"}
+      Ingests a single job through the same pipeline a scraped row gets
+      (title pre-filter -> guest description fetch -> Claude scoring with
+      regex fallback -> atomic merge into results.json + seen_jobs.json).
+      Tags the row with `source: "manual"` + `manual_added_at: <ISO>`.
+      Does NOT push to run_history.json (manual adds aren't time-windowed
+      scrape runs).
+      -> success:    {"ok": true, "id": "...", "title": "...", "company": "...",
+                      "fit": "...", "score": ..., "scored_by": "...", ...}
+         duplicate:  {"ok": false, "error": "already in corpus",
+                      "existing_id": "..."}      (exit 1; HTTP layer maps -> 409)
+         parse fail: {"ok": false, "error": "could not extract job ID..."}
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 # Add backend/ to sys.path so we can import sibling `search` module.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -385,6 +401,246 @@ def cmd_applied_import(_args) -> None:
     }, 0)
 
 
+# ---------- add-manual (single-URL ingest through process_one_job) ----------
+
+# LinkedIn job ids are 8–12 digit numerics. Matches the patterns documented
+# in DESIGN_TRACKING.md sec.4 and verified against current LinkedIn surfaces:
+#   /jobs/view/4395123456/                                  → trailing digits
+#   /jobs/view/staff-eng-foo-at-bar-4395123456?refId=...    → last `-` segment
+#   /jobs/search/?currentJobId=4395123456                   → query param
+#   /jobs/search-results/?currentJobId=4395123456           → query param
+#   4395123456                                              → bare ID
+_BARE_ID_RE = re.compile(r"^\d{8,12}$")
+_JOBVIEW_RE = re.compile(r"/jobs/view/(?:[^/?#]*-)?(\d{8,12})")
+_URL_OR_ID_MAX_CHARS = 500
+
+
+def extract_job_id(s: str) -> str | None:
+    """Return the LinkedIn job id (string of digits) from a URL or bare id,
+    or None if no recognised pattern matches.
+
+    Accepts the full set of LinkedIn URL families plus a bare numeric id.
+    Does not contact the network — pure parsing.
+    """
+    s = (s or "").strip()
+    if not s:
+        return None
+    if _BARE_ID_RE.match(s):
+        return s
+    # urllib.parse refuses scheme-less inputs cleanly, so synth one.
+    if not s.lower().startswith(("http://", "https://")):
+        s = "https://" + s.lstrip("/")
+    try:
+        u = urlparse(s)
+    except Exception:
+        return None
+    netloc = (u.netloc or "").lower()
+    if "linkedin.com" not in netloc:
+        return None
+    # ?currentJobId=... wins (search-results pane).
+    qs = parse_qs(u.query or "")
+    cur = (qs.get("currentJobId") or [None])[0]
+    if cur and cur.isdigit() and 8 <= len(cur) <= 12:
+        return cur
+    # /jobs/view/<slug>-<id>/ or /jobs/view/<id>/
+    m = _JOBVIEW_RE.search(u.path or "")
+    return m.group(1) if m else None
+
+
+def cmd_add_manual(_args) -> None:
+    """Ingest a single user-typed LinkedIn job URL or bare id.
+
+    Walks the same per-job pipeline a scraped row gets — title pre-filter,
+    description fetch (guest endpoint; no browser, no session needed),
+    Claude scoring (with regex fallback on Claude failure), atomic merge
+    into results.json + seen_jobs.json. The only distinguishing mark is
+    `source: "manual"` + `manual_added_at: <ISO>` on the persisted row.
+
+    Stdin:  {"url_or_id": "<URL or bare numeric id>"}
+    Stdout: success    -> {ok: true, id, title, company, fit, score, ...}
+            duplicate  -> {ok: false, error: "already in corpus", existing_id}
+            parse fail -> {ok: false, error: "could not extract job ID..."}
+    Exit:   0 on success, 1 on validation/dedup/runtime failure.
+
+    Run-history is intentionally NOT touched — manual adds aren't time-windowed
+    scrape runs.
+    """
+    try:
+        body = _read_stdin_json()
+    except json.JSONDecodeError as e:
+        _emit({"ok": False, "error": f"invalid JSON on stdin: {e}"}, 1)
+
+    if not isinstance(body, dict):
+        _emit({"ok": False, "error": "body must be a JSON object"}, 1)
+
+    raw = body.get("url_or_id")
+    if not isinstance(raw, str):
+        _emit({"ok": False, "error": "url_or_id must be a string"}, 1)
+    if not raw.strip():
+        _emit({"ok": False, "error": "url_or_id must not be empty"}, 1)
+    if len(raw) > _URL_OR_ID_MAX_CHARS:
+        _emit({
+            "ok": False,
+            "error": f"url_or_id exceeds max of {_URL_OR_ID_MAX_CHARS} chars",
+        }, 1)
+
+    job_id = extract_job_id(raw)
+    if not job_id:
+        _emit({
+            "ok": False,
+            "error": "could not extract job ID from input",
+        }, 1)
+
+    # Dedupe against the on-disk corpus first — short-circuits before we
+    # spend a network round-trip + Claude call on a job we already have.
+    try:
+        existing = search.load_results()
+    except Exception as e:
+        _emit({"ok": False, "error": f"failed to read results.json: {e}"}, 1)
+
+    for row in existing:
+        if isinstance(row, dict) and row.get("id") == job_id:
+            _emit({
+                "ok": False,
+                "error": "already in corpus",
+                "existing_id": job_id,
+            }, 1)
+
+    # Build the stub. Title/company/location are filled in by the guest
+    # detail endpoint when fetch_description_guest hits LinkedIn — see
+    # below; we leave them blank here so the scoring stage sees a clean
+    # row when LinkedIn's detail page omits one of them.
+    now_iso = datetime.now().isoformat()
+    stub = {
+        "id": job_id,
+        "title": "",
+        "company": "",
+        "location": "",
+        "url": f"https://www.linkedin.com/jobs/view/{job_id}/",
+        "query": "",
+        "category": "manual",
+        "found_at": now_iso,
+        "priority": False,
+        "msc_required": None,
+        "fit": None,
+        "fit_reasons": [],
+        "source": "manual",
+        "manual_added_at": now_iso,
+    }
+
+    # Pull title/company from LinkedIn's detail HTML so the row is more than
+    # a numeric-ID placeholder. The guest detail endpoint serves the same
+    # block of HTML the scraper's description fetcher already consumes — we
+    # just additionally extract the H1 + company anchor before delegating
+    # the lower-level fetch to the canonical helper inside process_one_job.
+    session = search._guest_session()
+
+    def _populate_stub_metadata(html: str) -> None:
+        """Best-effort title/company/location scrape from the guest detail
+        HTML. Quietly leaves fields blank if LinkedIn changes the markup."""
+        try:
+            from bs4 import BeautifulSoup  # local import: same as search.py
+            soup = BeautifulSoup(html, "html.parser")
+            if not stub["title"]:
+                t_el = (
+                    soup.select_one("h1.top-card-layout__title")
+                    or soup.select_one(".topcard__title")
+                    or soup.select_one("h1")
+                )
+                if t_el:
+                    stub["title"] = search._clean_title(
+                        t_el.get_text(strip=True) or ""
+                    )
+            if not stub["company"]:
+                c_el = (
+                    soup.select_one("a.topcard__org-name-link")
+                    or soup.select_one(".topcard__flavor")
+                    or soup.select_one(".top-card-layout__second-subline a")
+                )
+                if c_el:
+                    stub["company"] = (c_el.get_text(strip=True) or "").strip()
+            if not stub["location"]:
+                l_el = soup.select_one(".topcard__flavor--bullet")
+                if l_el:
+                    stub["location"] = (
+                        l_el.get_text(strip=True) or ""
+                    ).strip()
+        except Exception:
+            pass
+
+    def _fetch_one(_job):
+        """Single-job fetch closure consumed by process_one_job. Mirrors
+        fetch_description_guest's contract (returns (text_lower, diag))
+        but additionally scrapes the H1/company/location into the stub
+        from the same response so we don't pay two round-trips."""
+        url = search.GUEST_DETAIL_URL.format(job_id=_job["id"])
+        try:
+            r = session.get(url, timeout=15)
+        except Exception as e:
+            return "", f"error:{str(e)[:60]}"
+        if r.status_code == 429:
+            return "", "rate-limited"
+        if r.status_code != 200:
+            return "", f"http-{r.status_code}"
+        html = r.text or ""
+        if not html.strip():
+            return "", "empty"
+        _populate_stub_metadata(html)
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            desc_el = (
+                soup.select_one(".description__text")
+                or soup.select_one(".show-more-less-html__markup")
+                or soup.select_one("[class*='description__text']")
+                or soup.select_one("[class*='show-more-less-html']")
+            )
+            text = (
+                search._strip_html(desc_el.decode_contents())
+                if desc_el else search._strip_html(html)
+            )
+        except Exception:
+            text = search._strip_html(html)
+        if len(text) < 80:
+            return text.lower(), "empty"
+        return text.lower(), "ok"
+
+    cv_text = search._load_cv_text()
+
+    # Run the same per-job pipeline a scraped row gets. process_one_job
+    # walks: title-filter -> fetch -> Claude (single-item) -> regex fallback
+    # -> atomic-merge persist. On Claude failure / empty desc, the row is
+    # still persisted with whatever scoring fell out (regex / title-filter /
+    # null) — never lost. See backend/search.py:process_one_job docstring.
+    try:
+        result = search.process_one_job(
+            stub,
+            cv_text=cv_text,
+            fetch_one=_fetch_one,
+            persist=True,
+            already_scored=False,
+        )
+    except Exception as e:
+        _emit({
+            "ok": False,
+            "error": f"pipeline failure: {type(e).__name__}: {e}",
+        }, 1)
+
+    _emit({
+        "ok": True,
+        "id": result.get("id"),
+        "title": result.get("title"),
+        "company": result.get("company"),
+        "location": result.get("location"),
+        "fit": result.get("fit"),
+        "score": result.get("score"),
+        "scored_by": result.get("scored_by"),
+        "fit_reasons": result.get("fit_reasons", []),
+        "source": result.get("source"),
+        "manual_added_at": result.get("manual_added_at"),
+    }, 0)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -392,6 +648,7 @@ def main():
     sub.add_parser("rate").set_defaults(func=cmd_rate)
     sub.add_parser("app-status").set_defaults(func=cmd_app_status)
     sub.add_parser("applied-import").set_defaults(func=cmd_applied_import)
+    sub.add_parser("add-manual").set_defaults(func=cmd_add_manual)
     args = p.parse_args()
     try:
         args.func(args)

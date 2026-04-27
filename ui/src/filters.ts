@@ -53,7 +53,7 @@ export const ALL_SCORED_BY: ScoredByKey[] = [
   'title-filter',
   'none',
 ];
-export const ALL_SOURCES: SourceKey[] = ['loggedin', 'guest', 'unknown'];
+export const ALL_SOURCES: SourceKey[] = ['loggedin', 'guest', 'manual', 'unknown'];
 
 // Default fit set HIDES `skip` — most users never want to look at skip jobs,
 // and unhiding is one click in the Fit panel. `isDefault()` and

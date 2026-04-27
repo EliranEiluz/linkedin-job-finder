@@ -513,9 +513,15 @@ const runProfileCtl = (
 // Identical spawn-and-pipe pattern, just for corpus_ctl.py. Kept separate
 // from runProfileCtl because the timeout differs (corpus mutations are
 // fast — 8s — while profile creates may run a JSON-validate loop).
+//
+// Most corpus mutations are sub-second (rate / app-status / delete /
+// applied-import). `add-manual` is the outlier — it walks the same
+// fetch + Claude scoring pipeline a scrape does and can take 10-90 s.
+// Callers that need longer than the default override via `timeoutMs`.
 const runCorpusCtl = (
   args: string[],
   stdinPayload: string | null = null,
+  timeoutMs: number = CORPUS_TIMEOUT_MS,
 ): Promise<SchedulerCtlResult> =>
   new Promise((resolve) => {
     let stdout = '';
@@ -532,7 +538,7 @@ const runCorpusCtl = (
     const timer = setTimeout(() => {
       timedOut = true;
       try { child.kill('SIGKILL'); } catch { /* already dead */ }
-    }, CORPUS_TIMEOUT_MS);
+    }, timeoutMs);
 
     child.stdout.on('data', (c: Buffer) => { stdout += c.toString('utf8'); });
     child.stderr.on('data', (c: Buffer) => { stderr += c.toString('utf8'); });
@@ -1138,6 +1144,77 @@ const configApiPlugin = (): Plugin => ({
             args, JSON.stringify({ applied_ids: ids }),
           );
           return corpusResponse(res, args, result);
+        }
+
+        // ---- manual-add — paste a LinkedIn URL or bare 8-12 digit job id
+        //      to ingest a single job through the SAME pipeline a scraped
+        //      row gets (title-filter -> guest description fetch -> Claude
+        //      scoring with regex fallback -> atomic merge). The persisted
+        //      row carries `source: "manual"` + `manual_added_at` so the
+        //      filter sidebar + few-shot loop can distinguish them.
+        //
+        //      Status mapping is custom (NOT corpusResponse) because the
+        //      duplicate case is a real conflict, not a generic 400:
+        //         exit 0                                  -> 200 OK
+        //         exit 1 + error="already in corpus"      -> 409 Conflict
+        //         exit 1 + other validation/fetch failure -> 400 Bad Request
+        //         spawn error / timeout                   -> 500 / 504
+        //
+        //      Timeout is 3 minutes (matches ONBOARDING_GENERATE_TIMEOUT_MS)
+        //      because Claude scoring + LinkedIn HTTP can take 30-90 s on
+        //      slower runs. ----------------------------------------------
+        if (url.startsWith('/api/corpus/add-manual') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          let body: { url_or_id?: unknown };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+          if (typeof body.url_or_id !== 'string' || !body.url_or_id.trim()) {
+            return sendJson(res, 400, {
+              ok: false, error: 'url_or_id must be a non-empty string',
+            });
+          }
+          if (body.url_or_id.length > 500) {
+            return sendJson(res, 400, {
+              ok: false, error: 'url_or_id must be ≤ 500 chars',
+            });
+          }
+          const args = ['add-manual'];
+          const result = await runCorpusCtl(
+            args,
+            JSON.stringify({ url_or_id: body.url_or_id }),
+            ONBOARDING_GENERATE_TIMEOUT_MS,
+          );
+          if (result.spawnError) {
+            return sendJson(res, 500, {
+              ok: false,
+              error: `spawn error: ${result.spawnError}`,
+              args,
+            });
+          }
+          if (result.timedOut) {
+            return sendJson(res, 504, {
+              ok: false,
+              error: 'add-manual timed out — LinkedIn fetch + Claude scoring took longer than 3 minutes',
+              stderr: result.stderr.trim().slice(0, 500),
+            });
+          }
+          let parsed: { ok?: boolean; error?: string } & Record<string, unknown>;
+          try {
+            parsed = JSON.parse(result.stdout);
+          } catch {
+            return sendJson(res, 500, {
+              ok: false,
+              error: 'corpus_ctl emitted non-JSON stdout',
+              raw_stdout: result.stdout.trim().slice(0, 500),
+              raw_stderr: result.stderr.trim().slice(0, 500),
+              exit_code: result.exitCode,
+            });
+          }
+          if (parsed.ok === true) return sendJson(res, 200, parsed);
+          if (parsed.error === 'already in corpus') {
+            return sendJson(res, 409, parsed);
+          }
+          return sendJson(res, 400, parsed);
         }
 
         // ---- cv save (used by the onboarding flow instead of the old

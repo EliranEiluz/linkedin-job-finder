@@ -5,7 +5,12 @@ export type Fit = 'good' | 'ok' | 'skip';
 // "company" — those render alongside the new ids without special-casing.
 export type Category = string;
 export type ScoredBy = 'claude' | 'regex' | 'title-filter';
-export type Source = 'loggedin' | 'guest';
+// 'manual' tags rows ingested via the Corpus tab's "+ Add Job" button
+// (POST /api/corpus/add-manual). They walk the same per-job pipeline a
+// scraped row gets — only this provenance marker (and `manual_added_at`)
+// distinguish them. The few-shot loop already counts manual rows as
+// positive feedback (search.py:_classify_feedback_row).
+export type Source = 'loggedin' | 'guest' | 'manual';
 
 // Application-tracker pipeline. 8 stages in display order — `new` is the
 // unset/default seeded by the localStorage→server migration; `take-home`
@@ -78,4 +83,8 @@ export interface Job {
   app_status_at?: string | null;
   app_status_history?: AppStatusHistoryEntry[];
   app_notes?: string | null;
+  // ISO-8601 timestamp set when the row was ingested via "+ Add Job".
+  // Only present on rows with `source === 'manual'`. Useful for an
+  // "added by me yesterday" sort + as a debug marker.
+  manual_added_at?: string | null;
 }

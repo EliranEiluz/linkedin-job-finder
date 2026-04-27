@@ -13,6 +13,7 @@ import { useAppStatus, useCorpusActions, useDebounced, useUrlSync } from './hook
 import { StatsBar } from './StatsBar';
 import { FilterPanel } from './FilterPanel';
 import { JobsTable } from './JobsTable';
+import { AddManualModal } from './AddManualModal';
 import { normalizeConfig } from './configMigrate';
 
 type LoadState =
@@ -320,6 +321,7 @@ export const CorpusPage = () => {
   // need to read it without violating temporal-dead-zone rules.
   const [cursorIndex, setCursorIndex] = useState(0);
   const [showCheatsheet, setShowCheatsheet] = useState(false);
+  const [addManualOpen, setAddManualOpen] = useState(false);
 
   // Debounce search for the applyFilters pass (keeps the input snappy).
   const debouncedSearch = useDebounced(filters.search, 120);
@@ -422,15 +424,30 @@ export const CorpusPage = () => {
             ? 'loading…'
             : ''}
         </div>
-        <button
-          type="button"
-          onClick={() => void reload()}
-          disabled={state.kind === 'loading'}
-          className="inline-flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:opacity-50"
-        >
-          <span>↻</span> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAddManualOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+            title="Paste a LinkedIn URL or job ID to ingest one job manually"
+          >
+            <span>＋</span> Add Job
+          </button>
+          <button
+            type="button"
+            onClick={() => void reload()}
+            disabled={state.kind === 'loading'}
+            className="inline-flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:opacity-50"
+          >
+            <span>↻</span> Refresh
+          </button>
+        </div>
       </div>
+
+      <AddManualModal
+        open={addManualOpen}
+        onClose={() => setAddManualOpen(false)}
+      />
 
       {state.kind === 'ok' && (
         <StatsBar

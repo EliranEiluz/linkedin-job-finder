@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AppStatus } from './types';
+import type { AppStatus, Fit, Source } from './types';
 
 export const useDebounced = <T>(value: T, delay = 150): T => {
   const [v, setV] = useState(value);
@@ -152,6 +152,107 @@ export const useAppStatus = () => {
   );
 
   return { setAppStatus, bulkImportApplied };
+};
+
+/** Manual-add hook: paste a LinkedIn URL or bare numeric job id and ingest
+ *  it through the same pipeline a scraped row gets. Wraps
+ *  `POST /api/corpus/add-manual`.
+ *
+ *  Status mapping the caller can branch on:
+ *    - ok=true                                 → fresh job ingested
+ *    - alreadyInCorpus=true (HTTP 409)         → dedup short-circuit
+ *    - ok=false otherwise                      → parse / fetch / score error
+ *
+ *  Fires the existing `linkedinjobs:corpus-stale` event on success so
+ *  CorpusPage re-fetches results.json without a manual reload. */
+export interface AddManualJob {
+  id: string;
+  title?: string;
+  company?: string;
+  location?: string;
+  fit?: Fit | null;
+  score?: number | null;
+  scored_by?: string | null;
+  fit_reasons?: string[];
+  source?: Source | null;
+  manual_added_at?: string | null;
+}
+
+export interface AddManualResult {
+  ok: boolean;
+  job?: AddManualJob;
+  error?: string;
+  alreadyInCorpus?: boolean;
+  existingId?: string;
+}
+
+export const useAddManual = () => {
+  const fireStale = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('linkedinjobs:corpus-stale'));
+  }, []);
+
+  const addManual = useCallback(
+    async (input: string): Promise<AddManualResult> => {
+      const trimmed = (input || '').trim();
+      if (!trimmed) {
+        return { ok: false, error: 'paste a LinkedIn URL or job id' };
+      }
+      try {
+        const res = await fetch('/api/corpus/add-manual', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url_or_id: trimmed }),
+        });
+        const body = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          existing_id?: string;
+          id?: string;
+          title?: string;
+          company?: string;
+          location?: string;
+          fit?: Fit | null;
+          score?: number | null;
+          scored_by?: string | null;
+          fit_reasons?: string[];
+          source?: Source | null;
+          manual_added_at?: string | null;
+        };
+        if (res.status === 409) {
+          return {
+            ok: false,
+            alreadyInCorpus: true,
+            existingId: body.existing_id,
+            error: body.error || 'already in corpus',
+          };
+        }
+        if (!body.ok || !body.id) {
+          return { ok: false, error: body.error || `HTTP ${res.status}` };
+        }
+        fireStale();
+        return {
+          ok: true,
+          job: {
+            id: body.id,
+            title: body.title,
+            company: body.company,
+            location: body.location,
+            fit: body.fit ?? null,
+            score: body.score ?? null,
+            scored_by: body.scored_by ?? null,
+            fit_reasons: body.fit_reasons ?? [],
+            source: body.source ?? null,
+            manual_added_at: body.manual_added_at ?? null,
+          },
+        };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    },
+    [fireStale],
+  );
+
+  return { addManual };
 };
 
 /** Writes the current URLSearchParams to the address bar without navigation. */

@@ -206,11 +206,13 @@ const byTooltip: Record<ScoredByKey, string> = {
 const srcLabel: Record<SourceKey, string> = {
   loggedin: '🔐 Logged-in',
   guest: '🌐 Guest',
+  manual: '✋ Manual',
   unknown: 'Unknown (legacy)',
 };
 const srcTooltip: Record<SourceKey, string> = {
   loggedin: 'Job scraped via Playwright + saved LinkedIn session',
   guest: 'Job scraped via the unauthenticated /jobs-guest API',
+  manual: 'Added via the Corpus tab\'s "+ Add Job" button (paste a LinkedIn URL/ID)',
   unknown: 'Scraped before mode-tagging existed (mid-April 2026)',
 };
 
