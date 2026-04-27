@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import type { Category } from './types';
 import { Dot, type DotColor } from './Dot';
@@ -37,6 +37,30 @@ interface Props {
 // localStorage key for the desktop sidebar collapsed state. Mobile uses
 // the in-memory `open` drawer flag — no persistence needed there.
 const SIDEBAR_COLLAPSED_KEY = 'corpus.sidebar.collapsed';
+
+// Long-list affordance: when a PillRow checkbox section has more than
+// VISIBLE_LIMIT options we show the first N + a "Show all" toggle row.
+// State is in-memory only (deliberately not persisted) — this is a
+// "show me what I'm missing right now" affordance, not a preference.
+const VISIBLE_LIMIT = 5;
+
+// Compute which options to render given the current expansion state. When
+// collapsed we always include any currently-selected hidden options so the
+// user never hits the surprising "I selected this but I can't see it now"
+// state. Returns the slice + a flag for whether the toggle should render.
+const sliceWithSelected = <T extends string>(
+  options: readonly T[],
+  selected: Set<T>,
+  expanded: boolean,
+): { shown: T[]; needsToggle: boolean } => {
+  if (options.length <= VISIBLE_LIMIT) {
+    return { shown: [...options], needsToggle: false };
+  }
+  if (expanded) return { shown: [...options], needsToggle: true };
+  const visible = new Set<T>(options.slice(0, VISIBLE_LIMIT));
+  for (const o of options) if (selected.has(o)) visible.add(o);
+  return { shown: options.filter((o) => visible.has(o)), needsToggle: true };
+};
 
 const toggle = <T,>(set: Set<T>, v: T): Set<T> => {
   const next = new Set(set);
@@ -416,6 +440,50 @@ export const FilterPanel = ({
       </button>
     ) : null;
 
+  // Per-section expansion state for the long-list affordance. A single Set
+  // keyed by section id avoids 4 separate useState hooks, and resetting on
+  // unmount (no persistence) is the intended behaviour.
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleExpanded = (key: string) =>
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  // "Show all N" / "Show fewer" row. Visual language matches SectionReset
+  // (small, slate-400, brand-700 on hover) but lives at the END of the list
+  // — the section header's accessory slot is taken by Reset.
+  const ShowMoreToggle = ({
+    expanded,
+    total,
+    onClick,
+    controlsId,
+  }: {
+    expanded: boolean;
+    total: number;
+    onClick: () => void;
+    controlsId: string;
+  }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={expanded}
+      aria-controls={controlsId}
+      className="self-start rounded-md px-2 py-1 text-[11px] font-medium text-slate-400 hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-700 focus-visible:ring-offset-1"
+    >
+      {expanded ? 'Show fewer' : `Show all ${total}`}
+    </button>
+  );
+
+  // Stable per-section list ids for aria-controls. useId gives us one prefix
+  // per FilterPanel instance; we suffix with the section key.
+  const listIdPrefix = useId();
+  const listId = (key: string) => `${listIdPrefix}-${key}`;
+
   const panel = (
     <div className="flex h-full flex-col gap-5 overflow-y-auto px-3 pb-8 pt-3">
       {/* Search — first section, no header above it. The placeholder + kbd
@@ -458,22 +526,42 @@ export const FilterPanel = ({
           />
         }
       >
-        <div className="flex flex-col gap-0.5">
-          {ALL_FITS.map((k) => {
-            const m = fitMeta[k];
-            return (
-              <PillRow
-                key={k}
-                label={m.label}
-                dot={m.dot}
-                selected={f.fits.size === 0 || f.fits.has(k)}
-                onClick={() =>
-                  onChange({ ...f, fits: cycleEnumFilter(f.fits, ALL_FITS, k) })
-                }
-              />
-            );
-          })}
-        </div>
+        {(() => {
+          const fitsExpanded = expandedSections.has('fit');
+          // "Empty = match all" mode has no user-selected items, so we don't
+          // force-pin anything — the first VISIBLE_LIMIT rows are enough.
+          const { shown, needsToggle } = sliceWithSelected(
+            ALL_FITS,
+            f.fits,
+            fitsExpanded,
+          );
+          return (
+            <div className="flex flex-col gap-0.5" id={listId('fit')}>
+              {shown.map((k) => {
+                const m = fitMeta[k];
+                return (
+                  <PillRow
+                    key={k}
+                    label={m.label}
+                    dot={m.dot}
+                    selected={f.fits.size === 0 || f.fits.has(k)}
+                    onClick={() =>
+                      onChange({ ...f, fits: cycleEnumFilter(f.fits, ALL_FITS, k) })
+                    }
+                  />
+                );
+              })}
+              {needsToggle && (
+                <ShowMoreToggle
+                  expanded={fitsExpanded}
+                  total={ALL_FITS.length}
+                  onClick={() => toggleExpanded('fit')}
+                  controlsId={listId('fit')}
+                />
+              )}
+            </div>
+          );
+        })()}
       </Section>
 
       <Section title="Priority company">
@@ -495,21 +583,39 @@ export const FilterPanel = ({
           />
         }
       >
-        <div className="flex flex-col gap-0.5">
-          {categoryOptions.map((k) => (
-            <PillRow
-              key={k}
-              label={categoryNamesById?.get(k) ?? catLabel(k)}
-              selected={f.categories.size === 0 || f.categories.has(k)}
-              onClick={() =>
-                onChange({
-                  ...f,
-                  categories: cycleEnumFilter(f.categories, categoryOptions, k),
-                })
-              }
-            />
-          ))}
-        </div>
+        {(() => {
+          const catsExpanded = expandedSections.has('category');
+          const { shown, needsToggle } = sliceWithSelected(
+            categoryOptions,
+            f.categories,
+            catsExpanded,
+          );
+          return (
+            <div className="flex flex-col gap-0.5" id={listId('category')}>
+              {shown.map((k) => (
+                <PillRow
+                  key={k}
+                  label={categoryNamesById?.get(k) ?? catLabel(k)}
+                  selected={f.categories.size === 0 || f.categories.has(k)}
+                  onClick={() =>
+                    onChange({
+                      ...f,
+                      categories: cycleEnumFilter(f.categories, categoryOptions, k),
+                    })
+                  }
+                />
+              ))}
+              {needsToggle && (
+                <ShowMoreToggle
+                  expanded={catsExpanded}
+                  total={categoryOptions.length}
+                  onClick={() => toggleExpanded('category')}
+                  controlsId={listId('category')}
+                />
+              )}
+            </div>
+          );
+        })()}
       </Section>
 
       {/* Subtle divider between scope (what jobs are) and metadata
@@ -526,26 +632,44 @@ export const FilterPanel = ({
           />
         }
       >
-        <div className="flex flex-col gap-0.5">
-          {ALL_SOURCES.map((k) => {
-            const m = srcMeta[k];
-            return (
-              <PillRow
-                key={k}
-                label={m.label}
-                dot={m.dot}
-                tooltip={m.tooltip}
-                selected={f.sources.size === 0 || f.sources.has(k)}
-                onClick={() =>
-                  onChange({
-                    ...f,
-                    sources: cycleEnumFilter(f.sources, ALL_SOURCES, k),
-                  })
-                }
-              />
-            );
-          })}
-        </div>
+        {(() => {
+          const srcExpanded = expandedSections.has('source');
+          const { shown, needsToggle } = sliceWithSelected(
+            ALL_SOURCES,
+            f.sources,
+            srcExpanded,
+          );
+          return (
+            <div className="flex flex-col gap-0.5" id={listId('source')}>
+              {shown.map((k) => {
+                const m = srcMeta[k];
+                return (
+                  <PillRow
+                    key={k}
+                    label={m.label}
+                    dot={m.dot}
+                    tooltip={m.tooltip}
+                    selected={f.sources.size === 0 || f.sources.has(k)}
+                    onClick={() =>
+                      onChange({
+                        ...f,
+                        sources: cycleEnumFilter(f.sources, ALL_SOURCES, k),
+                      })
+                    }
+                  />
+                );
+              })}
+              {needsToggle && (
+                <ShowMoreToggle
+                  expanded={srcExpanded}
+                  total={ALL_SOURCES.length}
+                  onClick={() => toggleExpanded('source')}
+                  controlsId={listId('source')}
+                />
+              )}
+            </div>
+          );
+        })()}
       </Section>
 
       <Section
@@ -557,26 +681,44 @@ export const FilterPanel = ({
           />
         }
       >
-        <div className="flex flex-col gap-0.5">
-          {ALL_SCORED_BY.map((k) => {
-            const m = byMeta[k];
-            return (
-              <PillRow
-                key={k}
-                label={m.label}
-                dot={m.dot}
-                tooltip={m.tooltip}
-                selected={f.scoredBy.size === 0 || f.scoredBy.has(k)}
-                onClick={() =>
-                  onChange({
-                    ...f,
-                    scoredBy: cycleEnumFilter(f.scoredBy, ALL_SCORED_BY, k),
-                  })
-                }
-              />
-            );
-          })}
-        </div>
+        {(() => {
+          const byExpanded = expandedSections.has('scoredBy');
+          const { shown, needsToggle } = sliceWithSelected(
+            ALL_SCORED_BY,
+            f.scoredBy,
+            byExpanded,
+          );
+          return (
+            <div className="flex flex-col gap-0.5" id={listId('scoredBy')}>
+              {shown.map((k) => {
+                const m = byMeta[k];
+                return (
+                  <PillRow
+                    key={k}
+                    label={m.label}
+                    dot={m.dot}
+                    tooltip={m.tooltip}
+                    selected={f.scoredBy.size === 0 || f.scoredBy.has(k)}
+                    onClick={() =>
+                      onChange({
+                        ...f,
+                        scoredBy: cycleEnumFilter(f.scoredBy, ALL_SCORED_BY, k),
+                      })
+                    }
+                  />
+                );
+              })}
+              {needsToggle && (
+                <ShowMoreToggle
+                  expanded={byExpanded}
+                  total={ALL_SCORED_BY.length}
+                  onClick={() => toggleExpanded('scoredBy')}
+                  controlsId={listId('scoredBy')}
+                />
+              )}
+            </div>
+          );
+        })()}
       </Section>
 
       <Section
