@@ -154,7 +154,7 @@ export const ProfileSwitcher = ({ onActiveChange, extraActions }: Props) => {
       </div>
       <p className="mb-2 text-xs text-slate-500">
         A profile is one saved search setup — your CV, queries, target companies, and what counts as a good fit.
-        Use multiple profiles to keep different kinds of searches separate. Saved jobs are shared across all profiles.
+        Use multiple profiles for different kinds of searches. Saved jobs are shared across all profiles.
       </p>
 
       {action.kind === 'idle' && (
