@@ -174,9 +174,8 @@ export const CategoryManager = ({
         </button>
       </div>
       <p className="mb-3 text-xs text-slate-500">
-        Each category is a list of LinkedIn search queries. <span className="font-medium">Keyword</span> runs the term
-        through normal search and filters by title relevance; <span className="font-medium">Company</span> runs it as a
-        company-name search and only keeps matching companies.
+        Each category is a group of LinkedIn search queries that run together. Pick a type per category — what
+        keyword vs. company means is shown next to each row's radio buttons.
       </p>
 
       {categories.length === 0 ? (
