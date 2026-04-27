@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { CrawlerConfig } from './configTypes';
 import { normalizeConfig } from './configMigrate';
+import { useViewport } from './useViewport';
 
 type Step = 1 | 2 | 3;
 
@@ -39,18 +40,24 @@ const defaultProfileName = (): string => {
 };
 
 const Stepper = ({ step }: { step: Step }) => {
-  const labels = ['Upload CV', 'Write intent', 'Generate & review'];
+  // Labels: short for mobile (no mid-word wrap inside the bubble row), full
+  // at md+. Each entry is [shortLabel, fullLabel].
+  const labels: ReadonlyArray<readonly [string, string]> = [
+    ['CV', 'Upload CV'],
+    ['Intent', 'Write intent'],
+    ['Review', 'Generate & review'],
+  ];
   return (
     <ol className="mb-6 flex items-center gap-2 text-sm">
-      {labels.map((label, i) => {
+      {labels.map(([short, full], i) => {
         const n = (i + 1) as Step;
         const active = n === step;
         const done = n < step;
         return (
-          <li key={label} className="flex items-center gap-2">
+          <li key={full} className="flex items-center gap-2">
             <span
               className={clsx(
-                'flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold',
+                'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
                 active && 'bg-indigo-600 text-white',
                 done && 'bg-indigo-200 text-indigo-800',
                 !active && !done && 'bg-slate-200 text-slate-500',
@@ -60,11 +67,12 @@ const Stepper = ({ step }: { step: Step }) => {
             </span>
             <span
               className={clsx(
-                'font-medium',
+                'whitespace-nowrap font-medium',
                 active ? 'text-indigo-700' : 'text-slate-600',
               )}
             >
-              {label}
+              <span className="md:hidden">{short}</span>
+              <span className="hidden md:inline">{full}</span>
             </span>
             {i < 2 && <span className="mx-1 text-slate-300">→</span>}
           </li>
@@ -129,15 +137,47 @@ const Step1CV = ({
     }
   }, [setCv]);
 
+  // On mobile we collapse the "you already have a config" callout by default
+  // so the CV upload stays above the fold (the callout's full prose pushes
+  // the textarea + Choose-File button off-screen on a 390px viewport).
+  const { isMobile } = useViewport();
+  const [calloutOpen, setCalloutOpen] = useState(!isMobile);
   return (
     <div>
       {haveExistingConfig && (
-        <Banner kind="info">
-          You already have a config. At the end of setup you can either save
-          the generated one as a <span className="font-semibold">new profile</span>{' '}
-          (recommended — keeps your current one untouched) or{' '}
-          <span className="font-semibold">overwrite the active profile</span>.
-        </Banner>
+        <>
+          {/* Mobile: collapsed by default — one-line summary + a "?" toggle.
+              Desktop: full callout body inline (the original Banner). */}
+          <div className="mb-4 md:hidden">
+            <button
+              type="button"
+              onClick={() => setCalloutOpen((v) => !v)}
+              aria-expanded={calloutOpen}
+              className="flex w-full items-center justify-between rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-left text-sm text-indigo-800"
+            >
+              <span>You already have a config — saved as a new profile by default.</span>
+              <span className="ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-indigo-300 text-xs font-semibold">
+                {calloutOpen ? '−' : '?'}
+              </span>
+            </button>
+            {calloutOpen && (
+              <div className="mt-1 rounded border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-800">
+                At the end of setup you can either save the generated config
+                as a <span className="font-semibold">new profile</span>{' '}
+                (recommended — keeps your current one untouched) or{' '}
+                <span className="font-semibold">overwrite the active profile</span>.
+              </div>
+            )}
+          </div>
+          <div className="hidden md:block">
+            <Banner kind="info">
+              You already have a config. At the end of setup you can either save
+              the generated one as a <span className="font-semibold">new profile</span>{' '}
+              (recommended — keeps your current one untouched) or{' '}
+              <span className="font-semibold">overwrite the active profile</span>.
+            </Banner>
+          </div>
+        </>
       )}
       <h2 className="mb-2 text-base font-semibold text-slate-800">Your CV</h2>
       <p className="mb-3 text-sm text-slate-600">

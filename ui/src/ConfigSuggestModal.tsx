@@ -253,15 +253,22 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
               </div>
             ) : null}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={applying}
-            className="text-xs text-slate-500 hover:text-slate-700 disabled:opacity-40"
-            aria-label="Close"
-          >
-            Esc
-          </button>
+          <div className="ml-3 flex shrink-0 items-center gap-2">
+            <kbd className="hidden rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 md:inline-block">
+              Esc
+            </kbd>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={applying}
+              className="rounded p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
+              aria-label="Close"
+            >
+              <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Body */}

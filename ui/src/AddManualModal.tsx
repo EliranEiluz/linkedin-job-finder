@@ -128,14 +128,22 @@ export const AddManualModal = ({ open, onClose }: Props) => {
           >
             Add a job manually
           </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={state.kind === 'fetching'}
-            className="text-xs text-slate-500 hover:text-slate-700 disabled:opacity-40"
-          >
-            Esc
-          </button>
+          <div className="flex items-center gap-2">
+            <kbd className="hidden rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 md:inline-block">
+              Esc
+            </kbd>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={state.kind === 'fetching'}
+              aria-label="Close"
+              className="rounded p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
+            >
+              <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div className="px-4 py-3">

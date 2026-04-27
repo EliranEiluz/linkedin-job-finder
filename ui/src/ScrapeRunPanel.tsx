@@ -117,7 +117,10 @@ const RunRow = ({
 
   return (
     <div className="border-b border-slate-100 last:border-b-0">
-      <div className="flex items-center gap-3 px-3 py-2">
+      {/* Mobile (<md): wrap chips inline with `flex-wrap` so a long "started
+          N hours ago" text doesn't push every column onto its own block-line.
+          Desktop (md+): single-line row, right-aligned tail with `ml-auto`. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 md:flex-nowrap md:gap-3">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -128,13 +131,13 @@ const RunRow = ({
         </button>
         <StatusPill status={run.status} />
         <ModeTag mode={run.mode} />
-        <span className="text-xs text-slate-500">
-          started {safeRel(run.started_at)}
+        <span className="whitespace-nowrap text-xs text-slate-500">
+          {safeRel(run.started_at)}
         </span>
-        <span className="text-xs tabular-nums text-slate-500">
+        <span className="whitespace-nowrap text-xs tabular-nums text-slate-500">
           · {elapsed(run.started_at, run.ended_at)}
         </span>
-        <span className="ml-auto flex items-center gap-2 text-[11px] text-slate-400">
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-400 md:ml-auto md:flex-nowrap">
           {descFailed !== undefined && descFailed > 0 && (
             <span
               className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700"
@@ -143,8 +146,10 @@ const RunRow = ({
               <Dot color="warn" /> {descFailed} desc failed
             </span>
           )}
-          <span>pid {run.pid}</span>
-          {run.exit_code !== null && <span>exit {run.exit_code}</span>}
+          <span className="whitespace-nowrap">pid {run.pid}</span>
+          {run.exit_code !== null && (
+            <span className="whitespace-nowrap">exit {run.exit_code}</span>
+          )}
           {run.status === 'running' && (
             <button
               type="button"

@@ -179,20 +179,24 @@ const RunRow = ({ run }: { run: RunRecord }) => {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-4 px-4 py-2.5 text-left hover:bg-slate-50"
+        className="flex w-full flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-left hover:bg-slate-50 md:flex-nowrap md:gap-4"
       >
         <span className="text-xs text-slate-400">{open ? '▼' : '▶'}</span>
-        <span className="w-44 shrink-0 text-sm tabular-nums text-slate-700">
+        {/* Mobile: let the date/duration/count shrink to content; desktop:
+            keep the original fixed widths so a long history reads as a tidy
+            table. The fit chips line wraps to its own row on mobile so it
+            doesn't get pushed off the right edge. */}
+        <span className="text-sm tabular-nums text-slate-700 md:w-44 md:shrink-0">
           {startedDate ? startedDate.toLocaleString() : run.started_at}
         </span>
-        <span className="w-20 shrink-0 text-xs tabular-nums text-slate-500">
+        <span className="text-xs tabular-nums text-slate-500 md:w-20 md:shrink-0">
           {fmtDuration(run.duration_sec)}
         </span>
-        <span className="w-24 shrink-0 text-sm tabular-nums">
+        <span className="text-sm tabular-nums md:w-24 md:shrink-0">
           <span className="font-semibold text-slate-900">{total}</span>
           <span className="ml-1 text-xs text-slate-500">new</span>
         </span>
-        <span className="flex flex-1 flex-wrap gap-1">
+        <span className="flex w-full flex-wrap gap-1 md:w-auto md:flex-1">
           <FitChip
             label="good"
             count={run.fit_distribution.good}

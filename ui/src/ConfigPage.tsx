@@ -437,7 +437,7 @@ export const ConfigPage = () => {
         onApply={(next) => saveConfig(next)}
       />
 
-      <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 pb-24 md:pb-4">
+      <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 pb-36 md:pb-4">
         <div className="mx-auto flex max-w-4xl flex-col gap-4">
           {/* Profile switcher — switching profiles repoints config.json to a
               different file, then we reload to pull in the new draft state.
@@ -677,9 +677,10 @@ export const ConfigPage = () => {
           </Card>
 
           {/* Action bar — sticks to the bottom of the scroll container.
-              Page padding-bottom (pb-24 below md) reserves room so the bar
-              never floats over content. Labels shorten on mobile so all 3
-              buttons fit on a 393px viewport; full labels return at md+. */}
+              Page padding-bottom (pb-36 below md, pb-4 at md+) reserves room
+              so the bar never floats over content. Labels shorten on mobile
+              so all 3 buttons fit on a 393px viewport; full labels return
+              at md+. */}
           <div className="sticky bottom-0 -mx-4 flex items-center justify-between gap-2 border-t border-slate-200 bg-white px-4 py-3">
             <button
               type="button"
