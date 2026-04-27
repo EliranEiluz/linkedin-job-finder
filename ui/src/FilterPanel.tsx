@@ -122,8 +122,10 @@ const Section = ({
 // full-width, with a leading semantic dot, sentence-case label, and a check
 // glyph on the right when "selected" (i.e. the option survives the filter).
 //
-// Min height 32px desktop, 36px on touch (`md:min-h-8 min-h-9`) — Apple HIG
-// 44px gets satisfied via wrapping padding + tap target on the parent <li>.
+// Min height 32px desktop, 44px on mobile (`min-h-11 md:min-h-8`) — Apple
+// HIG 44px tap target satisfied directly on the button itself instead of
+// relying on the wrapping <li> padding (which the previous 36px setting
+// fell short of). Hover-only desktop stays compact.
 //
 // Selected = bg-slate-50 (very subtle), with leading dot + checkmark glyph.
 // Unselected = no bg, dot is at 50% opacity to telegraph "filtered out".
@@ -148,7 +150,7 @@ const PillRow = ({
     title={tooltip}
     aria-pressed={selected}
     className={clsx(
-      'group flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm',
+      'group flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm',
       'transition-colors focus-visible:outline-none focus-visible:ring-2',
       'focus-visible:ring-brand-700 focus-visible:ring-offset-1 md:min-h-8',
       selected

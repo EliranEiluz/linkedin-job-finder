@@ -436,7 +436,10 @@ export const CorpusPage = () => {
         />
       )}
 
-      <div className="flex flex-1 overflow-hidden">
+      {/* On mobile, FilterPanel renders a horizontal toggle bar (md:hidden)
+          that must stack ABOVE the table — not sit beside it. flex-col on
+          mobile achieves that; md+ restores the desktop sidebar+main layout. */}
+      <div className="flex flex-1 flex-col overflow-hidden md:flex-row">
         {state.kind === 'ok' && (
           <FilterPanel
             value={filters}

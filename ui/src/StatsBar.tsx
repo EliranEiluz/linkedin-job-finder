@@ -59,11 +59,42 @@ export const StatsBar = ({
     ? `Re-fetch results.json — last loaded ${loadedAt.toLocaleTimeString()}`
     : 'Re-fetch results.json';
 
+  // Action cluster (Add Job + Refresh). Rendered twice: once inline at md+
+  // (right-aligned via ml-auto in the same row as the summary), and once as
+  // its own row on mobile so it stays reachable without horizontal scroll.
+  const actions = (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {onAddManual && (
+        <button
+          type="button"
+          onClick={onAddManual}
+          className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+          title="Paste a LinkedIn URL or job ID to ingest one job manually — it goes through the same description-fetch and scoring pipeline as a scraped job"
+        >
+          <span aria-hidden="true">＋</span> Add Job
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onRefresh}
+        disabled={refreshing}
+        className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:opacity-50"
+        title={refreshTitle}
+      >
+        <span aria-hidden="true">↻</span> Refresh
+      </button>
+    </span>
+  );
+
   return (
     <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
-      {/* Mobile: horizontal-scroll if the line overflows the 393px viewport.
-          Desktop: same single line, no scroll. The Refresh+Add buttons sit at
-          the right edge via `ml-auto`. */}
+      {/* Mobile: action cluster sits on its own row above the summary so
+          Add Job + Refresh are always reachable (the summary line scrolls
+          horizontally underneath). Desktop: original single-row layout with
+          actions pinned right via ml-auto. */}
+      <div className="flex items-center justify-end px-4 pt-2 md:hidden">
+        {actions}
+      </div>
       <div className="no-scrollbar flex items-center gap-x-4 gap-y-1 overflow-x-auto whitespace-nowrap px-4 py-2 text-sm text-slate-600">
         <span className="shrink-0 font-semibold tabular-nums text-slate-900">
           {totalLabel}
@@ -91,29 +122,9 @@ export const StatsBar = ({
           tooltip="Distinct companies in the loaded corpus"
         />
 
-        {/* Right-side action cluster — Add Job + Refresh. Pushed to the
-            edge with ml-auto so it survives the horizontal scroll on mobile. */}
-        <span className="ml-auto flex shrink-0 items-center gap-1.5">
-          {onAddManual && (
-            <button
-              type="button"
-              onClick={onAddManual}
-              className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
-              title="Paste a LinkedIn URL or job ID to ingest one job manually — it goes through the same description-fetch and scoring pipeline as a scraped job"
-            >
-              <span aria-hidden="true">＋</span> Add Job
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={refreshing}
-            className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:opacity-50"
-            title={refreshTitle}
-          >
-            <span aria-hidden="true">↻</span> Refresh
-          </button>
-        </span>
+        {/* Desktop: actions pinned right inside the same row. Hidden on
+            mobile because the dedicated row above renders them there. */}
+        <span className="ml-auto hidden md:flex">{actions}</span>
       </div>
     </div>
   );

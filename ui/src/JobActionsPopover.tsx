@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { Job } from './types';
 import { RatingCommentEditor } from './RatingCommentEditor';
+import { useViewport } from './useViewport';
 
 interface Props {
   job: Job;
@@ -42,10 +43,17 @@ export const JobActionsPopover = ({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const { isMobile } = useViewport();
 
-  // —— positioning: place popover beneath the anchor button ——
+  // —— positioning: desktop pins beneath the anchor; mobile renders as a
+  // centered bottom-sheet (no anchor math needed). On mobile we set a
+  // sentinel `coords` value so the early-return below still works.
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   useEffect(() => {
+    if (isMobile) {
+      setCoords({ top: 0, left: 0 });
+      return;
+    }
     const compute = () => {
       const el = anchorRef.current;
       if (!el) return;
@@ -62,7 +70,7 @@ export const JobActionsPopover = ({
       window.removeEventListener('resize', compute);
       window.removeEventListener('scroll', compute, true);
     };
-  }, [anchorRef]);
+  }, [anchorRef, isMobile]);
 
   // —— click-outside + Esc ——
   useEffect(() => {
@@ -104,6 +112,42 @@ export const JobActionsPopover = ({
 
   if (!coords) return null;
 
+  // Mobile: centered bottom-sheet with backdrop. The desktop floating popover
+  // model breaks at narrow widths (the anchor math clamps to left:8 and the
+  // 256px card overlays the next row). A bottom-sheet with a backdrop keeps
+  // it modal, full-width minus 24px gutters, and tap-target friendly.
+  if (isMobile) {
+    return (
+      <>
+        <div
+          className="fixed inset-0 z-40 bg-slate-900/40"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+        <div
+          ref={popoverRef}
+          role="dialog"
+          aria-label="Job actions"
+          aria-modal="true"
+          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-x-3 bottom-3 z-50 rounded-lg border border-slate-200 bg-white p-3 shadow-2xl"
+        >
+          <PopoverBody
+            job={job}
+            isApplied={isApplied}
+            onToggleApplied={onToggleApplied}
+            onRate={onRate}
+            onClose={onClose}
+            confirmDelete={confirmDelete}
+            deleting={deleting}
+            err={err}
+            handleDelete={handleDelete}
+          />
+        </div>
+      </>
+    );
+  }
+
   return (
     <div
       ref={popoverRef}
@@ -118,6 +162,40 @@ export const JobActionsPopover = ({
       }}
       className="z-50 rounded-lg border border-slate-200 bg-white p-3 shadow-xl"
     >
+      <PopoverBody
+        job={job}
+        isApplied={isApplied}
+        onToggleApplied={onToggleApplied}
+        onRate={onRate}
+        onClose={onClose}
+        confirmDelete={confirmDelete}
+        deleting={deleting}
+        err={err}
+        handleDelete={handleDelete}
+      />
+    </div>
+  );
+};
+
+// Shared body extracted so the desktop floating popover and mobile bottom
+// sheet render the exact same content — same checkbox, rating editor, and
+// delete button. Only the wrapper (positioning + backdrop) differs.
+const PopoverBody = ({
+  job, isApplied, onToggleApplied, onRate, onClose,
+  confirmDelete, deleting, err, handleDelete,
+}: {
+  job: Job;
+  isApplied: boolean;
+  onToggleApplied: (id: string) => void;
+  onRate: Props['onRate'];
+  onClose: () => void;
+  confirmDelete: boolean;
+  deleting: boolean;
+  err: string | null;
+  handleDelete: () => Promise<void>;
+}) => {
+  return (
+    <>
       <div className="mb-1 flex items-start justify-between">
         <div className="min-w-0 pr-2">
           <div className="truncate text-xs font-medium text-slate-800">
@@ -187,6 +265,6 @@ export const JobActionsPopover = ({
           {err}
         </div>
       )}
-    </div>
+    </>
   );
 };

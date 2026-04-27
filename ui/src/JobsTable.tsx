@@ -245,7 +245,6 @@ export const JobsTable = ({
       });
     }, []);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [copied, setCopied] = useState<string | null>(null);
   // Inline-delete: first click puts the row's button into "confirm?" state
   // for 4s; second click within that window fires onDelete. Same single-
   // click-confirm pattern as JobActionsPopover, just available without
@@ -548,7 +547,7 @@ export const JobsTable = ({
         },
       }),
     ],
-    [copied, confirmDeleteId, handleInlineDelete, onDelete, applied, onToggleApplied, categoryNamesById],
+    [confirmDeleteId, handleInlineDelete, onDelete, applied, onToggleApplied, categoryNamesById],
   );
 
   // The applied-pinned sort + per-column sortingFn handle all ordering.
@@ -737,13 +736,13 @@ export const JobsTable = ({
                     </span>
                   </div>
 
-                  {/* Bottom action row — Open / ID copy / Del.
-                      Each button uses ROW_ACTION_BTN_BASE_MOBILE so all three
-                      share the same min-height, padding, font-weight, border
-                      treatment, and focus-visible ring. flex-1 on every button
-                      makes the row read as an even 3-segment group instead of
-                      a dominant Open + two tiny tail buttons (round-1 issue:
-                      Open=158px, ID=40px, Del=47px on iPhone). */}
+                  {/* Bottom action row — Open / Del. ID copy was dropped to
+                      match desktop (which has no ID-copy button); the job ID
+                      is still visible in the row-expanded panel as
+                      `code`-formatted text the user can long-press to copy.
+                      Both buttons use ROW_ACTION_BTN_BASE_MOBILE so they
+                      share min-height, padding, font-weight, and focus ring;
+                      flex-1 on each makes the row read as an even split. */}
                   <div className="mt-2.5 flex items-stretch gap-2">
                     <button
                       type="button"
@@ -760,25 +759,6 @@ export const JobsTable = ({
                       )}
                     >
                       Open ↗
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        await navigator.clipboard.writeText(j.id);
-                        setCopied(j.id);
-                        window.setTimeout(
-                          () => setCopied((c) => (c === j.id ? null : c)),
-                          1200,
-                        );
-                      }}
-                      className={clsx(
-                        ROW_ACTION_BTN_BASE_MOBILE,
-                        'border-slate-300 bg-white text-slate-700 hover:bg-slate-100',
-                      )}
-                      title={`Copy id: ${j.id}`}
-                    >
-                      {copied === j.id ? 'copied' : 'ID'}
                     </button>
                     {onDelete && (
                       <button
