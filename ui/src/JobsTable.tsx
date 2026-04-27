@@ -17,34 +17,59 @@ import { useViewport } from './useViewport';
 import { Dot } from './Dot';
 
 // Fit badge — neutral slate chip with a single semantic dot up front.
-// Replaces the old `bg-{good/ok/skip}-100 text-…-800` + symbol-prefix
-// pattern. The color now lives in the dot only; the chip background is
-// uniform slate-100. See DESIGN_UI_POLISH.md §3.5.
+// Sentence case for status labels (Nord/PatternFly/Carbon design-system
+// convention); "OK" stays uppercase since it's an acronym.
 const fitBadge = (fit: Job['fit']) => {
   if (fit === 'good')
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-        <Dot color="good" /> good
+        <Dot color="good" /> Good
       </span>
     );
   if (fit === 'ok')
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-        <Dot color="warn" /> ok
+        <Dot color="warn" /> OK
       </span>
     );
   if (fit === 'skip')
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-        <Dot color="neutral" /> skip
+        <Dot color="neutral" /> Skip
       </span>
     );
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
-      <Dot color="neutral" /> unscored
+      <Dot color="neutral" /> Unscored
     </span>
   );
 };
+
+// "Hot" = a meaningful match, not just "company on my list". Computed
+// in the UI for now (backend can carry a `hot` field later if useful).
+// Formula:
+//   hot = fit === 'good' AND (score >= HOT_SCORE_MIN OR priority_company)
+// Both clauses require fit='good' — a "skip"-rated job at a priority
+// company is NOT hot. Threshold tunable from config later.
+const HOT_SCORE_MIN = 8;
+export const isHotJob = (j: Pick<Job, 'fit' | 'score' | 'priority'>): boolean => {
+  if (j.fit !== 'good') return false;
+  if (j.score != null && j.score >= HOT_SCORE_MIN) return true;
+  if (j.priority) return true;
+  return false;
+};
+
+// Compact amber pill for the desktop "!" column + mobile card priority
+// indicator. Replaces the old red `<Dot color="bad" />` per user feedback
+// ("redefine hot and mark it other than this red dot, something better").
+const HotPill = () => (
+  <span
+    className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+    title="Hot match — Claude scored 'Good' fit at high score, or it's a priority-list company with a 'Good' fit"
+  >
+    Hot
+  </span>
+);
 
 const relTime = (iso: string) => {
   try {
@@ -112,7 +137,7 @@ const sourceChip = (source: Job['source']) => {
         className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700"
         title={TOOLTIPS.sourceLoggedin}
       >
-        <Dot color="brand" /> logged-in
+        <Dot color="brand" /> Logged-in
       </span>
     );
   if (source === 'guest')
@@ -121,7 +146,7 @@ const sourceChip = (source: Job['source']) => {
         className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700"
         title={TOOLTIPS.sourceGuest}
       >
-        <Dot color="good" /> guest
+        <Dot color="good" /> Guest
       </span>
     );
   if (source === 'manual')
@@ -130,7 +155,7 @@ const sourceChip = (source: Job['source']) => {
         className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700"
         title="Added via the Corpus tab's + Add Job button"
       >
-        <Dot color="warn" /> manual
+        <Dot color="warn" /> Manual
       </span>
     );
   return (
@@ -260,24 +285,13 @@ export const JobsTable = ({
   const columns = useMemo(
     () => [
       columnHelper.accessor('priority', {
-        header: '!',
+        header: 'Hot',
         cell: (info) => {
-          if (!info.getValue()) return '';
-          // B9: desaturated for fit=skip (the company is on the priority
-          // list but Claude already triaged it as "skip"). Per round-2:
-          // 🔥 emoji replaced with a small red `bad` dot — the row's
-          // `border-l-red-500` left edge is the actual priority cue, so
-          // the column just needs a quiet semantic marker, not a glyph.
-          const isSkip = info.row.original.fit === 'skip';
-          return (
-            <span
-              className="inline-flex items-center"
-              title={TOOLTIPS.priority}
-              aria-label={isSkip ? 'priority (deprioritized: skip)' : 'priority'}
-            >
-              <Dot color={isSkip ? 'neutral' : 'bad'} size="sm" />
-            </span>
-          );
+          // The column accessor is still `priority` (for sorting / filtering
+          // wired elsewhere), but the cell now renders the *derived* HOT
+          // signal. Priority-only (fit !== 'good') is NOT hot.
+          if (!isHotJob(info.row.original)) return '';
+          return <HotPill />;
         },
         sortingFn: (a, b) =>
           Number(a.original.priority) - Number(b.original.priority),
@@ -633,15 +647,13 @@ export const JobsTable = ({
               const isApplied = applied.has(j.id);
               const isCursor = cursorRowId === j.id;
               const isOpen = expanded.has(j.id);
-              const isPriorityActive = j.priority && j.fit !== 'skip';
-              const isPriorityMuted = j.priority && j.fit === 'skip';
+              const isHot = isHotJob(j);
               return (
                 <li
                   key={j.id}
                   className={clsx(
                     'relative bg-white px-3 py-3 transition-colors active:bg-slate-100',
-                    isPriorityActive && 'border-l-4 border-l-red-500',
-                    isPriorityMuted && 'border-l-4 border-l-slate-300',
+                    isHot && 'border-l-4 border-l-amber-500',
                     isApplied && 'bg-slate-50 text-slate-500 opacity-80',
                     isCursor && 'bg-brand-50 ring-2 ring-inset ring-brand-700',
                   )}
@@ -669,23 +681,7 @@ export const JobsTable = ({
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
-                      {j.priority && (
-                        // Per round-2: 🔥 emoji replaced with a quiet
-                        // semantic dot. The card already has the red
-                        // `border-l-red-500` left edge for priority — the
-                        // dot is just a redundant scan cue, no glyph noise.
-                        <span
-                          className="inline-flex items-center"
-                          title={TOOLTIPS.priority}
-                          aria-label={
-                            isPriorityMuted
-                              ? 'priority (deprioritized: skip)'
-                              : 'priority'
-                          }
-                        >
-                          <Dot color={isPriorityMuted ? 'neutral' : 'bad'} size="sm" />
-                        </span>
-                      )}
+                      {isHot && <HotPill />}
                       <label
                         className="inline-flex h-11 w-11 cursor-pointer items-center justify-center"
                         onClick={(e) => e.stopPropagation()}
@@ -913,10 +909,10 @@ export const JobsTable = ({
                       onClick={() => toggleExpand(j.id)}
                       className={clsx(
                         'cursor-pointer border-b border-slate-100 hover:bg-slate-100',
-                        // Priority gets a red border. Applied rows are visually
-                        // muted. B9: priority+skip uses a desaturated border.
-                        j.priority && j.fit === 'skip' && 'border-l-4 border-l-slate-300',
-                        j.priority && j.fit !== 'skip' && 'border-l-4 border-l-red-500',
+                        // Hot match gets an amber accent border. Priority-only
+                        // (without good fit) is no longer treated specially —
+                        // it's just a filter signal, not a visual one.
+                        isHotJob(j) && 'border-l-4 border-l-amber-500',
                         isApplied && 'bg-slate-100 text-slate-400 opacity-70',
                         // B4: keyboard cursor row — soft brand background tint
                         // + accent ring on the leading edge. Doesn't compete

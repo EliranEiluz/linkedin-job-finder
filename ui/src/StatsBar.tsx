@@ -69,23 +69,23 @@ export const StatsBar = ({
           {totalLabel}
         </span>
         <span className="text-slate-300">·</span>
-        <SummaryNum n={byFit.good} label="good" dot="good" />
-        <SummaryNum n={byFit.ok} label="ok" dot="warn" />
-        <SummaryNum n={byFit.skip} label="skip" dot="neutral" />
-        <SummaryNum n={byFit.unscored} label="unscored" dot="neutral" />
+        <SummaryNum n={byFit.good} label="Good" dot="good" />
+        <SummaryNum n={byFit.ok} label="OK" dot="warn" />
+        <SummaryNum n={byFit.skip} label="Skip" dot="neutral" />
+        <SummaryNum n={byFit.unscored} label="Unscored" dot="neutral" />
         <span className="text-slate-300">·</span>
         <SummaryNum
           n={priorityCount}
-          label="priority"
+          label="Priority"
           tooltip="Companies on your priority_companies list"
         />
         <SummaryNum
           n={appliedCount}
-          label="applied"
+          label="Applied"
           tooltip="Jobs you've ticked the Applied checkbox on"
         />
         <span className="text-slate-300">·</span>
-        <SummaryNum n={companies.size} label="companies" />
+        <SummaryNum n={companies.size} label="Companies" />
 
         {/* Right-side action cluster — Add Job + Refresh. Pushed to the
             edge with ml-auto so it survives the horizontal scroll on mobile. */}
