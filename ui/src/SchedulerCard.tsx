@@ -16,6 +16,10 @@ interface SchedulerStatus {
   log_tail: string;
   plist_path: string | null;
   errors: string[];
+  // OS scheduler implementation: 'launchd' (mac), 'systemd_user' (linux),
+  // 'schtasks' (win). Reported by /api/scheduler-status so the UI can show
+  // the right noun (plist/unit/task) instead of always saying "plist".
+  backend?: string;
 }
 
 const STATUS_URL = '/api/scheduler-status';
@@ -355,8 +359,9 @@ export const SchedulerCard = () => {
         </div>
       </div>
       <p className="mb-3 text-xs text-slate-500">
-        A launchd LaunchAgent that runs the scraper at the chosen interval using the active profile's config.
-        "Active" means installed and loaded. Uninstall removes the plist; the corpus and config are untouched.
+        A scheduled task that runs the scraper at the chosen interval using the active profile's config —
+        on macOS, Linux, or Windows. "Active" means installed. Uninstall removes the schedule; your
+        corpus and config aren't touched.
       </p>
 
       {loading && !status && (
@@ -495,7 +500,9 @@ export const SchedulerCard = () => {
             )}
             {status.plist_path && (
               <span className="text-[11px] text-slate-400" title={status.plist_path}>
-                plist: {status.plist_path}
+                {status.backend === 'launchd' ? 'plist' :
+                 status.backend === 'systemd_user' ? 'unit' :
+                 status.backend === 'schtasks' ? 'task' : 'schedule'}: {status.plist_path}
               </span>
             )}
           </div>
