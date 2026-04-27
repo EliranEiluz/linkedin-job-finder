@@ -153,11 +153,9 @@ export const ProfileSwitcher = ({ onActiveChange, extraActions }: Props) => {
         )}
       </div>
       <p className="mb-2 text-xs text-slate-500">
-        A profile is a saved <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">config.json</code> (CV,
-        queries, priority companies, scoring prompt). The active{' '}
-        <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">config.json</code> is a symlink — switching
-        repoints it. The corpus (<code className="rounded bg-slate-100 px-1 font-mono text-[11px]">results.json</code>)
-        is shared across all profiles.
+        A profile is one saved search setup — your CV, queries, target companies, and what counts as a good fit.
+        Use multiple profiles to run different kinds of searches (e.g. crypto roles vs. security roles). Saved
+        jobs are shared across all profiles.
       </p>
 
       {action.kind === 'idle' && (
