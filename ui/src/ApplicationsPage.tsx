@@ -1091,6 +1091,11 @@ const AppDetailModal = ({
                   {STATUS_LABEL[s]}
                 </option>
               ))}
+              {/* `new` is the unset/default state hidden from the kanban —
+                  selecting it removes the job from the tracker (status
+                  history is preserved server-side). Same as un-checking
+                  "Applied" in the Corpus tab. */}
+              <option value="new">— Remove from tracker</option>
             </select>
             {statusErr && (
               <span className="text-[11px] text-red-600">{statusErr}</span>

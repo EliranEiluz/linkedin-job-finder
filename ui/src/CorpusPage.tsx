@@ -9,7 +9,7 @@ import {
   toSearchParams,
   type FilterState,
 } from './filters';
-import { useAppliedJobs, useCorpusActions, useDebounced, useUrlSync } from './hooks';
+import { useAppStatus, useCorpusActions, useDebounced, useUrlSync } from './hooks';
 import { StatsBar } from './StatsBar';
 import { FilterPanel } from './FilterPanel';
 import { JobsTable } from './JobsTable';
@@ -164,8 +164,98 @@ export const CorpusPage = () => {
     () => new Map(),
   );
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const { applied, toggleApplied, setAppliedMany } = useAppliedJobs();
+  const { setAppStatus } = useAppStatus();
   const { rateJob, deleteJobs } = useCorpusActions();
+
+  // Source of truth for "applied" is now the server (`job.app_status`),
+  // unifying state with the Tracker tab. localStorage was a per-browser
+  // silo that diverged: iPhone Safari and Mac Chrome each had their own
+  // independent set, and toggling in Corpus never reached the Tracker.
+  //
+  // We keep the existing `applied: Set<string>` prop interface for
+  // JobsTable / StatsBar / filters by deriving it from the corpus data,
+  // overlaid with optimistic in-flight overrides so checkbox clicks feel
+  // instant (the API round-trip is ~100-300ms).
+  const [appliedPending, setAppliedPending] = useState<
+    Map<string, 'add' | 'remove'>
+  >(new Map());
+
+  const allJobs: Job[] = state.kind === 'ok' ? state.jobs : [];
+
+  const applied = useMemo(() => {
+    const result = new Set<string>();
+    for (const j of allJobs) {
+      const isAppliedOnServer =
+        j.app_status != null && j.app_status !== 'new';
+      const override = appliedPending.get(j.id);
+      if (override === 'add') result.add(j.id);
+      else if (override === 'remove') {
+        // explicitly removed in-flight — skip
+      } else if (isAppliedOnServer) {
+        result.add(j.id);
+      }
+    }
+    return result;
+  }, [allJobs, appliedPending]);
+
+  const toggleApplied = useCallback(
+    (id: string) => {
+      const isCurrentlyApplied = applied.has(id);
+      const nextStatus: 'applied' | 'new' = isCurrentlyApplied
+        ? 'new'
+        : 'applied';
+      // Optimistic flip — visible immediately.
+      setAppliedPending((prev) => {
+        const next = new Map(prev);
+        next.set(id, isCurrentlyApplied ? 'remove' : 'add');
+        return next;
+      });
+      void setAppStatus(id, nextStatus).then((r) => {
+        // Either way, drop the override — server fetch (fired by
+        // setAppStatus's fireStale event) will reconcile state.
+        setAppliedPending((prev) => {
+          const next = new Map(prev);
+          next.delete(id);
+          return next;
+        });
+        if (!r.ok) {
+          // Best-effort: surface the error inline. The corpus refresh
+          // will reset the visible state regardless.
+          console.error('app-status toggle failed:', r.error);
+        }
+      });
+    },
+    [applied, setAppStatus],
+  );
+
+  const setAppliedMany = useCallback(
+    (ids: string[], appliedState: boolean) => {
+      const nextStatus: 'applied' | 'new' = appliedState ? 'applied' : 'new';
+      setAppliedPending((prev) => {
+        const next = new Map(prev);
+        for (const id of ids) {
+          next.set(id, appliedState ? 'add' : 'remove');
+        }
+        return next;
+      });
+      // Fire all in parallel — the existing endpoint is per-id; for
+      // typical bulk-toggles (visible page = up to 200 rows) this is fine.
+      void Promise.all(
+        ids.map((id) => setAppStatus(id, nextStatus)),
+      ).then((results) => {
+        setAppliedPending((prev) => {
+          const next = new Map(prev);
+          for (const id of ids) next.delete(id);
+          return next;
+        });
+        const failedCount = results.filter((r) => !r.ok).length;
+        if (failedCount > 0) {
+          console.error(`bulk app-status: ${failedCount} of ${ids.length} failed`);
+        }
+      });
+    },
+    [setAppStatus],
+  );
   // Wrap deleteJobs into a single-id helper for the row popover.
   const deleteOne = useCallback(
     (id: string) => deleteJobs([id]),
@@ -238,7 +328,8 @@ export const CorpusPage = () => {
     [filters, debouncedSearch],
   );
 
-  const allJobs = state.kind === 'ok' ? state.jobs : [];
+  // (allJobs is declared up top — used by both the `applied` derivation
+  // and the filter pipeline below.)
   const filtered = useMemo(
     () => applyFilters(allJobs, effectiveFilters, applied),
     [allJobs, effectiveFilters, applied],

@@ -10,63 +10,12 @@ export const useDebounced = <T>(value: T, delay = 150): T => {
   return v;
 };
 
-/** Per-job "applied" state, backed by localStorage so it survives reloads
- *  and scraper reruns. Identity is the LinkedIn job ID. */
-const APPLIED_KEY = 'linkedinjobs:applied';
-
-const readApplied = (): Set<string> => {
-  try {
-    const raw = window.localStorage.getItem(APPLIED_KEY);
-    if (!raw) return new Set();
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? new Set(arr.filter((x) => typeof x === 'string')) : new Set();
-  } catch {
-    return new Set();
-  }
-};
-
-const writeApplied = (s: Set<string>) => {
-  try {
-    window.localStorage.setItem(APPLIED_KEY, JSON.stringify([...s]));
-  } catch {
-    /* localStorage blocked / full — fail silently, session-only from here */
-  }
-};
-
-export const useAppliedJobs = () => {
-  const [applied, setApplied] = useState<Set<string>>(readApplied);
-
-  const toggleApplied = useCallback((id: string) => {
-    setApplied((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      writeApplied(next);
-      return next;
-    });
-  }, []);
-
-  const clearApplied = useCallback(() => {
-    setApplied(new Set());
-    writeApplied(new Set());
-  }, []);
-
-  /** Bulk-set the applied state for many ids at once.
-   *  Used by the JobsTable's Applied-column header checkbox to bulk-toggle
-   *  every visible row. Coalesces into a single state update + one
-   *  localStorage write, vs N times via toggleApplied in a loop. */
-  const setAppliedMany = useCallback((ids: string[], appliedState: boolean) => {
-    setApplied((prev) => {
-      const next = new Set(prev);
-      if (appliedState) ids.forEach((id) => next.add(id));
-      else ids.forEach((id) => next.delete(id));
-      writeApplied(next);
-      return next;
-    });
-  }, []);
-
-  return { applied, toggleApplied, clearApplied, setAppliedMany };
-};
+/** Per-job "applied" state used to live in localStorage via this hook.
+ *  Removed 2026-04-27: source of truth is now the server (`job.app_status`)
+ *  via `useAppStatus` so Corpus checkbox and Tracker kanban stay in sync
+ *  across browsers/devices. CorpusPage derives an `applied: Set<string>`
+ *  itself from the corpus data + optimistic in-flight overrides; see the
+ *  comment block above its `applied` useMemo for the full pattern. */
 
 /** Mutation hook for the corpus (delete jobs, set per-job rating).
  *  POSTs to /api/corpus/* and on success fires the existing
