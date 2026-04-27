@@ -68,12 +68,12 @@ export const StatsBar = ({
         <span className="shrink-0 font-semibold tabular-nums text-slate-900">
           {totalLabel}
         </span>
-        <span className="text-slate-300">·</span>
+        <span aria-hidden="true" className="inline-block h-4 w-px shrink-0 bg-slate-300" />
         <SummaryNum n={byFit.good} label="Good" dot="good" />
         <SummaryNum n={byFit.ok} label="OK" dot="warn" />
         <SummaryNum n={byFit.skip} label="Skip" dot="neutral" />
         <SummaryNum n={byFit.unscored} label="Unscored" dot="neutral" />
-        <span className="text-slate-300">·</span>
+        <span aria-hidden="true" className="inline-block h-4 w-px shrink-0 bg-slate-300" />
         <SummaryNum
           n={priorityCount}
           label="Priority"
@@ -84,7 +84,7 @@ export const StatsBar = ({
           label="Applied"
           tooltip="Jobs you've ticked the Applied checkbox on"
         />
-        <span className="text-slate-300">·</span>
+        <span aria-hidden="true" className="inline-block h-4 w-px shrink-0 bg-slate-300" />
         <SummaryNum n={companies.size} label="Companies" />
 
         {/* Right-side action cluster — Add Job + Refresh. Pushed to the
