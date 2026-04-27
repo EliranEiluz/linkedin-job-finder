@@ -14,6 +14,7 @@ import { SchedulerCard } from './SchedulerCard';
 import { CategoryManager } from './CategoryManager';
 import { ChipInput } from './ChipInput';
 import { ProfileSwitcher } from './ProfileSwitcher';
+import { ConfigSuggestModal, MIN_SIGNALS_FOR_SUGGEST } from './ConfigSuggestModal';
 
 type LoadState =
   | { kind: 'loading' }
@@ -212,6 +213,13 @@ export const ConfigPage = () => {
   // Local-only sub-collapse for the regex-fallback block inside the scoring card.
   const [showRegexFallback, setShowRegexFallback] = useState(false);
 
+  // Claude-powered config suggester. We poll a small endpoint (corpus stats)
+  // to know how many feedback-signal rows the user has before enabling the
+  // button — below MIN_SIGNALS_FOR_SUGGEST the button is disabled with a
+  // tooltip explaining why. Threshold is mirrored from the Python script.
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [signalCount, setSignalCount] = useState<number | null>(null);
+
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
     const defaultsRaw = await fetchJsonOr(DEFAULTS_URL);
@@ -258,6 +266,51 @@ export const ConfigPage = () => {
     void load();
   }, [load]);
 
+  // Count feedback-signal rows in results.json for the suggester button's
+  // disabled state. Mirrors backend/search.py:_classify_feedback_row — keep
+  // these rules in sync. We don't worry about perfect parity with the
+  // Python (the script re-validates on its end) — this is just for the
+  // button-enable UX.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/results.json?t=${Date.now()}`);
+        if (!res.ok) return;
+        const corpus = (await res.json()) as Array<Record<string, unknown>>;
+        if (cancelled || !Array.isArray(corpus)) return;
+        const POS = new Set(['interview', 'take-home', 'screening', 'offer']);
+        const NEG = new Set(['rejected', 'withdrew']);
+        let n = 0;
+        for (const row of corpus) {
+          if (!row || typeof row !== 'object') continue;
+          const rating = (row as { rating?: unknown }).rating;
+          if (typeof rating === 'number' && rating >= 1 && rating <= 5) {
+            n++;
+            continue;
+          }
+          const status = String((row as { app_status?: unknown }).app_status ?? '')
+            .trim()
+            .toLowerCase();
+          if (POS.has(status) || NEG.has(status)) {
+            n++;
+            continue;
+          }
+          const source = String((row as { source?: unknown }).source ?? '')
+            .trim()
+            .toLowerCase();
+          if (source === 'manual') n++;
+        }
+        if (!cancelled) setSignalCount(n);
+      } catch {
+        /* leave signalCount=null — button stays in "loading" state */
+      }
+    })();
+    return () => { cancelled = true; };
+    // Refresh whenever the user reloads the config (which is the natural
+    // moment they'd want a fresh signal count too).
+  }, [state]);
+
   // Auto-dismiss toast.
   useEffect(() => {
     if (!toast) return;
@@ -270,37 +323,52 @@ export const ConfigPage = () => {
     return !configsEqual(draft, state.config);
   }, [state, draft]);
 
-  const save = useCallback(async () => {
-    if (!draft) return;
-    setSaving(true);
-    setToast(null);
-    try {
-      const payload = serializeConfig(draft);
-      const res = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(`HTTP ${res.status}: ${err}`);
+  // saveConfig is the shared write path. Pass `override` to bypass `draft`
+  // — the suggester does this so it can write the merged config without
+  // round-tripping through the user's potentially-dirty edits. The override
+  // path also updates `draft` to match so the dirty-state indicator stays
+  // honest.
+  const saveConfig = useCallback(
+    async (override?: CrawlerConfig): Promise<void> => {
+      const target = override ?? draft;
+      if (!target) return;
+      setSaving(true);
+      setToast(null);
+      try {
+        const payload = serializeConfig(target);
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(`HTTP ${res.status}: ${err}`);
+        }
+        const info = (await res.json()) as { mtimeMs: number };
+        setState((prev) =>
+          prev.kind === 'ready'
+            ? { ...prev, config: target, mtimeMs: info.mtimeMs ?? Date.now() }
+            : prev,
+        );
+        if (override) setDraft(target);
+        setToast({
+          kind: 'ok',
+          msg: override
+            ? 'Suggestions applied — config saved.'
+            : 'Config saved — applies to the next scraper run.',
+        });
+      } catch (e) {
+        setToast({ kind: 'err', msg: `Save failed: ${(e as Error).message}` });
+        throw e;
+      } finally {
+        setSaving(false);
       }
-      const info = (await res.json()) as { mtimeMs: number };
-      setState((prev) =>
-        prev.kind === 'ready'
-          ? { ...prev, config: draft, mtimeMs: info.mtimeMs ?? Date.now() }
-          : prev,
-      );
-      setToast({
-        kind: 'ok',
-        msg: 'Config saved — applies to the next scraper run.',
-      });
-    } catch (e) {
-      setToast({ kind: 'err', msg: `Save failed: ${(e as Error).message}` });
-    } finally {
-      setSaving(false);
-    }
-  }, [draft]);
+    },
+    [draft],
+  );
+
+  const save = useCallback(() => saveConfig(), [saveConfig]);
 
   const discard = useCallback(() => {
     if (state.kind === 'ready') setDraft(state.config);
@@ -353,14 +421,49 @@ export const ConfigPage = () => {
             ? `Config last modified: ${formatDistanceToNowStrict(new Date(state.mtimeMs), { addSuffix: true })}`
             : 'config.json does not exist yet — defaults are in effect'}
         </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
-        >
-          ↻ Reload
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Claude-powered config suggester. Disabled below the threshold
+              so the user gets an explicit reason rather than a silent
+              backend rejection. The signal-count is computed client-side
+              from results.json on page load (and on every reload). */}
+          <button
+            type="button"
+            onClick={() => setSuggestOpen(true)}
+            disabled={
+              signalCount === null || signalCount < MIN_SIGNALS_FOR_SUGGEST
+            }
+            title={
+              signalCount === null
+                ? 'Loading feedback signals…'
+                : signalCount < MIN_SIGNALS_FOR_SUGGEST
+                  ? `Need ≥${MIN_SIGNALS_FOR_SUGGEST} rated/applied/manual-added jobs (you have ${signalCount})`
+                  : `Suggest tweaks from ${signalCount} feedback signals`
+            }
+            className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            ✨ Suggest from feedback
+            {signalCount !== null && signalCount >= MIN_SIGNALS_FOR_SUGGEST && (
+              <span className="ml-1 text-[10px] tabular-nums text-slate-400">
+                ({signalCount})
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+          >
+            ↻ Reload
+          </button>
+        </div>
       </div>
+
+      <ConfigSuggestModal
+        open={suggestOpen}
+        config={draft}
+        onClose={() => setSuggestOpen(false)}
+        onApply={(next) => saveConfig(next)}
+      />
 
       <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 pb-24 md:pb-4">
         <div className="mx-auto flex max-w-4xl flex-col gap-4">

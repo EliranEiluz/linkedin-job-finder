@@ -24,6 +24,11 @@ const SCHEDULER_TIMEOUT_MS = 10_000;
 const ONBOARDING_CTL = path.join(BACKEND_DIR, 'ctl', 'onboarding_ctl.py');
 const ONBOARDING_GENERATE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes — Claude call
 const ONBOARDING_SAVE_TIMEOUT_MS = 10_000;
+// Config-suggester is a single Claude call over feedback signals; 60s aligns
+// with the script's own CLAUDE_TIMEOUT_S so a slow CLI response gets killed
+// HTTP-side at the same time the subprocess does.
+const CONFIG_SUGGEST_CTL = path.join(BACKEND_DIR, 'ctl', 'config_suggest_ctl.py');
+const CONFIG_SUGGEST_TIMEOUT_MS = 75_000;
 const PROFILE_CTL = path.join(BACKEND_DIR, 'ctl', 'profile_ctl.py');
 const CORPUS_CTL = path.join(BACKEND_DIR, 'ctl', 'corpus_ctl.py');
 const CORPUS_TIMEOUT_MS = 8_000;
@@ -456,6 +461,101 @@ const onboardingResponse = (
   });
 };
 
+// --- config_suggest_ctl.py shell-out ---------------------------------
+
+// Mirrors runOnboardingCtl exactly — single Claude call, structured JSON
+// envelope on stdout, may take up to ~60s. Stdin currently empty; reserved
+// for future filters (e.g. "only consider signals from the last 14 days").
+const runConfigSuggestCtl = (
+  stdinPayload: string,
+): Promise<SchedulerCtlResult> =>
+  new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let spawnError: string | null = null;
+    let settled = false;
+
+    const child = spawn('python3', [CONFIG_SUGGEST_CTL], {
+      cwd: REPO_ROOT,
+      env: process.env,
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already dead */
+      }
+    }, CONFIG_SUGGEST_TIMEOUT_MS);
+
+    child.stdout.on('data', (c: Buffer) => { stdout += c.toString('utf8'); });
+    child.stderr.on('data', (c: Buffer) => { stderr += c.toString('utf8'); });
+    child.on('error', (err) => {
+      spawnError = (err as Error).message;
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ exitCode: null, stdout, stderr, timedOut, spawnError });
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ exitCode: code, stdout, stderr, timedOut, spawnError });
+    });
+
+    child.stdin.on('error', (err) => {
+      if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
+        console.error('[config-suggest] stdin error:', err);
+      }
+    });
+    child.stdin.end(stdinPayload);
+  });
+
+// Same envelope-passthrough policy as onboardingResponse: even on non-zero
+// exit we surface the parsed JSON so the UI can read `error` / `raw` /
+// `signal_count`. Only spawn / timeout failures get synthetic envelopes.
+const configSuggestResponse = (
+  res: ServerResponse,
+  result: SchedulerCtlResult,
+) => {
+  if (result.spawnError) {
+    return sendJson(res, 500, {
+      ok: false,
+      error: `failed to spawn config_suggest_ctl.py: ${result.spawnError}`,
+      stderr: result.stderr,
+    });
+  }
+  if (result.timedOut) {
+    return sendJson(res, 504, {
+      ok: false,
+      error: `config_suggest_ctl.py timed out after ${CONFIG_SUGGEST_TIMEOUT_MS}ms`,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    });
+  }
+  const trimmed = result.stdout.trim();
+  let parsed: unknown = null;
+  if (trimmed) {
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      /* fall through */
+    }
+  }
+  if (parsed && typeof parsed === 'object') {
+    return sendJson(res, 200, parsed);
+  }
+  return sendJson(res, 500, {
+    ok: false,
+    error: `config_suggest_ctl.py produced no JSON on stdout (exit=${result.exitCode})`,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  });
+};
+
 // --- profile_ctl.py shell-out ----------------------------------------
 
 // Parallel to runSchedulerCtl / runOnboardingCtl. Accepts an optional stdin
@@ -699,6 +799,31 @@ const configApiPlugin = (): Plugin => ({
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
           return res.end(text);
+        }
+
+        // Config-suggester runs Claude over the user's feedback signals +
+        // the live config. MUST be matched before the bare /api/config POST
+        // handler below (which uses startsWith and would swallow this URL).
+        // The script enforces the >=5-signal threshold itself; the UI also
+        // disables the button below threshold so we rarely hit that error
+        // branch, but the server-side check is the source of truth.
+        if (url.startsWith('/api/config/suggest') && req.method === 'POST') {
+          let stdinPayload = '{}';
+          try {
+            const raw = await readJsonBody(req);
+            const trimmed = raw.trim();
+            if (trimmed) {
+              JSON.parse(trimmed); // validate
+              stdinPayload = trimmed;
+            }
+          } catch (e) {
+            return sendJson(res, 400, {
+              ok: false,
+              error: `invalid JSON body: ${(e as Error).message}`,
+            });
+          }
+          const result = await runConfigSuggestCtl(stdinPayload);
+          return configSuggestResponse(res, result);
         }
 
         if (url.startsWith('/api/config') && req.method === 'POST') {
