@@ -6,9 +6,10 @@ behavior on macOS, Linux, and Windows.
 
 Stays side-by-side with run.sh during the migration. The scheduler
 backends pass `[sys.executable, "<root>/backend/run.py"]` as their
-ProgramArguments / ExecStart / TR. Eliran's existing launchd plist
-continues pointing at run.sh until he triggers `scheduler reload` from
-the UI — at which point the regenerated plist switches to run.py.
+ProgramArguments / ExecStart / TR. Any pre-existing launchd plist that
+still points at run.sh continues to work until the user triggers
+`scheduler reload` from the UI — at which point the regenerated plist
+switches to run.py.
 """
 from __future__ import annotations
 

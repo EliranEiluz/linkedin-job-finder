@@ -141,10 +141,9 @@ LOCATION = ""  # empty = worldwide/no filter, "Israel" or "Tel Aviv" to narrow
 DATE_FILTER = "r604800"  # r86400=1d, r604800=7d, r2592000=30d
 
 # LinkedIn logged-in sessions silently home-filter to the account's
-# registered location. For an Israel-based account, that means all
-# keyword searches are implicitly Israel-only — which is exactly what
-# Eliran wants. If you ever want to widen scope, set this to one of:
-#   Worldwide=92000000, United States=103644278, Israel=101620260.
+# registered location — keyword searches are implicitly scoped to your
+# account's home country. If you want to widen scope, set this to one
+# of: Worldwide=92000000, United States=103644278, Israel=101620260.
 # Leaving it empty keeps the session's home-geo behavior.
 GEO_ID = ""
 
@@ -288,7 +287,7 @@ FEEDBACK_POSITIVE_STATUSES = {"interview", "take-home", "screening", "offer"}
 # app_status values that count as negative signal (currently rare; forward-compat).
 FEEDBACK_NEGATIVE_STATUSES = {"rejected", "withdrew"}
 
-CLAUDE_BATCH_SCORING_PROMPT = """You rank LinkedIn jobs for fit against Eliran's CV.
+CLAUDE_BATCH_SCORING_PROMPT = """You rank LinkedIn jobs for fit against the candidate's CV.
 
 <cv>
 {cv}
@@ -314,7 +313,7 @@ Rules:
 - One object per input job, in the same order, same "id" field.
 - Each reason under 8 words. At most 4 reasons per job.
 - "msc_required" = true if the posting requires or strongly prefers a master's.
-- Eliran HAS an M.Sc. — never treat it as a blocker.
+- The candidate HAS an M.Sc. — never treat it as a blocker.
 - "red_flags" surface hard-filter hits in plain language.
 - "priority": true means the company is on the user's high-interest list.
   Bump the fit one notch up (skip→ok, ok→good) and bump the score by 1

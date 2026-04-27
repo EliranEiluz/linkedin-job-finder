@@ -68,3 +68,12 @@ ui/npm-debug.log*
 *.swo
 *~
 
+# ---- Working-tree design / audit / review docs (personal, never commit) ----
+# These accumulate during planning + audit cycles and may contain CV data,
+# reviewer feedback, internal architecture notes, etc.
+CV_REVIEW.md
+AUDIT_*.md
+DESIGN_*.md
+REPO_AUDIT*.md
+EXPLAIN_PLAN.md
+

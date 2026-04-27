@@ -10,7 +10,6 @@ from .base import Scheduler
 
 LABEL = "com.linkedinjobs"
 INSTALLED_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
-LEGACY_LABEL = "com.eliran.linkedinjobs"
 
 
 def _run(*argv: str, timeout: int = 8) -> tuple[int, str, str]:
@@ -100,7 +99,6 @@ class LaunchdScheduler(Scheduler):
     def install(self, interval_seconds: int, mode: str, run_command: list[str]) -> None:
         if self.is_loaded():
             self._unload()
-        self._unload_legacy()
         self._write_plist(interval_seconds, mode, run_command)
         rc, err = self._load()
         if rc != 0:
@@ -167,16 +165,3 @@ class LaunchdScheduler(Scheduler):
         rc, _, err = _run("launchctl", "unload", str(INSTALLED_PLIST))
         return rc, err.strip()
 
-    def _unload_legacy(self) -> None:
-        """Old installs used `com.eliran.linkedinjobs`. Unload + remove
-        if still present so a fresh install under the new generic label
-        succeeds without conflict."""
-        legacy_plist = Path.home() / "Library" / "LaunchAgents" / f"{LEGACY_LABEL}.plist"
-        rc, _, _ = _run("launchctl", "list", LEGACY_LABEL)
-        if rc == 0:
-            _run("launchctl", "unload", str(legacy_plist))
-        if legacy_plist.exists():
-            try:
-                legacy_plist.unlink()
-            except Exception:
-                pass

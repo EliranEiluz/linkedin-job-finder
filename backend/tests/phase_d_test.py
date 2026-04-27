@@ -429,7 +429,13 @@ check("data", "fcntl merge survives 3-way parallel writers", t_atomic_merge)
 section("10. Backup integrity")
 
 def t_backup_present():
-    backup = Path("/Users/eliranei/linkedin-jobs-backup-2026-04-22")
+    # Override-able per-machine — set LINKEDINJOBS_BACKUP_DIR to your local
+    # snapshot path. Test silently skips when unset or when the directory
+    # doesn't exist (so CI / fresh clones don't trip on it).
+    backup_path = os.environ.get("LINKEDINJOBS_BACKUP_DIR")
+    if not backup_path:
+        return "skipped — LINKEDINJOBS_BACKUP_DIR not set"
+    backup = Path(backup_path)
     if not backup.exists():
         return "skipped — backup directory not present on this machine"
     manifest = backup / "MANIFEST.sha256"
