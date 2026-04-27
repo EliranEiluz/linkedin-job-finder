@@ -1,58 +1,40 @@
 import type { Job } from './types';
+import { Dot } from './Dot';
 
 interface Props {
   all: Job[];
   filtered: Job[];
   applied: Set<string>;
-  // category-id → human-readable name from /api/config. When the id is
-  // present in the map we render the name ("Security"); otherwise we fall
-  // back to id-de-snaking ("Cat Mobyb81c 5").
+  // Hover-tooltip text for the "loaded" timestamp — replaces the old standalone
+  // toolbar so the user can still see when the corpus was loaded.
+  loadedAt?: Date;
+  // Refresh trigger + busy indicator. The button now lives inside this row
+  // (right-aligned) instead of in a separate toolbar above.
+  onRefresh: () => void;
+  refreshing?: boolean;
+  // Manual-add CTA — kept here so the entire corpus toolbar collapses into
+  // one row.
+  onAddManual?: () => void;
+  // categoryNamesById was used by the old per-category chip rendering. Kept
+  // in the prop interface for backwards compatibility with the parent's
+  // existing call site, even though we no longer render per-category chips
+  // (they live in FilterPanel).
   categoryNamesById?: Map<string, string>;
 }
 
-const Chip = ({
-  label,
-  value,
-  color = 'bg-slate-100 text-slate-700',
-  tooltip,
-}: {
-  label: string;
-  value: number | string;
-  color?: string;
-  tooltip?: string;
-}) => (
-  <div
-    className={`inline-flex shrink-0 items-baseline gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${color}`}
-    title={tooltip}
-  >
-    <span className="font-semibold tabular-nums">{value}</span>
-    <span className="opacity-75">{label}</span>
-  </div>
-);
-
-// Shared palette for category chips — indexes wrap so any user-defined
-// category id gets a stable color without hardcoding known values.
-const CATEGORY_PALETTE = [
-  'bg-indigo-100 text-indigo-700',
-  'bg-violet-100 text-violet-700',
-  'bg-sky-100 text-sky-700',
-  'bg-amber-100 text-amber-800',
-  'bg-rose-100 text-rose-700',
-  'bg-emerald-100 text-emerald-700',
-  'bg-cyan-100 text-cyan-700',
-  'bg-fuchsia-100 text-fuchsia-700',
-];
-
-const displayCategory = (id: string): string => {
-  // Convert snake_case / kebab-case to Title Case for display. Unknown
-  // categories just render whatever the user named them.
-  return id.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-};
-
-export const StatsBar = ({ all, filtered, applied, categoryNamesById }: Props) => {
+// Compact summary line for the Corpus tab. Replaces the old multi-row chip
+// wall with a single-line text summary with `tabular-nums`. Tiny semantic
+// dots prefix only the four fit numbers — that's the only color in the bar.
+//
+// Per design doc §2 (alternative A):
+//   - Source pills (loggedin/guest) dropped: duplicated in FilterPanel.
+//   - Per-category chips dropped: duplicated in FilterPanel + already a
+//     filter affordance.
+//   - "loaded HH:MM" toolbar collapsed into the Refresh button's title attr.
+export const StatsBar = ({
+  all, filtered, applied, loadedAt, onRefresh, refreshing, onAddManual,
+}: Props) => {
   const byFit = { good: 0, ok: 0, skip: 0, unscored: 0 };
-  const byCat: Record<string, number> = {};  // category id → count
-  const bySource = { loggedin: 0, guest: 0 };
   let priorityCount = 0;
   let appliedCount = 0;
   const companies = new Set<string>();
@@ -61,79 +43,97 @@ export const StatsBar = ({ all, filtered, applied, categoryNamesById }: Props) =
     else if (j.fit === 'ok') byFit.ok++;
     else if (j.fit === 'skip') byFit.skip++;
     else byFit.unscored++;
-    if (j.category) byCat[j.category] = (byCat[j.category] ?? 0) + 1;
-    if (j.source === 'loggedin') bySource.loggedin++;
-    else if (j.source === 'guest') bySource.guest++;
     if (j.priority) priorityCount++;
     if (applied.has(j.id)) appliedCount++;
     if (j.company) companies.add(j.company.toLowerCase());
   }
-  // Stable-ordered list of category ids for chip rendering.
-  const catIds = Object.keys(byCat).sort();
+
+  const totalLabel =
+    filtered.length === all.length
+      ? `${all.length.toLocaleString()} jobs`
+      : `${filtered.length.toLocaleString()} of ${all.length.toLocaleString()} jobs`;
+
+  // Title attribute on Refresh — collapses the redundant "loaded HH:MM"
+  // toolbar that used to live above this row.
+  const refreshTitle = loadedAt
+    ? `Re-fetch results.json — last loaded ${loadedAt.toLocaleTimeString()}`
+    : 'Re-fetch results.json';
 
   return (
     <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
-      {/* Mobile: single horizontal-scroll row (no wrap, no scrollbar) so
-          the strip doesn't eat 5 lines of the viewport. Desktop: unchanged
-          flex-wrap behavior. The whitespace-nowrap below md keeps every
-          chip on the same baseline. */}
-      <div
-        className={
-          'no-scrollbar flex items-center gap-2 overflow-x-auto whitespace-nowrap px-4 py-2.5 ' +
-          'md:flex-wrap md:overflow-visible md:whitespace-normal'
-        }
-      >
-        <div className="mr-2 flex shrink-0 items-baseline gap-1.5">
-          <span className="text-xl font-semibold tabular-nums text-brand-700">
-            {filtered.length.toLocaleString()}
-          </span>
-          <span className="text-xs text-slate-500">
-            of {all.length.toLocaleString()} jobs
-          </span>
-        </div>
-        <div className="h-6 w-px shrink-0 bg-slate-200" />
-        <Chip label="good" value={byFit.good} color="bg-emerald-100 text-emerald-800" />
-        <Chip label="ok" value={byFit.ok} color="bg-amber-100 text-amber-800" />
-        <Chip label="skip" value={byFit.skip} color="bg-slate-200 text-slate-600" />
-        <Chip label="unscored" value={byFit.unscored} color="bg-slate-100 text-slate-500" />
-        <div className="h-6 w-px shrink-0 bg-slate-200" />
-        <Chip
+      {/* Mobile: horizontal-scroll if the line overflows the 393px viewport.
+          Desktop: same single line, no scroll. The Refresh+Add buttons sit at
+          the right edge via `ml-auto`. */}
+      <div className="no-scrollbar flex items-center gap-x-4 gap-y-1 overflow-x-auto whitespace-nowrap px-4 py-2 text-sm text-slate-600">
+        <span className="shrink-0 font-semibold tabular-nums text-slate-900">
+          {totalLabel}
+        </span>
+        <span className="text-slate-300">·</span>
+        <SummaryNum n={byFit.good} label="good" dot="good" />
+        <SummaryNum n={byFit.ok} label="ok" dot="warn" />
+        <SummaryNum n={byFit.skip} label="skip" dot="neutral" />
+        <SummaryNum n={byFit.unscored} label="unscored" dot="neutral" />
+        <span className="text-slate-300">·</span>
+        <SummaryNum
+          n={priorityCount}
           label="priority"
-          value={priorityCount}
-          color="bg-red-100 text-red-700"
-          tooltip="Company is on your priority_companies list (Crawler Config)"
+          tooltip="Companies on your priority_companies list"
         />
-        <Chip
+        <SummaryNum
+          n={appliedCount}
           label="applied"
-          value={appliedCount}
-          color="bg-emerald-100 text-emerald-800"
-          tooltip="Jobs you've ticked the Applied checkbox on (stored locally)"
+          tooltip="Jobs you've ticked the Applied checkbox on"
         />
-        <div className="h-6 w-px shrink-0 bg-slate-200" />
-        <Chip
-          label="🔐 loggedin"
-          value={bySource.loggedin}
-          color="bg-indigo-100 text-indigo-800"
-          tooltip="Job scraped via Playwright + saved LinkedIn session"
-        />
-        <Chip
-          label="🌐 guest"
-          value={bySource.guest}
-          color="bg-emerald-100 text-emerald-800"
-          tooltip="Job scraped via the unauthenticated /jobs-guest API"
-        />
-        {catIds.length > 0 && <div className="h-6 w-px shrink-0 bg-slate-200" />}
-        {catIds.map((cid, i) => (
-          <Chip
-            key={cid}
-            label={categoryNamesById?.get(cid) ?? displayCategory(cid)}
-            value={byCat[cid]}
-            color={CATEGORY_PALETTE[i % CATEGORY_PALETTE.length]}
-          />
-        ))}
-        <div className="h-6 w-px shrink-0 bg-slate-200" />
-        <Chip label="companies" value={companies.size} />
+        <span className="text-slate-300">·</span>
+        <SummaryNum n={companies.size} label="companies" />
+
+        {/* Right-side action cluster — Add Job + Refresh. Pushed to the
+            edge with ml-auto so it survives the horizontal scroll on mobile. */}
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          {onAddManual && (
+            <button
+              type="button"
+              onClick={onAddManual}
+              className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+              title="Paste a LinkedIn URL or job ID to ingest one job manually"
+            >
+              <span aria-hidden="true">＋</span> Add Job
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:opacity-50"
+            title={refreshTitle}
+          >
+            <span aria-hidden="true">↻</span> Refresh
+          </button>
+        </span>
       </div>
     </div>
   );
 };
+
+// Inline-text summary entry: optional dot + bold tabular number + label.
+// No background, no chip — just text. Color lives in the dot when present;
+// otherwise the whole entry is neutral slate.
+const SummaryNum = ({
+  n, label, dot, tooltip,
+}: {
+  n: number;
+  label: string;
+  dot?: 'good' | 'warn' | 'bad' | 'neutral';
+  tooltip?: string;
+}) => (
+  <span
+    className="inline-flex shrink-0 items-center gap-1.5"
+    title={tooltip}
+  >
+    {dot && <Dot color={dot} />}
+    <span className="font-semibold tabular-nums text-slate-900">
+      {n.toLocaleString()}
+    </span>
+    <span>{label}</span>
+  </span>
+);

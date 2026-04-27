@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
+import { Dot } from './Dot';
 
 type SchedulerMode = 'loggedin' | 'guest';
 
@@ -57,6 +58,8 @@ const safeRelFuture = (iso: string | null): string => {
   }
 };
 
+// Toasts use semantic bg colors mapped through the new palette tokens.
+// `ok` = good (emerald), `err` = bad (red). Brand-only consolidation.
 const Toast = ({ msg, kind }: { msg: string; kind: 'ok' | 'err' }) => (
   <div
     className={clsx(
@@ -68,24 +71,30 @@ const Toast = ({ msg, kind }: { msg: string; kind: 'ok' | 'err' }) => (
   </div>
 );
 
+// Status badge: neutral slate chip + a single semantic dot. Replaces the
+// emoji-prefixed full-color chips per §3.5. Same three states; same
+// semantic colors via the dot:
+//   not installed = bad   (red)
+//   loaded=false  = warn  (amber — installed but inactive)
+//   active        = good  (emerald)
 const StatusBadge = ({ status }: { status: SchedulerStatus }) => {
   if (!status.installed) {
     return (
-      <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
-        ❌ Not installed
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+        <Dot color="bad" /> Not installed
       </span>
     );
   }
   if (!status.loaded) {
     return (
-      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-        ⏸ Installed but not loaded
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+        <Dot color="warn" /> Installed but not loaded
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-      ✅ Active
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+      <Dot color="good" /> Active
     </span>
   );
 };
@@ -295,42 +304,40 @@ export const SchedulerCard = () => {
 
   // The "logged-in" mode requires Playwright + a saved session, so the toggle
   // should always be visible even when the scheduler isn't installed yet.
-  const renderModeToggle = () => (
-    <div className="inline-flex overflow-hidden rounded border border-slate-300">
+  // Single ghost-on-active style for both options (matches Tracker view
+  // toggle); the previous indigo/emerald split was conflating brand colors
+  // with semantic state.
+  const renderModeToggle = () => {
+    const btn = (mode: SchedulerMode, label: string) => (
       <button
         type="button"
-        onClick={() => onModeToggle('guest')}
+        onClick={() => onModeToggle(mode)}
+        aria-pressed={effectiveMode === mode}
         className={clsx(
-          'px-2 py-1 text-xs font-medium transition-colors',
-          effectiveMode === 'guest'
-            ? 'bg-emerald-600 text-white'
-            : 'bg-white text-slate-600 hover:bg-slate-50',
+          'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+          effectiveMode === mode
+            ? 'bg-slate-100 text-slate-900 shadow-sm'
+            : 'bg-transparent text-slate-500 hover:text-slate-800',
         )}
       >
-        🌐 guest
+        {label}
       </button>
-      <button
-        type="button"
-        onClick={() => onModeToggle('loggedin')}
-        className={clsx(
-          'border-l border-slate-300 px-2 py-1 text-xs font-medium transition-colors',
-          effectiveMode === 'loggedin'
-            ? 'bg-indigo-600 text-white'
-            : 'bg-white text-slate-600 hover:bg-slate-50',
-        )}
-      >
-        🔐 loggedin
-      </button>
-    </div>
-  );
+    );
+    return (
+      <div className="inline-flex items-center gap-0.5 rounded border border-slate-200 bg-white p-0.5">
+        {btn('guest', 'guest')}
+        {btn('loggedin', 'logged-in')}
+      </div>
+    );
+  };
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       {toast && <Toast msg={toast.msg} kind={toast.kind} />}
 
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-600">
-          🕒 Scheduler
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-600">
+          Scheduler
         </h2>
         <div className="flex items-center gap-2">
           {saving && (
@@ -419,12 +426,18 @@ export const SchedulerCard = () => {
                 Mode
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm text-slate-900">
-                  {status.mode === 'loggedin'
-                    ? '🔐 loggedin'
-                    : status.mode === 'guest'
-                      ? '🌐 guest'
-                      : '—'}
+                <span className="inline-flex items-center gap-1.5 text-sm text-slate-900">
+                  {status.mode === 'loggedin' ? (
+                    <>
+                      <Dot color="brand" /> logged-in
+                    </>
+                  ) : status.mode === 'guest' ? (
+                    <>
+                      <Dot color="good" /> guest
+                    </>
+                  ) : (
+                    '—'
+                  )}
                 </span>
                 {renderModeToggle()}
               </div>

@@ -13,29 +13,34 @@ import {
 import type { Job } from './types';
 import { JobActionsPopover } from './JobActionsPopover';
 import { useViewport } from './useViewport';
+import { Dot } from './Dot';
 
+// Fit badge — neutral slate chip with a single semantic dot up front.
+// Replaces the old `bg-{good/ok/skip}-100 text-…-800` + symbol-prefix
+// pattern. The color now lives in the dot only; the chip background is
+// uniform slate-100. See DESIGN_UI_POLISH.md §3.5.
 const fitBadge = (fit: Job['fit']) => {
   if (fit === 'good')
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-        ✓ good
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+        <Dot color="good" /> good
       </span>
     );
   if (fit === 'ok')
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-        ~ ok
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+        <Dot color="warn" /> ok
       </span>
     );
   if (fit === 'skip')
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
-        ✗ skip
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+        <Dot color="neutral" /> skip
       </span>
     );
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
-      — unscored
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+      <Dot color="neutral" /> unscored
     </span>
   );
 };
@@ -71,23 +76,38 @@ export const TOOLTIPS = {
   scoredNone: 'Not scored yet — ran with --no-enrich or fetch failed',
 } as const;
 
+// Source chip — neutral slate chip with a small semantic dot. Each source
+// gets its own dot color so the user can scan the column without text:
+//   loggedin = brand (Playwright + saved session — the "blessed" path)
+//   guest    = good  (HTTP-only, healthy fallback)
+//   manual   = warn  (user-injected — flag it)
+// Per §3 polish pass, decorative emojis (🔐 🌐) were removed.
 const sourceChip = (source: Job['source']) => {
   if (source === 'loggedin')
     return (
       <span
-        className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-800"
+        className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700"
         title={TOOLTIPS.sourceLoggedin}
       >
-        🔐 logged-in
+        <Dot color="brand" /> logged-in
       </span>
     );
   if (source === 'guest')
     return (
       <span
-        className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
+        className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700"
         title={TOOLTIPS.sourceGuest}
       >
-        🌐 guest
+        <Dot color="good" /> guest
+      </span>
+    );
+  if (source === 'manual')
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700"
+        title="Added via the Corpus tab's + Add Job button"
+      >
+        <Dot color="warn" /> manual
       </span>
     );
   return (

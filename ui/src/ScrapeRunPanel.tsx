@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
+import { Dot, type DotColor } from './Dot';
 
 type ScrapeMode = 'loggedin' | 'guest';
 type RunStatus = 'running' | 'done' | 'error' | 'killed';
@@ -57,36 +58,33 @@ const elapsed = (start: string, end: string | null): string => {
   }
 };
 
+// Status pill: neutral slate chip + a single semantic dot. The dot color
+// carries the meaning so the chip background is uniform — no more
+// `bg-blue-100`/`bg-emerald-100`/etc. soup. See §3.5.
 const StatusPill = ({ status }: { status: RunStatus }) => {
-  const map: Record<RunStatus, { cls: string; label: string }> = {
-    running: { cls: 'bg-blue-100 text-blue-800', label: '🟢 running' },
-    done: { cls: 'bg-emerald-100 text-emerald-800', label: '✅ done' },
-    error: { cls: 'bg-red-100 text-red-800', label: '❌ error' },
-    killed: { cls: 'bg-slate-200 text-slate-700', label: '⏹ killed' },
+  const map: Record<RunStatus, { dot: DotColor; label: string }> = {
+    running: { dot: 'brand', label: 'running' },
+    done: { dot: 'good', label: 'done' },
+    error: { dot: 'bad', label: 'error' },
+    killed: { dot: 'neutral', label: 'killed' },
   };
   const v = map[status];
   return (
-    <span
-      className={clsx(
-        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-        v.cls,
-      )}
-    >
-      {v.label}
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+      <Dot color={v.dot} /> {v.label}
     </span>
   );
 };
 
-const ModeTag = ({ mode }: { mode: ScrapeMode }) =>
-  mode === 'loggedin' ? (
-    <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-800">
-      🔐 logged-in
-    </span>
-  ) : (
-    <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-      🌐 guest
-    </span>
-  );
+// ModeTag: same neutral-chip-with-semantic-dot pattern as StatusPill.
+// loggedin → brand (Playwright + saved session); guest → good (HTTP-only
+// fallback). Old emoji prefixes (🔐 🌐) removed.
+const ModeTag = ({ mode }: { mode: ScrapeMode }) => (
+  <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+    {mode === 'loggedin' ? <Dot color="brand" /> : <Dot color="good" />}
+    {mode === 'loggedin' ? 'logged-in' : 'guest'}
+  </span>
+);
 
 const Toast = ({ msg, kind }: { msg: string; kind: 'ok' | 'err' }) => (
   <div
@@ -139,10 +137,10 @@ const RunRow = ({
         <span className="ml-auto flex items-center gap-2 text-[11px] text-slate-400">
           {descFailed !== undefined && descFailed > 0 && (
             <span
-              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800"
+              className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700"
               title="Job description fetches that failed (JYMBII/429/etc) on this run — see Run History for details"
             >
-              ⚠ {descFailed} desc failed
+              <Dot color="warn" /> {descFailed} desc failed
             </span>
           )}
           <span>pid {run.pid}</span>
@@ -348,24 +346,26 @@ export const ScrapeRunPanel = () => {
 
       {/* Mobile: stack the three "Run …" buttons full-width so each is a
           comfortable tap target and the row doesn't leave one button
-          orphaned on its own line. The reload (↻) sits in its own row to
-          stay reachable. Desktop (md+): unchanged inline layout. */}
+          orphaned on its own line. Desktop (md+): inline. Per §3.4 the two
+          per-mode buttons are secondary (slate outline); "Run both" is the
+          primary action (brand-filled). Decorative emojis removed; a
+          semantic dot stands in for the mode tag. */}
       <div className="mb-3 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
         <button
           type="button"
           onClick={() => void startScrape('loggedin')}
           disabled={busy !== null || runningModes.has('loggedin')}
-          className="inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto md:justify-start"
+          className="inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto md:justify-start"
         >
-          🔐 Run logged-in mode
+          <Dot color="brand" /> Run logged-in mode
         </button>
         <button
           type="button"
           onClick={() => void startScrape('guest')}
           disabled={busy !== null || runningModes.has('guest')}
-          className="inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto md:justify-start"
+          className="inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto md:justify-start"
         >
-          🌐 Run guest mode
+          <Dot color="good" /> Run guest mode
         </button>
         <button
           type="button"
@@ -377,7 +377,7 @@ export const ScrapeRunPanel = () => {
           }
           className="inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded bg-brand-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto md:justify-start"
         >
-          ⚡ Run both
+          Run both
         </button>
         <button
           type="button"

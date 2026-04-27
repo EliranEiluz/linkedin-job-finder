@@ -62,9 +62,10 @@ const fetchJobs = async (): Promise<LoadState> => {
   }
 };
 
+// Empty-state and error-state per §3.5: text-only headlines, no 6xl emoji.
+// The text carries the message; a CTA / fix-it block carries the action.
 const EmptyState = () => (
   <div className="flex h-full flex-col items-center justify-center px-6 py-20 text-center">
-    <div className="mb-6 text-6xl">📭</div>
     <h2 className="mb-2 text-xl font-semibold text-slate-800">No jobs yet</h2>
     <p className="mb-3 max-w-md text-sm text-slate-600">
       First time? Visit the <span className="font-semibold">Setup</span> tab to
@@ -85,7 +86,6 @@ const EmptyState = () => (
 
 const ErrorState = ({ message }: { message: string }) => (
   <div className="flex h-full flex-col items-center justify-center px-6 py-20 text-center">
-    <div className="mb-6 text-6xl">⚠️</div>
     <h2 className="mb-2 text-xl font-semibold text-slate-800">
       Couldn't load results.json
     </h2>
@@ -415,35 +415,9 @@ export const CorpusPage = () => {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Per-page toolbar (kept inside the page so other tabs don't show it). */}
-      <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2">
-        <div className="text-xs text-slate-500">
-          {state.kind === 'ok'
-            ? `loaded ${state.loadedAt.toLocaleTimeString()}`
-            : state.kind === 'loading'
-            ? 'loading…'
-            : ''}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setAddManualOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-brand-50 hover:text-brand-700"
-            title="Paste a LinkedIn URL or job ID to ingest one job manually"
-          >
-            <span>＋</span> Add Job
-          </button>
-          <button
-            type="button"
-            onClick={() => void reload()}
-            disabled={state.kind === 'loading'}
-            className="inline-flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:opacity-50"
-          >
-            <span>↻</span> Refresh
-          </button>
-        </div>
-      </div>
-
+      {/* Toolbar collapsed: Refresh + Add Job moved into StatsBar's right
+          edge; the redundant "loaded HH:MM" line is now a tooltip on the
+          Refresh button. See §2 alt A in DESIGN_UI_POLISH.md. */}
       <AddManualModal
         open={addManualOpen}
         onClose={() => setAddManualOpen(false)}
@@ -454,6 +428,10 @@ export const CorpusPage = () => {
           all={state.jobs}
           filtered={filtered}
           applied={applied}
+          loadedAt={state.loadedAt}
+          onRefresh={() => void reload()}
+          refreshing={false}
+          onAddManual={() => setAddManualOpen(true)}
           categoryNamesById={categoryNamesById}
         />
       )}

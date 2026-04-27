@@ -31,6 +31,7 @@ import {
 } from '@tanstack/react-table';
 import { APP_STATUS_ORDER, type AppStatus, type Job } from './types';
 import { useAppStatus } from './hooks';
+import { Dot, type DotColor } from './Dot';
 
 // ---- Constants ------------------------------------------------------------
 
@@ -70,19 +71,43 @@ const STATUS_ACCENT: Record<AppStatus, string> = {
   withdrew: 'bg-slate-300',
 };
 
-// Pill tints for the per-stage summary chips and the table-view status
-// pill. Same accent family as STATUS_ACCENT but two-tone (bg + text) so
-// they read as small badges rather than colored bars.
-const STATUS_CHIP: Record<AppStatus, string> = {
-  new: 'bg-slate-100 text-slate-600',
-  applied: 'bg-slate-200 text-slate-700',
-  screening: 'bg-blue-100 text-blue-800',
-  interview: 'bg-indigo-100 text-indigo-800',
-  'take-home': 'bg-amber-100 text-amber-800',
-  offer: 'bg-emerald-100 text-emerald-800',
-  rejected: 'bg-red-100 text-red-800',
+// Per-stage summary + table-view status chips. Per §3.5 the chip
+// background is uniform slate; semantic meaning is carried by the leading
+// dot. The dot color collapses the original 7-tint palette into the
+// new 4-token palette:
+//   in-progress active stages → neutral (applied/screening/interview/take-home)
+//   offer                     → good
+//   rejected                  → bad
+//   withdrew / new            → neutral (muted text)
+// Note: the per-column accent BAR (STATUS_ACCENT above) keeps its 5
+// distinct colors — the user explicitly called those out as "status-
+// specific, not decorative" in the polish spec.
+const STATUS_CHIP_BG: Record<AppStatus, string> = {
+  new: 'bg-slate-100 text-slate-500',
+  applied: 'bg-slate-100 text-slate-700',
+  screening: 'bg-slate-100 text-slate-700',
+  interview: 'bg-slate-100 text-slate-700',
+  'take-home': 'bg-slate-100 text-slate-700',
+  offer: 'bg-slate-100 text-slate-700',
+  rejected: 'bg-slate-100 text-slate-600',
   withdrew: 'bg-slate-100 text-slate-500',
 };
+const STATUS_DOT: Record<AppStatus, DotColor> = {
+  new: 'neutral',
+  applied: 'neutral',
+  screening: 'neutral',
+  interview: 'neutral',
+  'take-home': 'warn',
+  offer: 'good',
+  rejected: 'bad',
+  withdrew: 'neutral',
+};
+
+// Convenience: full chip className for the existing call sites that
+// concatenate STATUS_CHIP with their own positioning/sizing classes.
+// This is just the bg+text part — call sites still wrap with their own
+// `inline-flex items-center …` and prefix a <Dot color={STATUS_DOT[s]} />.
+const STATUS_CHIP = STATUS_CHIP_BG;
 
 // "Active" stages where a follow-up makes sense — terminal states
 // (offer / rejected / withdrew) are excluded. Threshold matches the
@@ -221,23 +246,26 @@ interface CardProps {
   onOpen?: (job: Job) => void;
 }
 
+// FitPill — neutralized to slate background + semantic dot, matching the
+// JobsTable fit badge. Keeps the column-accent semantics elsewhere on the
+// kanban intact.
 const FitPill = ({ fit }: { fit: Job['fit'] }) => {
   if (fit === 'good')
     return (
-      <span className="inline-flex items-center rounded-full bg-emerald-100 px-1.5 py-0 text-[10px] font-medium text-emerald-800">
-        good
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-medium text-slate-700">
+        <Dot color="good" /> good
       </span>
     );
   if (fit === 'ok')
     return (
-      <span className="inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0 text-[10px] font-medium text-amber-800">
-        ok
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-medium text-slate-700">
+        <Dot color="warn" /> ok
       </span>
     );
   if (fit === 'skip')
     return (
-      <span className="inline-flex items-center rounded-full bg-slate-200 px-1.5 py-0 text-[10px] font-medium text-slate-600">
-        skip
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-medium text-slate-600">
+        <Dot color="neutral" /> skip
       </span>
     );
   return null;
@@ -497,6 +525,7 @@ const SummaryStrip = ({ counts, staleCount, onClickStale }: SummaryStripProps) =
             )}
             title={`${STATUS_LABEL[s]}: ${n}`}
           >
+            {!muted && <Dot color={STATUS_DOT[s]} />}
             <span className="lowercase">{STATUS_LABEL[s]}</span>
             <span className="tabular-nums">{n}</span>
           </span>
@@ -585,10 +614,11 @@ const TrackerTable = ({
           return (
             <span
               className={clsx(
-                'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+                'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium',
                 STATUS_CHIP[s],
               )}
             >
+              <Dot color={STATUS_DOT[s]} />
               {STATUS_LABEL[s]}
             </span>
           );
@@ -979,10 +1009,11 @@ const AppDetailModal = ({
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
               <span
                 className={clsx(
-                  'inline-flex items-center rounded-full px-2 py-0.5 font-medium',
+                  'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium',
                   STATUS_CHIP[status],
                 )}
               >
+                <Dot color={STATUS_DOT[status]} />
                 {STATUS_LABEL[status]}
               </span>
               <span className="text-slate-400">
@@ -1056,10 +1087,11 @@ const AppDetailModal = ({
                   <li key={`${h.at}-${i}`} className="flex items-center gap-2">
                     <span
                       className={clsx(
-                        'inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+                        'inline-flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
                         STATUS_CHIP[(h.status ?? 'new') as AppStatus],
                       )}
                     >
+                      <Dot color={STATUS_DOT[(h.status ?? 'new') as AppStatus]} />
                       {STATUS_LABEL[(h.status ?? 'new') as AppStatus]}
                     </span>
                     <span className="text-slate-400">{safeRel(h.at)}</span>
@@ -1452,13 +1484,16 @@ export const ApplicationsPage = () => {
             <h2 className="text-sm font-semibold text-slate-900">
               Application Tracker
             </h2>
-            <p className="text-xs text-slate-500">
-              {loadState === 'loading'
-                ? 'loading…'
-                : loadState === 'error'
-                ? `failed to load: ${errorMsg}`
-                : `${totalActive} active application${totalActive === 1 ? '' : 's'}`}
-            </p>
+            {/* Subtitle dropped per §4.2 — the SummaryStrip below already
+                shows per-stage counts. Loading/error states still surface
+                here so the user gets feedback before the strip renders. */}
+            {(loadState === 'loading' || loadState === 'error') && (
+              <p className="text-xs text-slate-500">
+                {loadState === 'loading'
+                  ? 'loading…'
+                  : `failed to load: ${errorMsg}`}
+              </p>
+            )}
           </div>
           {/* Stage 3-C right-side controls: view toggle + Refresh. */}
           <div className="flex items-center gap-2">

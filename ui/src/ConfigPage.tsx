@@ -320,7 +320,9 @@ export const ConfigPage = () => {
   if (state.kind === 'error') {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6 py-20 text-center">
-        <div className="mb-6 text-6xl">⚠️</div>
+        <h2 className="mb-2 text-xl font-semibold text-slate-800">
+          Couldn't load config
+        </h2>
         <p className="mb-5 max-w-lg text-sm text-slate-600">{state.message}</p>
       </div>
     );
