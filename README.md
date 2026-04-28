@@ -83,6 +83,11 @@ python3 -m pip install -r backend/requirements.txt
 python3 -m playwright install chromium    # only for --mode=loggedin
 
 cd ui && npm install && cd ..
+
+# Generate defaults.json — the UI's "Reset to defaults" button reads this.
+# Required after every fresh clone; regenerate any time you change the
+# hardcoded defaults inside search.py.
+python3 backend/search.py --print-defaults > defaults.json
 ```
 
 ### Pick an LLM auth path (you need one)

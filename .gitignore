@@ -16,6 +16,12 @@ config.json.premigrate
 active_profile.txt
 scheduler_state.json
 
+# ---- Generated scraper defaults (regenerate via `python3 backend/search.py
+# --print-defaults > defaults.json` after a fresh clone — the UI's "Reset to
+# defaults" button reads this file). Kept out of git because it changes
+# whenever the in-file defaults in search.py change. ----
+defaults.json
+
 # ---- LinkedIn auth + personal data ----
 linkedin_session.json
 cv.txt
