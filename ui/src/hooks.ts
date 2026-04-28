@@ -69,13 +69,18 @@ export const useCorpusActions = () => {
         });
         const body = (await res.json()) as { ok?: boolean; error?: string };
         if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
-        fireStale();
+        // NOTE: do NOT fire corpus-stale here. The autosave inside
+        // RatingCommentEditor calls this on every keystroke debounce; firing
+        // stale would reload results.json mid-typing, remount the row card,
+        // and wipe the user's in-progress text. The editor's local state
+        // is already correct — other surfaces showing the same job will
+        // see the new rating/comment on the next manual refresh.
         return { ok: true };
       } catch (e) {
         return { ok: false, error: (e as Error).message };
       }
     },
-    [fireStale],
+    [],
   );
 
   return { deleteJobs, rateJob };
