@@ -70,6 +70,54 @@ const toggle = <T,>(set: Set<T>, v: T): Set<T> => {
 };
 
 /**
+ * Group-aware variant of cycleEnumFilter for the Category filter, where
+ * one chip ("Security") may map to multiple corpus ids (cat-mobyb81c-5 +
+ * security_researcher + ...). A click toggles every id in the group as a
+ * single unit. Same "empty = match all" semantics as the scalar version.
+ */
+type CategoryGroup = {
+  displayId: string;
+  displayName: string;
+  repId: string;
+  allIds: string[];
+};
+
+const toggleCategoryGroup = (
+  current: Set<string>,
+  groups: CategoryGroup[],
+  clicked: CategoryGroup,
+): Set<string> => {
+  const allIdsFlat = groups.flatMap((g) => g.allIds);
+  // From "match all" → expand to "all minus this group".
+  if (current.size === 0) {
+    const next = new Set(allIdsFlat);
+    for (const id of clicked.allIds) next.delete(id);
+    return next;
+  }
+  const groupActive = clicked.allIds.some((id) => current.has(id));
+  const next = new Set(current);
+  if (groupActive) {
+    for (const id of clicked.allIds) next.delete(id);
+  } else {
+    for (const id of clicked.allIds) next.add(id);
+  }
+  // Collapse back to empty (= match all) if every id is now selected.
+  return next.size === allIdsFlat.length ? new Set() : next;
+};
+
+const selectedGroupCount = (
+  groups: CategoryGroup[],
+  current: Set<string>,
+): number => {
+  if (current.size === 0) return groups.length;
+  let n = 0;
+  for (const g of groups) {
+    if (g.allIds.some((id) => current.has(id))) n++;
+  }
+  return n;
+};
+
+/**
  * Click handler for an enum filter where empty = "match all" (uniform model).
  * - If currently empty (all-mode): clicking expands to "all options minus this".
  * - If non-empty: toggles this option in/out.
@@ -437,6 +485,35 @@ export const FilterPanel = ({
       ? availableCategories
       : ALL_CATEGORIES;
 
+  // Dedupe categories by case-insensitive name. Two ids that resolve to the
+  // same human label ("Security" from cat-mobyb81c-5 + "Security" from the
+  // legacy `security_researcher` string, etc.) collapse into ONE filter chip
+  // whose click toggles all underlying ids together. This is the only way
+  // the UI matches the user's mental model after a config rewrite — they
+  // care about the name, not the bookkeeping id.
+  const categoryGroups = useMemo(() => {
+    const byKey = new Map<
+      string,
+      { displayId: string; displayName: string; repId: string; allIds: string[] }
+    >();
+    for (const id of categoryOptions) {
+      const display = categoryNamesById?.get(id) ?? catLabel(id);
+      const key = display.trim().toLowerCase();
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.allIds.push(id);
+      } else {
+        byKey.set(key, {
+          displayId: id,
+          displayName: display,
+          repId: id,
+          allIds: [id],
+        });
+      }
+    }
+    return Array.from(byKey.values());
+  }, [categoryOptions, categoryNamesById]);
+
   const setQuick = (q: DateQuick) =>
     onChange({ ...f, dateQuick: q, ...(q !== 'custom' ? { dateFrom: '', dateTo: '' } : {}) });
 
@@ -594,7 +671,7 @@ export const FilterPanel = ({
 
       <Section
         title="Category"
-        hint={f.categories.size === 0 ? 'all' : `${categoryOptions.length - f.categories.size} hidden`}
+        hint={f.categories.size === 0 ? 'all' : `${categoryGroups.length - selectedGroupCount(categoryGroups, f.categories)} hidden`}
         accessory={
           <SectionReset
             show={f.categories.size > 0}
@@ -604,30 +681,53 @@ export const FilterPanel = ({
       >
         {(() => {
           const catsExpanded = expandedSections.has('category');
+          // Build a synthetic "options" array of the group representative ids
+          // so sliceWithSelected works against group identity (not raw ids).
+          const groupReps = categoryGroups.map((g) => g.repId);
+          // For pinning purposes — a group is "selected" if any of its ids
+          // are in f.categories (ALL would be stricter, but inclusive is the
+          // user-intuitive behavior here). sliceWithSelected accepts a Set,
+          // so we synthesize one of group reps that look selected.
+          const selectedReps = new Set<string>();
+          for (const g of categoryGroups) {
+            if (g.allIds.some((id) => f.categories.has(id))) selectedReps.add(g.repId);
+          }
           const { shown, needsToggle } = sliceWithSelected(
-            categoryOptions,
-            f.categories,
+            groupReps,
+            selectedReps,
             catsExpanded,
           );
+          const groupByRep = new Map(categoryGroups.map((g) => [g.repId, g]));
           return (
             <div className="flex flex-col gap-0.5" id={listId('category')}>
-              {shown.map((k) => (
-                <PillRow
-                  key={k}
-                  label={categoryNamesById?.get(k) ?? catLabel(k)}
-                  selected={f.categories.size === 0 || f.categories.has(k)}
-                  onClick={() =>
-                    onChange({
-                      ...f,
-                      categories: cycleEnumFilter(f.categories, categoryOptions, k),
-                    })
-                  }
-                />
-              ))}
+              {shown.map((repId) => {
+                const g = groupByRep.get(repId);
+                if (!g) return null;
+                const groupSelected =
+                  f.categories.size === 0 ||
+                  g.allIds.some((id) => f.categories.has(id));
+                return (
+                  <PillRow
+                    key={repId}
+                    label={g.displayName}
+                    selected={groupSelected}
+                    onClick={() =>
+                      onChange({
+                        ...f,
+                        categories: toggleCategoryGroup(
+                          f.categories,
+                          categoryGroups,
+                          g,
+                        ),
+                      })
+                    }
+                  />
+                );
+              })}
               {needsToggle && (
                 <ShowMoreToggle
                   expanded={catsExpanded}
-                  total={categoryOptions.length}
+                  total={categoryGroups.length}
                   onClick={() => toggleExpanded('category')}
                   controlsId={listId('category')}
                 />
