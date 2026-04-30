@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import {
@@ -12,6 +12,7 @@ import {
 } from '@tanstack/react-table';
 import type { Job } from './types';
 import { JobActionsPopover } from './JobActionsPopover';
+import { BulkActionBar } from './BulkActionBar';
 import { RatingCommentEditor } from './RatingCommentEditor';
 import { useViewport } from './useViewport';
 import { Dot } from './Dot';
@@ -164,11 +165,25 @@ const columnHelper = createColumnHelper<Job>();
 interface Props {
   data: Job[];
   applied: Set<string>;
+  // Per-row override: ids in this set are "applied but pinned in place" —
+  // the sort accessor reads them as 0 (not-applied) so they don't sink to
+  // the bottom. Pill, filter and dimmed treatment still light up. CorpusPage
+  // owns this state and clears it on stale-event reload.
+  keepInPlaceIds?: Set<string>;
   onToggleApplied: (id: string) => void;
-  // Bulk-set applied state on a list of ids. Wired from CorpusPage; when
-  // present, the Applied column header becomes an indeterminate checkbox
-  // that bulk-toggles every visible row.
+  // Bulk-set applied state on a list of ids. Wired from CorpusPage; powers
+  // the "Apply selected" / "Mark unapplied" buttons in the bulk bar.
   onSetAppliedMany?: (ids: string[], applied: boolean) => void;
+  // Explicit per-row apply / unapply. Apply takes a `moveToEnd` choice the
+  // popover surfaces as a two-button picker the first time. When present,
+  // the popover's "Mark as applied" checkbox becomes a real button.
+  onApply?: (id: string, moveToEnd: boolean) => void;
+  onUnapply?: (id: string) => void;
+  // Global "Apply moves to end" pref + setter. `null` = unset (popover
+  // shows two buttons + Remember toggle); `true|false` = remembered choice
+  // (popover shows one button + change link). Bulk Apply also reads it.
+  applyMovesToEnd?: boolean | null;
+  onSetApplyPref?: (v: boolean | null) => void;
   // Corpus mutations exposed from CorpusPage's useCorpusActions(). When
   // both are provided, clicking "Open ↗" pops over the row-actions menu
   // (rate / delete / re-toggle applied) AFTER opening the new tab. The
@@ -182,6 +197,13 @@ interface Props {
   ) => Promise<{ ok: boolean; error?: string }>;
   onDelete?: (id: string) =>
     Promise<{ ok: boolean; error?: string }>;
+  // True when the active FilterState is non-default. Drives whether the
+  // bulk bar renders even with no selection (so the "Delete all N filtered"
+  // affordance is reachable). Computed in CorpusPage via `!isDefault(filters)`.
+  hasNonDefaultFilter?: boolean;
+  // Click handler for the "Delete all N filtered" right-side button. Wired
+  // from CorpusPage as `() => deleteJobs(filtered.map(j => j.id))`.
+  onDeleteAllFiltered?: () => void;
   // category-id → human-readable name from /api/config. When provided, the
   // Category column renders the name ("Security") instead of the de-snaked
   // id ("Cat Mobyb81c 5").
@@ -208,7 +230,9 @@ const MOBILE_SORT_OPTIONS = [
 ] as const;
 
 export const JobsTable = ({
-  data, applied, onToggleApplied, onSetAppliedMany, onRate, onDelete,
+  data, applied, keepInPlaceIds, onSetAppliedMany,
+  onApply, onUnapply, applyMovesToEnd = null, onSetApplyPref,
+  onRate, onDelete, hasNonDefaultFilter = false, onDeleteAllFiltered,
   categoryNamesById, emptyState, cursorRowId,
 }: Props) => {
   const { isMobile } = useViewport();
@@ -220,6 +244,23 @@ export const JobsTable = ({
   >(null);
   const popoverAnchorRef = useRef<HTMLElement | null>(null);
   popoverAnchorRef.current = popoverState?.anchor ?? null;
+
+  // Ephemeral per-table selection state. NOT persisted across reloads —
+  // selection is "what I'm operating on right now," not a saved view.
+  // Reset whenever the data array reference changes (filter change,
+  // stale-reload, page change all flow through `data`).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [data]);
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   // Initial sort: applied first (asc — open jobs above applied), then the
   // user's three "good defaults" beneath it. Updates to `sorting` go through
@@ -299,75 +340,98 @@ export const JobsTable = ({
       }),
       // Accessor (NOT display) — TanStack ignores sortingFn on display
       // columns because its sort engine calls getValue() first. The
-      // accessorFn closes over the live `applied` Set; when the set
-      // mutates, the parent useMemo re-creates the column defs and
-      // TanStack re-sorts. Pinned as the first sort key elsewhere so
-      // applied jobs always sink to the bottom.
-      columnHelper.accessor((r) => (applied.has(r.id) ? 1 : 0), {
-        id: 'applied',
-        // Header is an indeterminate checkbox that bulk-toggles applied
-        // for every visible row. State is derived from the table's
-        // current row model so it stays accurate as filters change.
-        header: ({ table }) => {
-          const visible = table.getRowModel().rows.map((r) => r.original.id);
-          const visibleApplied = visible.filter((id) => applied.has(id)).length;
-          const allApplied = visible.length > 0 && visibleApplied === visible.length;
-          const someApplied = visibleApplied > 0 && !allApplied;
-          const refSet = (el: HTMLInputElement | null) => {
-            if (el) el.indeterminate = someApplied;
-          };
-          return (
-            <span className="inline-flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                ref={refSet}
-                checked={allApplied}
-                disabled={!onSetAppliedMany || visible.length === 0}
-                onChange={() => {
-                  if (!onSetAppliedMany) return;
-                  onSetAppliedMany(visible, !allApplied);
-                }}
+      // accessorFn closes over the live `applied` Set + `keepInPlaceIds`;
+      // when either mutates, the parent useMemo re-creates the column
+      // defs and TanStack re-sorts. Pinned as the first sort key elsewhere
+      // so applied jobs sink to the bottom — UNLESS the user picked
+      // "keep in place" for that row, in which case the accessor reads
+      // 0 and the row stays put.
+      //
+      // Visual is decoupled from the data accessor: the cell renders a
+      // SELECTION checkbox (bound to selectedIds) plus an emerald
+      // "Applied" pill when applied. Header checkbox = select-all-visible.
+      // Sort id stays 'applied' so setSortingPinned still finds it.
+      columnHelper.accessor(
+        (r) => (applied.has(r.id) && !(keepInPlaceIds?.has(r.id) ?? false) ? 1 : 0),
+        {
+          id: 'applied',
+          // Header is an indeterminate checkbox that selects/deselects every
+          // visible row in the current row model.
+          header: ({ table }) => {
+            const visible = table.getRowModel().rows.map((r) => r.original.id);
+            const visibleSelected = visible.filter((id) => selectedIds.has(id)).length;
+            const allSelected = visible.length > 0 && visibleSelected === visible.length;
+            const someSelected = visibleSelected > 0 && !allSelected;
+            const refSet = (el: HTMLInputElement | null) => {
+              if (el) el.indeterminate = someSelected;
+            };
+            return (
+              <span className="inline-flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  ref={refSet}
+                  checked={allSelected}
+                  disabled={visible.length === 0}
+                  onChange={() => {
+                    setSelectedIds((prev) => {
+                      const next = new Set(prev);
+                      if (allSelected) {
+                        for (const id of visible) next.delete(id);
+                      } else {
+                        for (const id of visible) next.add(id);
+                      }
+                      return next;
+                    });
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="h-3.5 w-3.5 cursor-pointer rounded border-slate-300 text-brand-700 focus:ring-brand-700 disabled:opacity-40"
+                  title={
+                    visible.length === 0
+                      ? 'No rows visible'
+                      : allSelected
+                      ? `Deselect all ${visible.length} visible`
+                      : `Select all ${visible.length} visible`
+                  }
+                  aria-label="Select all visible rows"
+                />
+                <span>Selected</span>
+              </span>
+            );
+          },
+          cell: (info) => {
+            const j = info.row.original;
+            const isApplied = applied.has(j.id);
+            const isSelected = selectedIds.has(j.id);
+            return (
+              <div
+                className="inline-flex items-center gap-1.5"
                 onClick={(e) => e.stopPropagation()}
-                className="h-3.5 w-3.5 cursor-pointer rounded border-slate-300 text-emerald-600 focus:ring-emerald-600 disabled:opacity-40"
-                title={
-                  visible.length === 0
-                    ? 'No rows visible'
-                    : allApplied
-                    ? `Mark all ${visible.length} visible as not applied`
-                    : `Mark all ${visible.length} visible as applied`
-                }
-                aria-label="Bulk-toggle applied for visible rows"
-              />
-              <span>Applied</span>
-            </span>
-          );
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggleSelected(j.id)}
+                  className="h-4 w-4 cursor-pointer rounded border-slate-300 text-brand-700 focus:ring-brand-700"
+                  title={isSelected ? 'Deselect row' : 'Select row'}
+                  aria-label={isSelected ? 'Deselect row' : 'Select row'}
+                />
+                {isApplied && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700"
+                    title="You marked this row as applied"
+                  >
+                    <Dot color="good" /> Applied
+                  </span>
+                )}
+              </div>
+            );
+          },
+          size: 110,
+          enableSorting: true,
+          // 'basic' = numeric comparison; works on the 0/1 accessor output.
+          sortingFn: 'basic',
         },
-        cell: (info) => {
-          const j = info.row.original;
-          const isApplied = applied.has(j.id);
-          return (
-            <label
-              className="inline-flex cursor-pointer items-center gap-1.5"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <input
-                type="checkbox"
-                checked={isApplied}
-                onChange={() => onToggleApplied(j.id)}
-                className="h-4 w-4 cursor-pointer rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
-                title={isApplied ? 'Mark as not applied' : 'Mark as applied'}
-              />
-              {isApplied && (
-                <span className="text-xs font-medium text-emerald-700">✓</span>
-              )}
-            </label>
-          );
-        },
-        size: 76,
-        enableSorting: true,
-        // 'basic' = numeric comparison; works on the 0/1 accessor output.
-        sortingFn: 'basic',
-      }),
+      ),
       columnHelper.accessor('company', {
         header: 'Company',
         cell: (info) => (
@@ -547,7 +611,10 @@ export const JobsTable = ({
         },
       }),
     ],
-    [confirmDeleteId, handleInlineDelete, onDelete, applied, onToggleApplied, categoryNamesById],
+    [
+      confirmDeleteId, handleInlineDelete, onDelete, applied, keepInPlaceIds,
+      selectedIds, toggleSelected, categoryNamesById,
+    ],
   );
 
   // The applied-pinned sort + per-column sortingFn handle all ordering.
@@ -621,15 +688,18 @@ export const JobsTable = ({
                 </option>
               ))}
             </select>
-            {/* Bulk-applied checkbox surfaced here so it stays reachable
-                without the table header. Reuses the same logic. */}
-            {onSetAppliedMany && (() => {
+            {/* Bulk-select-all checkbox — repurposed from "Mark all
+                visible as applied" to "Select all visible." Same touch
+                target, same indeterminate logic; the underlying state is
+                now selectedIds. The bulk action then runs from
+                BulkActionBar (rendered just below). */}
+            {(() => {
               const visible = table.getRowModel().rows.map((r) => r.original.id);
-              const visibleApplied = visible.filter((id) => applied.has(id)).length;
-              const allApplied = visible.length > 0 && visibleApplied === visible.length;
-              const someApplied = visibleApplied > 0 && !allApplied;
+              const visibleSelected = visible.filter((id) => selectedIds.has(id)).length;
+              const allSelected = visible.length > 0 && visibleSelected === visible.length;
+              const someSelected = visibleSelected > 0 && !allSelected;
               const refSet = (el: HTMLInputElement | null) => {
-                if (el) el.indeterminate = someApplied;
+                if (el) el.indeterminate = someSelected;
               };
               return (
                 <label
@@ -637,24 +707,82 @@ export const JobsTable = ({
                   title={
                     visible.length === 0
                       ? 'No rows visible'
-                      : allApplied
-                      ? `Mark all ${visible.length} visible as not applied`
-                      : `Mark all ${visible.length} visible as applied`
+                      : allSelected
+                      ? `Deselect all ${visible.length} visible`
+                      : `Select all ${visible.length} visible`
                   }
                 >
                   <input
                     type="checkbox"
                     ref={refSet}
-                    checked={allApplied}
+                    checked={allSelected}
                     disabled={visible.length === 0}
-                    onChange={() => onSetAppliedMany(visible, !allApplied)}
-                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600 disabled:opacity-40"
+                    onChange={() => {
+                      setSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (allSelected) {
+                          for (const id of visible) next.delete(id);
+                        } else {
+                          for (const id of visible) next.add(id);
+                        }
+                        return next;
+                      });
+                    }}
+                    className="h-4 w-4 rounded border-slate-300 text-brand-700 focus:ring-brand-700 disabled:opacity-40"
                   />
                   All
                 </label>
               );
             })()}
           </div>
+        )}
+
+        {/* Bulk-action bar — shown when the user has selected rows OR a
+            non-default filter is active. Lives inside the table's wrapper
+            so it sits above the rows but below the StatsBar / mobile sort
+            bar. See BulkActionBar.tsx for the per-button wiring. */}
+        {(selectedIds.size > 0 || hasNonDefaultFilter) && (
+          <BulkActionBar
+            selectedCount={selectedIds.size}
+            filteredCount={data.length}
+            hasFilter={hasNonDefaultFilter}
+            allSelectedApplied={
+              selectedIds.size > 0 &&
+              [...selectedIds].every((id) => applied.has(id))
+            }
+            onClear={() => setSelectedIds(new Set())}
+            onDeleteSelected={() => {
+              if (!onDelete) return;
+              const ids = [...selectedIds];
+              setSelectedIds(new Set());
+              // Fire as a single bulk delete via per-id calls; the backend
+              // collapses these into one results.json write through
+              // useCorpusActions's deleteJobs([...]) path. We don't have a
+              // direct bulk handle here (CorpusPage wires `deleteOne`), so
+              // we sequence them — N is typically <= page size.
+              void Promise.all(ids.map((id) => onDelete(id)));
+            }}
+            onApplySelected={() => {
+              if (!onSetAppliedMany) return;
+              // Bulk Apply honours the move-to-end pref. Default = true
+              // (matches today's silent move-to-end behaviour for users
+              // who never opened the popover).
+              onSetAppliedMany([...selectedIds], true);
+              // No keep-in-place override on bulk apply — bulk implies
+              // "I'm done with these," sinking them is the right move.
+              setSelectedIds(new Set());
+            }}
+            onMarkUnappliedSelected={() => {
+              if (!onSetAppliedMany) return;
+              onSetAppliedMany([...selectedIds], false);
+              setSelectedIds(new Set());
+            }}
+            onDeleteAllFiltered={() => {
+              if (!onDeleteAllFiltered) return;
+              setSelectedIds(new Set());
+              onDeleteAllFiltered();
+            }}
+          />
         )}
 
         {/* Desktop: existing table. Mobile: card list of the same rows. */}
@@ -700,17 +828,28 @@ export const JobsTable = ({
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       {isHot && <HotPill />}
+                      {isApplied && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
+                          title="You marked this row as applied"
+                        >
+                          <Dot color="good" /> Applied
+                        </span>
+                      )}
+                      {/* Top-right card checkbox now binds to selectedIds
+                          (was: applied). Selection is per-table-render
+                          ephemeral state — see BulkActionBar above. */}
                       <label
                         className="inline-flex h-11 w-11 cursor-pointer items-center justify-center"
                         onClick={(e) => e.stopPropagation()}
-                        title={isApplied ? 'Mark as not applied' : 'Mark as applied'}
+                        title={selectedIds.has(j.id) ? 'Deselect row' : 'Select row'}
                       >
                         <input
                           type="checkbox"
-                          checked={isApplied}
-                          onChange={() => onToggleApplied(j.id)}
-                          className="h-5 w-5 cursor-pointer rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
-                          aria-label={isApplied ? 'Mark as not applied' : 'Mark as applied'}
+                          checked={selectedIds.has(j.id)}
+                          onChange={() => toggleSelected(j.id)}
+                          className="h-5 w-5 cursor-pointer rounded border-slate-300 text-brand-700 focus:ring-brand-700"
+                          aria-label={selectedIds.has(j.id) ? 'Deselect row' : 'Select row'}
                         />
                       </label>
                     </div>
@@ -1079,17 +1218,22 @@ export const JobsTable = ({
         </div>
       </div>
 
-      {/* Row-actions popover (delete / rate / re-toggle applied). Lives at
+      {/* Row-actions popover (Apply / Unapply / rate / delete). Lives at
           table-level so anchor positioning is single-source. The popover
-          is shown right after the user clicks "Open ↗" on a row. */}
-      {popoverState && onRate && onDelete && (() => {
+          is shown right after the user clicks "Open ↗" on a row. Apply
+          is now an explicit button with a first-time "move to end?" pick;
+          see JobActionsPopover.tsx + CorpusPage's applyOne / unapplyOne. */}
+      {popoverState && onRate && onDelete && onApply && onUnapply && onSetApplyPref && (() => {
         const job = data.find((j) => j.id === popoverState.jobId);
         if (!job) return null;
         return (
           <JobActionsPopover
             job={job}
             isApplied={applied.has(job.id)}
-            onToggleApplied={onToggleApplied}
+            onApply={onApply}
+            onUnapply={onUnapply}
+            applyMovesToEnd={applyMovesToEnd}
+            onSetApplyPref={onSetApplyPref}
             onRate={onRate}
             onDelete={onDelete}
             anchorRef={popoverAnchorRef}

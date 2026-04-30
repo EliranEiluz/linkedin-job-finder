@@ -183,6 +183,43 @@ export const CorpusPage = () => {
 
   const allJobs: Job[] = state.kind === 'ok' ? state.jobs : [];
 
+  // Per-row "applied but keep in place" override. When the user clicks
+  // "Apply but keep in place" in the popover (or the per-row equivalent),
+  // we add the id here so the JobsTable's `applied` sort accessor reads
+  // the row as NOT-applied for sort purposes — even though the row IS
+  // applied for everything else (pill, filter, dimmed treatment). Cleared
+  // on stale-event reload so the natural sort picks back up after a fresh
+  // scrape repopulates the corpus.
+  const [keepInPlaceIds, setKeepInPlaceIds] = useState<Set<string>>(new Set());
+
+  // Global "should Apply move the row to the end?" preference. Persists in
+  // localStorage so the choice survives reloads. `null` (= no key set) means
+  // "the user has not made an explicit choice yet" — the popover shows two
+  // buttons + a Remember toggle. Once set, the popover shows one button.
+  // Bulk Apply also reads this; if unset, it defaults to true (matches
+  // today's silent move-to-end behaviour for users who never opened the
+  // popover before).
+  const APPLY_PREF_KEY = 'corpus.applyMovesToEnd';
+  const [applyMovesToEnd, setApplyMovesToEndState] = useState<boolean | null>(() => {
+    try {
+      const v = window.localStorage.getItem(APPLY_PREF_KEY);
+      if (v === 'true') return true;
+      if (v === 'false') return false;
+      return null;
+    } catch {
+      return null;
+    }
+  });
+  const setApplyMovesToEnd = useCallback((v: boolean | null) => {
+    try {
+      if (v === null) window.localStorage.removeItem(APPLY_PREF_KEY);
+      else window.localStorage.setItem(APPLY_PREF_KEY, v ? 'true' : 'false');
+    } catch {
+      // localStorage unavailable (private mode, etc.) — pref stays in-memory.
+    }
+    setApplyMovesToEndState(v);
+  }, []);
+
   const applied = useMemo(() => {
     const result = new Set<string>();
     for (const j of allJobs) {
@@ -263,6 +300,70 @@ export const CorpusPage = () => {
     [deleteJobs],
   );
 
+  // Apply a single row with explicit "move to end?" choice. Sets the
+  // server-side app_status; when `moveToEnd === false`, also adds the id
+  // to keepInPlaceIds so the sort pin treats the row as not-applied (its
+  // existing position in the filtered sort survives).
+  const applyOne = useCallback(
+    (id: string, moveToEnd: boolean) => {
+      setAppliedPending((prev) => {
+        const next = new Map(prev);
+        next.set(id, 'add');
+        return next;
+      });
+      if (!moveToEnd) {
+        setKeepInPlaceIds((prev) => {
+          const next = new Set(prev);
+          next.add(id);
+          return next;
+        });
+      } else {
+        setKeepInPlaceIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+      void setAppStatus(id, 'applied').then((r) => {
+        setAppliedPending((prev) => {
+          const next = new Map(prev);
+          next.delete(id);
+          return next;
+        });
+        if (!r.ok) console.error('apply failed:', r.error);
+      });
+    },
+    [setAppStatus],
+  );
+
+  const unapplyOne = useCallback(
+    (id: string) => {
+      setAppliedPending((prev) => {
+        const next = new Map(prev);
+        next.set(id, 'remove');
+        return next;
+      });
+      // Un-applying never reorders — the natural sort will move the row
+      // back to where it belongs. Drop any keep-in-place override too.
+      setKeepInPlaceIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      void setAppStatus(id, 'new').then((r) => {
+        setAppliedPending((prev) => {
+          const next = new Map(prev);
+          next.delete(id);
+          return next;
+        });
+        if (!r.ok) console.error('unapply failed:', r.error);
+      });
+    },
+    [setAppStatus],
+  );
+
   const reload = useCallback(async () => {
     setState({ kind: 'loading' });
     setState(await fetchJobs());
@@ -323,6 +424,13 @@ export const CorpusPage = () => {
   }, [allJobs]);
 
   // Listen for ScrapeRunPanel's "scrape finished" signal and re-fetch.
+  //
+  // Note: we deliberately do NOT clear `keepInPlaceIds` here. The stale
+  // event also fires after every per-row Apply (via `setAppStatus` →
+  // `fireStale` in hooks.ts) — clearing the set on stale would race
+  // against the very Apply call that just populated it, sinking the row
+  // the user explicitly chose to keep in place. The set is short-lived
+  // anyway (resets on full page reload + on filter changes via re-render).
   useEffect(() => {
     const onStale = () => {
       void reload();
@@ -483,8 +591,15 @@ export const CorpusPage = () => {
             <JobsTable
               data={filtered}
               applied={applied}
+              keepInPlaceIds={keepInPlaceIds}
               onToggleApplied={toggleApplied}
               onSetAppliedMany={setAppliedMany}
+              onApply={applyOne}
+              onUnapply={unapplyOne}
+              applyMovesToEnd={applyMovesToEnd}
+              onSetApplyPref={setApplyMovesToEnd}
+              hasNonDefaultFilter={!isDefault(filters)}
+              onDeleteAllFiltered={() => deleteJobs(filtered.map((j) => j.id))}
               onRate={rateJob}
               onDelete={deleteOne}
               categoryNamesById={categoryNamesById}

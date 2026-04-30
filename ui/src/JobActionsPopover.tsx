@@ -7,7 +7,16 @@ import { useViewport } from './useViewport';
 interface Props {
   job: Job;
   isApplied: boolean;
-  onToggleApplied: (id: string) => void;
+  // Apply / unapply are now explicit buttons (not a checkbox). The Apply
+  // path takes a `moveToEnd` choice — see "Apply behaviour" below.
+  onApply: (id: string, moveToEnd: boolean) => void;
+  onUnapply: (id: string) => void;
+  // Global preference for whether Apply moves the row to the end of the
+  // corpus. `null` = unset (user has not made an explicit choice yet — we
+  // show both buttons every time + a "Remember" checkbox). `true|false` =
+  // remembered choice (we show one button + a "change" footer link).
+  applyMovesToEnd: boolean | null;
+  onSetApplyPref: (v: boolean | null) => void;
   // `comment` is optional: undefined leaves it untouched, null clears it,
   // string sets it (server caps at 2000 chars).
   onRate: (
@@ -24,7 +33,7 @@ interface Props {
 
 /**
  * Floating popover with three quick actions for one row:
- *   - applied toggle (mirrors the row's checkbox)
+ *   - Apply / Unapply (explicit buttons; first-time prompt for "move to end")
  *   - 1–5 star rating + free-text comment (via <RatingCommentEditor />)
  *   - delete (with single-click confirm — second click commits)
  *
@@ -37,12 +46,17 @@ interface Props {
  * expanded-row panel. All three write to the same results.json fields.
  */
 export const JobActionsPopover = ({
-  job, isApplied, onToggleApplied, onRate, onDelete, anchorRef, onClose,
+  job, isApplied, onApply, onUnapply, applyMovesToEnd, onSetApplyPref,
+  onRate, onDelete, anchorRef, onClose,
 }: Props) => {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Default-checked "Remember my choice" toggle. Only used the first time
+  // (i.e. when `applyMovesToEnd === null`); once the user picks, we write
+  // the pref iff this is still ticked.
+  const [remember, setRemember] = useState(true);
   const { isMobile } = useViewport();
 
   // —— positioning: desktop pins beneath the anchor; mobile renders as a
@@ -110,6 +124,16 @@ export const JobActionsPopover = ({
     onClose();
   };
 
+  // Resolves what to do when the user clicks an Apply button. Writes the
+  // pref only when the user EXPLICITLY chose for the first time AND the
+  // Remember box is still ticked.
+  const handleApply = (moveToEnd: boolean) => {
+    if (applyMovesToEnd === null && remember) {
+      onSetApplyPref(moveToEnd);
+    }
+    onApply(job.id, moveToEnd);
+  };
+
   if (!coords) return null;
 
   // Mobile: centered bottom-sheet with backdrop. The desktop floating popover
@@ -135,7 +159,12 @@ export const JobActionsPopover = ({
           <PopoverBody
             job={job}
             isApplied={isApplied}
-            onToggleApplied={onToggleApplied}
+            onApply={handleApply}
+            onUnapply={onUnapply}
+            applyMovesToEnd={applyMovesToEnd}
+            onSetApplyPref={onSetApplyPref}
+            remember={remember}
+            setRemember={setRemember}
             onRate={onRate}
             onClose={onClose}
             confirmDelete={confirmDelete}
@@ -165,7 +194,12 @@ export const JobActionsPopover = ({
       <PopoverBody
         job={job}
         isApplied={isApplied}
-        onToggleApplied={onToggleApplied}
+        onApply={handleApply}
+        onUnapply={onUnapply}
+        applyMovesToEnd={applyMovesToEnd}
+        onSetApplyPref={onSetApplyPref}
+        remember={remember}
+        setRemember={setRemember}
         onRate={onRate}
         onClose={onClose}
         confirmDelete={confirmDelete}
@@ -178,15 +212,21 @@ export const JobActionsPopover = ({
 };
 
 // Shared body extracted so the desktop floating popover and mobile bottom
-// sheet render the exact same content — same checkbox, rating editor, and
-// delete button. Only the wrapper (positioning + backdrop) differs.
+// sheet render the exact same content — same Apply buttons, rating editor,
+// and delete button. Only the wrapper (positioning + backdrop) differs.
 const PopoverBody = ({
-  job, isApplied, onToggleApplied, onRate, onClose,
+  job, isApplied, onApply, onUnapply, applyMovesToEnd, onSetApplyPref,
+  remember, setRemember, onRate, onClose,
   confirmDelete, deleting, err, handleDelete,
 }: {
   job: Job;
   isApplied: boolean;
-  onToggleApplied: (id: string) => void;
+  onApply: (moveToEnd: boolean) => void;
+  onUnapply: (id: string) => void;
+  applyMovesToEnd: boolean | null;
+  onSetApplyPref: (v: boolean | null) => void;
+  remember: boolean;
+  setRemember: (v: boolean) => void;
   onRate: Props['onRate'];
   onClose: () => void;
   confirmDelete: boolean;
@@ -213,16 +253,57 @@ const PopoverBody = ({
         </button>
       </div>
 
-      {/* Applied toggle */}
-      <label className="mt-2 flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-slate-50">
-        <input
-          type="checkbox"
-          checked={isApplied}
-          onChange={() => onToggleApplied(job.id)}
-          className="h-3.5 w-3.5 cursor-pointer rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
-        />
-        <span className="text-slate-700">Mark as applied</span>
-      </label>
+      {/* Apply / Unapply block. Three render paths:
+          - Already applied: single "Mark as not applied" button.
+          - Not applied + pref unset: two buttons + "Remember" checkbox.
+          - Not applied + pref set: single button (matches the pref) +
+            footer "change" link to reset.
+          Mark-unapplied never reorders, so it never prompts. */}
+      <div className="mt-2 flex flex-col gap-1.5">
+        {isApplied ? (
+          <button
+            type="button"
+            onClick={() => onUnapply(job.id)}
+            className="inline-flex w-full items-center justify-center rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Mark as not applied
+          </button>
+        ) : applyMovesToEnd === null ? (
+          <>
+            <button
+              type="button"
+              onClick={() => onApply(true)}
+              className="inline-flex w-full items-center justify-center rounded border border-emerald-600 bg-emerald-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+            >
+              Apply and move to end
+            </button>
+            <button
+              type="button"
+              onClick={() => onApply(false)}
+              className="inline-flex w-full items-center justify-center rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Apply but keep in place
+            </button>
+            <label className="mt-0.5 inline-flex cursor-pointer items-center gap-1.5 self-start text-[11px] text-slate-600">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+                className="h-3 w-3 cursor-pointer rounded border-slate-300 text-brand-700 focus:ring-brand-700"
+              />
+              Remember my choice
+            </label>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onApply(applyMovesToEnd)}
+            className="inline-flex w-full items-center justify-center rounded border border-emerald-600 bg-emerald-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+          >
+            {applyMovesToEnd ? 'Apply and move to end' : 'Apply but keep in place'}
+          </button>
+        )}
+      </div>
 
       {/* Shared rating + comment editor — same component used by the
           tracker modal and the corpus row-expanded panel. */}
@@ -259,6 +340,22 @@ const PopoverBody = ({
             : 'Delete from corpus'}
         </button>
       </div>
+
+      {/* Apply-behaviour footer link — only when a pref is set. Click
+          clears the pref so the next Apply prompts again. */}
+      {!isApplied && applyMovesToEnd !== null && (
+        <div className="mt-2 text-[11px] text-slate-500">
+          Apply behaviour: {applyMovesToEnd ? 'move to end' : 'keep in place'}
+          {' · '}
+          <button
+            type="button"
+            onClick={() => onSetApplyPref(null)}
+            className="text-brand-700 hover:underline"
+          >
+            change
+          </button>
+        </div>
+      )}
 
       {err && (
         <div className="mt-2 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
