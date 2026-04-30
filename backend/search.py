@@ -2588,7 +2588,13 @@ def main():
     save_results_merge(new_jobs)
 
     # Record the IDs that were new this run so send_email.py can pick them up.
-    (HERE / "new_ids.json").write_text(
+    # Path MUST be ROOT — that's where send_email.py:NEW_IDS_FILE reads from,
+    # and it matches the convention for every other persistent state file
+    # (results.json, seen_jobs.json, run_history.json, etc.). Writing to
+    # `HERE / new_ids.json` (which lives under backend/) silently dropped
+    # all post-Apr-24 daily digests on the floor — the scrape produced fresh
+    # IDs, but the email kept reading the stale ROOT file.
+    (ROOT / "new_ids.json").write_text(
         json.dumps([j["id"] for j in new_jobs], indent=2)
     )
 
