@@ -172,6 +172,12 @@ export const normalizeConfig = (raw: unknown): CrawlerConfig => {
     ? r.offtopic_title_patterns
     : undefined;
 
+  const feedbackMax =
+    typeof r.feedback_examples_max === 'number'
+    && Number.isFinite(r.feedback_examples_max)
+      ? Math.min(20, Math.max(0, Math.round(r.feedback_examples_max)))
+      : undefined;
+
   return {
     categories,
     location: typeof r.location === 'string' ? r.location : '',
@@ -186,6 +192,7 @@ export const normalizeConfig = (raw: unknown): CrawlerConfig => {
     fit_positive_patterns: fitPositive,
     fit_negative_patterns: fitNegative,
     offtopic_title_patterns: offtopic,
+    feedback_examples_max: feedbackMax,
   };
 };
 
@@ -218,6 +225,9 @@ export const serializeConfig = (cfg: CrawlerConfig): Record<string, unknown> => 
   }
   if (cfg.offtopic_title_patterns !== undefined) {
     out.offtopic_title_patterns = cfg.offtopic_title_patterns;
+  }
+  if (cfg.feedback_examples_max !== undefined) {
+    out.feedback_examples_max = cfg.feedback_examples_max;
   }
   return out;
 };

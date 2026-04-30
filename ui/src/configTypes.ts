@@ -28,6 +28,11 @@ export interface CrawlerConfig {
   geo_id: string;                     // "" | "101620260" | "103644278" | "92000000" | custom
   max_pages: number;                  // 1..20
   priority_companies: string[];       // lowercased on save; substring-in-company-name match
+  // How many of the user's most recent rated/applied/manual-add jobs the
+  // few-shot loop injects into Claude's scoring prompt as calibration
+  // examples. Backend clamps to [0, 20]; default 6. Larger = Claude has
+  // more of your taste, smaller = leaner prompt (faster + cheaper).
+  feedback_examples_max?: number;
 
   // --- legacy (one-time migrate via normalizeConfig) ---------------------
   // Kept optional so older config.json files load without a type error.
@@ -89,5 +94,6 @@ export const configsEqual = (a: CrawlerConfig, b: CrawlerConfig): boolean => {
   if (!eqOptStrArr(a.fit_positive_patterns, b.fit_positive_patterns)) return false;
   if (!eqOptStrArr(a.fit_negative_patterns, b.fit_negative_patterns)) return false;
   if (!eqOptStrArr(a.offtopic_title_patterns, b.offtopic_title_patterns)) return false;
+  if ((a.feedback_examples_max ?? null) !== (b.feedback_examples_max ?? null)) return false;
   return true;
 };

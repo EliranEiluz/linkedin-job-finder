@@ -529,6 +529,33 @@ export const ConfigPage = () => {
 
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  Few-shot examples in scoring prompt (0–20)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={20}
+                  value={draft.feedback_examples_max ?? 6}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    if (Number.isFinite(n)) {
+                      setDraft({
+                        ...draft,
+                        feedback_examples_max: Math.min(20, Math.max(0, n)),
+                      });
+                    }
+                  }}
+                  className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Recent rated / kanban-progressed / manual-add jobs that get
+                  shown to Claude as calibration evidence on every scoring
+                  call. Half positive, half negative, recency-sorted. Default 6.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
                   GeoId
                 </label>
                 <select

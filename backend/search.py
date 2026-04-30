@@ -279,8 +279,8 @@ DESC_CHAR_LIMIT = 3500        # per-job description truncation inside a batch
 # DESIGN_FEW_SHOT.md §2 for the rationale (Anthropic recommends 3-5,
 # over-prompting research caps at ~6, leaves room for stratified pos/neg).
 FEEDBACK_EXAMPLES_MAX_DEFAULT = 6
-FEEDBACK_EXAMPLE_CHAR_CAP = 250            # per-example max length
-FEEDBACK_COMMENT_CHAR_CAP = 120            # truncate user comments to this
+FEEDBACK_EXAMPLE_CHAR_CAP = 700            # per-example line max length
+FEEDBACK_COMMENT_CHAR_CAP = 500            # truncate user comments to this
 # app_status values that count as STRONG positive signal — the user moved a
 # card past one-click apply, real human-human exchange.
 FEEDBACK_POSITIVE_STATUSES = {"interview", "take-home", "screening", "offer"}
@@ -2680,12 +2680,18 @@ def main():
 
     # Write the polished HTML digest so the user can `open digest.html` after
     # a manual run. send_email.py will regenerate it (and optionally email)
-    # when invoked from run.sh on a schedule.
+    # when invoked from run.py on a schedule.
+    #
+    # Like every other persistent state file (results.json, seen_jobs.json,
+    # run_history.json), digest.html lives at the project ROOT — NOT under
+    # backend/. send_email.py reads ROOT/digest.html; writing it under HERE
+    # would silently de-sync the manual-run path from the scheduled-run path.
+    # Same convention as the HERE/ROOT block comment near search.py:805.
     try:
         from send_email import build_digest_html
         digest_jobs = [j for j in new_jobs if j.get("fit") != "skip"]
         html = build_digest_html(digest_jobs)
-        digest_path = HERE / "digest.html"
+        digest_path = ROOT / "digest.html"
         digest_path.write_text(html, encoding="utf-8")
         print(f"Digest written: file://{digest_path}  ({len(digest_jobs)} jobs)")
     except Exception as e:
