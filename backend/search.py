@@ -641,22 +641,30 @@ def _score_batch_via_cli(cv_text: str, batch: list[dict]) -> list | None:
     try:
         # Force Sonnet — Opus high can take 30+ min on a multi-job batch.
         # We don't need extended reasoning for a structured ranking call.
+        # Timeout at 240s — 8-job batches occasionally cross 180s when one
+        # job has a very long description or Claude's servers are slow.
         proc = subprocess.run(
             ["claude", "-p", prompt,
              "--output-format", "text",
              "--model", "claude-sonnet-4-5"],
-            capture_output=True, text=True, timeout=180,
+            capture_output=True, text=True, timeout=240,
         )
         if proc.returncode != 0:
-            print(f"    claude CLI rc={proc.returncode}: {proc.stderr.strip()[:200]}")
+            print(f"    claude CLI rc={proc.returncode}: {proc.stderr.strip()[:300]}")
             return None
         parsed = _parse_claude_json(proc.stdout)
         if isinstance(parsed, list):
             return parsed
-        print(f"    claude CLI returned non-array: {str(proc.stdout)[:150]}")
+        print(f"    claude CLI returned non-array: {str(proc.stdout)[:200]}")
         return None
     except Exception as e:
-        print(f"    claude CLI error: {str(e)[:150]}")
+        # Print the exception class + the TAIL of the message — TimeoutExpired
+        # / CalledProcessError both put the giant cmd argv at the START of
+        # str(e), so a head-truncated dump told us nothing about WHY. The
+        # actual "timed out after Ns" / "returned non-zero exit status N"
+        # lives at the end of the string.
+        msg = str(e)
+        print(f"    claude CLI error ({type(e).__name__}): …{msg[-300:]}")
         return None
 
 
