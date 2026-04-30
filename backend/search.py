@@ -1010,6 +1010,20 @@ def load_config() -> dict:
 _ACTIVE_CONFIG = load_config()
 
 
+def _category_name_for_id(cat_id: str) -> str:
+    """Resolve a category id to its human-readable name from the active
+    config. Returns the id itself if not found — caller should write that
+    on the corpus row regardless, so display falls back gracefully.
+    Each new corpus row stores this NAME at scrape time; that's what
+    keeps badges readable across later config rewrites (wizard overwrite,
+    AI-generated config paste, profile switch — none of those migrate
+    existing rows, so freezing the name on the row itself is the fix)."""
+    for c in _ACTIVE_CONFIG.get("categories", []) or []:
+        if c.get("id") == cat_id:
+            return c.get("name") or cat_id
+    return cat_id
+
+
 # ---------------------------------------------------------------------------
 # Cross-platform exclusive file lock so multiple scraper processes (e.g.
 # running --mode=guest and --mode=loggedin in parallel) never clobber each
@@ -1186,6 +1200,12 @@ def _parse_guest_cards(html: str, query: str, category: str) -> list[dict]:
             "url": f"https://www.linkedin.com/jobs/view/{job_id}/",
             "query": query,
             "category": category,
+            # Human-readable category name resolved at scrape time. Survives
+            # config rewrites (wizard overwrite / AI-generated config / profile
+            # switch) so old rows always display correctly even when their
+            # `category` id is no longer in the active config. Source of truth
+            # for the badge label; the id is retained for back-compat.
+            "category_name": _category_name_for_id(category),
             "found_at": datetime.now().isoformat(),
             "date_posted": date_posted,  # extra field; UI ignores if absent
             "priority": any(p in company.lower() for p in PRIORITY_COMPANIES),
@@ -1758,6 +1778,10 @@ def _extract_jobs_from_cards(cards, query, category, banner_present=False,
                 "url": f"https://www.linkedin.com/jobs/view/{job_id}/",
                 "query": query,
                 "category": category,
+                # See note in scrape_query_guest's job dict — category_name
+                # is the stable human label, written at scrape time so it
+                # survives any later config rewrites.
+                "category_name": _category_name_for_id(category),
                 "found_at": datetime.now().isoformat(),
                 "priority": any(p in company.lower() for p in PRIORITY_COMPANIES),
                 "msc_required": None,

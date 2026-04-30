@@ -298,6 +298,30 @@ export const CorpusPage = () => {
     };
   }, []);
 
+  // Merge category_name values stored on corpus rows into the lookup map.
+  // This is what makes orphan ids (categories that were renamed/replaced
+  // by a later config rewrite) keep displaying their ORIGINAL name on
+  // existing rows. New scrapes write category_name at scrape time; old
+  // rows backfilled by `tools/backfill_category_name.py`.
+  useEffect(() => {
+    if (allJobs.length === 0) return;
+    let changed = false;
+    const m = new Map(categoryNamesById);
+    for (const j of allJobs) {
+      const id = j.category;
+      const name = j.category_name;
+      if (id && name && !m.has(id)) {
+        m.set(id, name);
+        changed = true;
+      }
+    }
+    if (changed) setCategoryNamesById(m);
+    // Intentionally NOT depending on categoryNamesById to avoid a loop —
+    // we only want this to react to allJobs changes. The map merge is
+    // additive so it's safe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allJobs]);
+
   // Listen for ScrapeRunPanel's "scrape finished" signal and re-fetch.
   useEffect(() => {
     const onStale = () => {

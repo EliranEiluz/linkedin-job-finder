@@ -52,6 +52,13 @@ export interface Job {
   url: string;
   query: string;
   category: Category;
+  // Human-readable name resolved at scrape time. Stored ON the row (not
+  // looked up from the live config) so it survives config rewrites — when
+  // the wizard / AI-generated config / profile switch replaces category
+  // ids wholesale, old rows still render with their original name. Empty
+  // / undefined on legacy rows; UI falls back to the categoryNamesById
+  // lookup, then to a deburred id.
+  category_name?: string | null;
   found_at: string;
   priority: boolean;
   msc_required: boolean | null;

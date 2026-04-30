@@ -519,6 +519,7 @@ def cmd_add_manual(_args) -> None:
         "url": f"https://www.linkedin.com/jobs/view/{job_id}/",
         "query": "",
         "category": "manual",
+        "category_name": "Manual",
         "found_at": now_iso,
         "priority": False,
         "msc_required": None,
