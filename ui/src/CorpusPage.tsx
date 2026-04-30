@@ -488,6 +488,35 @@ export const CorpusPage = () => {
     setState(await fetchJobs());
   }, []);
 
+  // Wraps useCorpusActions().rateJob with an optimistic local state patch.
+  // We deliberately do NOT fire corpus-stale on a rate save (that would
+  // wipe an in-progress comment edit elsewhere — see commit d87be0a). But
+  // the row's `rating` / `comment` props still need to reflect the save
+  // when the popover closes and re-opens; otherwise the editor remounts
+  // reading stale props until the user hard-refreshes.
+  // Fix: mutate the matching row in the in-memory corpus on save success.
+  // No reload, no remount disruption, fresh props on next open.
+  const wrappedRateJob = useCallback(
+    async (id: string, rating: number | null, comment?: string | null) => {
+      const result = await rateJob(id, rating, comment);
+      if (result.ok) {
+        setState((prev) => {
+          if (prev.kind !== 'ok') return prev;
+          const nowIso = new Date().toISOString();
+          const nextJobs = prev.jobs.map((j) => {
+            if (j.id !== id) return j;
+            const updated: Job = { ...j, rating, rated_at: nowIso };
+            if (comment !== undefined) updated.comment = comment;
+            return updated;
+          });
+          return { ...prev, jobs: nextJobs };
+        });
+      }
+      return result;
+    },
+    [rateJob],
+  );
+
   useEffect(() => {
     void reload();
   }, [reload]);
@@ -732,7 +761,7 @@ export const CorpusPage = () => {
                 }
               }}
               rescoreBusy={rescoreBusy}
-              onRate={rateJob}
+              onRate={wrappedRateJob}
               onDelete={deleteOne}
               categoryNamesById={categoryNamesById}
               cursorRowId={cursorRowId}
