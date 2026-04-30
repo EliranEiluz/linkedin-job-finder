@@ -170,6 +170,15 @@ interface Props {
   // the bottom. Pill, filter and dimmed treatment still light up. CorpusPage
   // owns this state and clears it on stale-event reload.
   keepInPlaceIds?: Set<string>;
+  // "Pushed to the end without applying" — additional sort-pin source.
+  // Independent of `applied`: a row in this set sinks even if not applied,
+  // and a row outside this set follows the natural applied-pinned sort.
+  // Ephemeral (lives in CorpusPage state, not server-side).
+  pushedToEndIds?: Set<string>;
+  // Per-row push-to-end action; surfaced in JobActionsPopover.
+  onPushToEnd?: (id: string) => void;
+  // Bulk push-to-end action; surfaced in BulkActionBar.
+  onPushManyToEnd?: (ids: string[]) => void;
   onToggleApplied: (id: string) => void;
   // Bulk-set applied state on a list of ids. Wired from CorpusPage; powers
   // the "Apply selected" / "Mark unapplied" buttons in the bulk bar.
@@ -235,7 +244,8 @@ const MOBILE_SORT_OPTIONS = [
 ] as const;
 
 export const JobsTable = ({
-  data, applied, keepInPlaceIds, onSetAppliedMany,
+  data, applied, keepInPlaceIds, pushedToEndIds,
+  onPushToEnd, onPushManyToEnd, onSetAppliedMany,
   onApply, onUnapply, applyMovesToEnd = null, onSetApplyPref,
   onRate, onDelete, hasNonDefaultFilter = false, onDeleteAllFiltered,
   onRescoreMany, rescoreBusy = false,
@@ -358,7 +368,12 @@ export const JobsTable = ({
       // "Applied" pill when applied. Header checkbox = select-all-visible.
       // Sort id stays 'applied' so setSortingPinned still finds it.
       columnHelper.accessor(
-        (r) => (applied.has(r.id) && !(keepInPlaceIds?.has(r.id) ?? false) ? 1 : 0),
+        (r) => {
+          const sinkByApply =
+            applied.has(r.id) && !(keepInPlaceIds?.has(r.id) ?? false);
+          const sinkByPush = pushedToEndIds?.has(r.id) ?? false;
+          return sinkByApply || sinkByPush ? 1 : 0;
+        },
         {
           id: 'applied',
           // Header is an indeterminate checkbox that selects/deselects every
@@ -619,6 +634,7 @@ export const JobsTable = ({
     ],
     [
       confirmDeleteId, handleInlineDelete, onDelete, applied, keepInPlaceIds,
+      pushedToEndIds,
       selectedIds, toggleSelected, categoryNamesById,
     ],
   );
@@ -798,6 +814,13 @@ export const JobsTable = ({
               void onRescoreMany(ids);
             }}
             rescoreBusy={rescoreBusy}
+            onPushToEndSelected={() => {
+              if (!onPushManyToEnd) return;
+              const ids = [...selectedIds];
+              if (ids.length === 0) return;
+              onPushManyToEnd(ids);
+              setSelectedIds(new Set());
+            }}
           />
         )}
 
@@ -1248,6 +1271,7 @@ export const JobsTable = ({
             isApplied={applied.has(job.id)}
             onApply={onApply}
             onUnapply={onUnapply}
+            onPushToEnd={onPushToEnd}
             applyMovesToEnd={applyMovesToEnd}
             onSetApplyPref={onSetApplyPref}
             onRate={onRate}

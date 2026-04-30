@@ -195,6 +195,42 @@ export const CorpusPage = () => {
   // scrape repopulates the corpus.
   const [keepInPlaceIds, setKeepInPlaceIds] = useState<Set<string>>(new Set());
 
+  // Per-row "push to end without applying" override. Independent of the
+  // applied state — lets the user demote a job they're not ready to act
+  // on yet. The sort accessor in JobsTable ORs this with the applied-pin
+  // logic so a row sinks if it's applied (default) OR explicitly pushed.
+  // Ephemeral, like keepInPlaceIds. Cleared by the unapply-mark-as-new
+  // path so demoting a row is reversible.
+  const [pushedToEndIds, setPushedToEndIds] = useState<Set<string>>(new Set());
+  const pushToEnd = useCallback((id: string) => {
+    setPushedToEndIds((s) => {
+      if (s.has(id)) return s;
+      const next = new Set(s);
+      next.add(id);
+      return next;
+    });
+    // Also clear from keepInPlaceIds so the two overrides don't fight —
+    // explicit "push to end" wins over a previous "keep in place".
+    setKeepInPlaceIds((s) => {
+      if (!s.has(id)) return s;
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+  const pushManyToEnd = useCallback((ids: string[]) => {
+    setPushedToEndIds((s) => {
+      const next = new Set(s);
+      for (const id of ids) next.add(id);
+      return next;
+    });
+    setKeepInPlaceIds((s) => {
+      const next = new Set(s);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+  }, []);
+
   // Global "should Apply move the row to the end?" preference. Persists in
   // localStorage so the choice survives reloads. `null` (= no key set) means
   // "the user has not made an explicit choice yet" — the popover shows two
@@ -595,6 +631,9 @@ export const CorpusPage = () => {
               data={filtered}
               applied={applied}
               keepInPlaceIds={keepInPlaceIds}
+              pushedToEndIds={pushedToEndIds}
+              onPushToEnd={pushToEnd}
+              onPushManyToEnd={pushManyToEnd}
               onToggleApplied={toggleApplied}
               onSetAppliedMany={setAppliedMany}
               onApply={applyOne}

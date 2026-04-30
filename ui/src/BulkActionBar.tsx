@@ -21,6 +21,9 @@ interface Props {
   // and any other selection-mutating action so the user can't double-fire
   // a long-running call.
   rescoreBusy?: boolean;
+  // Push every selected row to the end of the corpus sort WITHOUT marking
+  // them applied. Local-only override; clears on full page reload.
+  onPushToEndSelected: () => void;
   onDeleteAllFiltered: () => void;
 }
 
@@ -41,7 +44,7 @@ export const BulkActionBar = ({
   selectedCount, filteredCount, hasFilter, allSelectedApplied,
   onClear, onDeleteSelected, onApplySelected, onMarkUnappliedSelected,
   onRescoreSelected, rescoreBusy = false,
-  onDeleteAllFiltered,
+  onPushToEndSelected, onDeleteAllFiltered,
 }: Props) => {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const confirmTimerRef = useRef<number | null>(null);
@@ -121,6 +124,14 @@ export const BulkActionBar = ({
             title={`Mark ${selectedCount} selected as applied`}
           >
             Apply selected
+          </button>
+          <button
+            type="button"
+            onClick={onPushToEndSelected}
+            className="inline-flex min-h-[28px] items-center rounded border border-slate-300 bg-white px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            title={`Push ${selectedCount} selected to the bottom of the sort without marking them applied`}
+          >
+            ↓ Move to end
           </button>
           {allSelectedApplied && (
             <button

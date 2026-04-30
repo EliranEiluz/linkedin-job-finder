@@ -11,6 +11,10 @@ interface Props {
   // path takes a `moveToEnd` choice — see "Apply behaviour" below.
   onApply: (id: string, moveToEnd: boolean) => void;
   onUnapply: (id: string) => void;
+  // Push this row to the end of the sort WITHOUT marking it applied.
+  // For "I don't want to deal with this now" — distinct from Apply.
+  // Local-only override; clears on full page reload.
+  onPushToEnd?: (id: string) => void;
   // Global preference for whether Apply moves the row to the end of the
   // corpus. `null` = unset (user has not made an explicit choice yet — we
   // show both buttons every time + a "Remember" checkbox). `true|false` =
@@ -46,7 +50,7 @@ interface Props {
  * expanded-row panel. All three write to the same results.json fields.
  */
 export const JobActionsPopover = ({
-  job, isApplied, onApply, onUnapply, applyMovesToEnd, onSetApplyPref,
+  job, isApplied, onApply, onUnapply, onPushToEnd, applyMovesToEnd, onSetApplyPref,
   onRate, onDelete, anchorRef, onClose,
 }: Props) => {
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -161,6 +165,7 @@ export const JobActionsPopover = ({
             isApplied={isApplied}
             onApply={handleApply}
             onUnapply={onUnapply}
+            onPushToEnd={onPushToEnd}
             applyMovesToEnd={applyMovesToEnd}
             onSetApplyPref={onSetApplyPref}
             remember={remember}
@@ -215,7 +220,7 @@ export const JobActionsPopover = ({
 // sheet render the exact same content — same Apply buttons, rating editor,
 // and delete button. Only the wrapper (positioning + backdrop) differs.
 const PopoverBody = ({
-  job, isApplied, onApply, onUnapply, applyMovesToEnd, onSetApplyPref,
+  job, isApplied, onApply, onUnapply, onPushToEnd, applyMovesToEnd, onSetApplyPref,
   remember, setRemember, onRate, onClose,
   confirmDelete, deleting, err, handleDelete,
 }: {
@@ -223,6 +228,7 @@ const PopoverBody = ({
   isApplied: boolean;
   onApply: (moveToEnd: boolean) => void;
   onUnapply: (id: string) => void;
+  onPushToEnd?: (id: string) => void;
   applyMovesToEnd: boolean | null;
   onSetApplyPref: (v: boolean | null) => void;
   remember: boolean;
@@ -301,6 +307,21 @@ const PopoverBody = ({
             className="inline-flex w-full items-center justify-center rounded border border-emerald-600 bg-emerald-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
           >
             {applyMovesToEnd ? 'Apply and move to end' : 'Apply but keep in place'}
+          </button>
+        )}
+        {/* "Move to end without applying" — for rows the user wants to
+            demote from view but isn't ready to mark applied. Local-only;
+            survives until full-page reload. Only renders when not yet
+            applied (an applied row's sort already handled by Apply
+            choice). */}
+        {!isApplied && onPushToEnd && (
+          <button
+            type="button"
+            onClick={() => { onPushToEnd(job.id); onClose(); }}
+            className="mt-1 self-start text-[11px] font-medium text-slate-500 hover:text-brand-700"
+            title="Sort this row to the bottom without marking it applied"
+          >
+            ↓ Move to end without applying
           </button>
         )}
       </div>
