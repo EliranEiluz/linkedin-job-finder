@@ -204,6 +204,11 @@ interface Props {
   // Click handler for the "Delete all N filtered" right-side button. Wired
   // from CorpusPage as `() => deleteJobs(filtered.map(j => j.id))`.
   onDeleteAllFiltered?: () => void;
+  // Bulk re-score: runs the scoring pipeline (description re-fetch + Claude)
+  // on the given ids. Slow — `rescoreBusy` is set while the request is in
+  // flight so the bar disables the button + shows a spinner.
+  onRescoreMany?: (ids: string[]) => Promise<void>;
+  rescoreBusy?: boolean;
   // category-id → human-readable name from /api/config. When provided, the
   // Category column renders the name ("Security") instead of the de-snaked
   // id ("Cat Mobyb81c 5").
@@ -233,6 +238,7 @@ export const JobsTable = ({
   data, applied, keepInPlaceIds, onSetAppliedMany,
   onApply, onUnapply, applyMovesToEnd = null, onSetApplyPref,
   onRate, onDelete, hasNonDefaultFilter = false, onDeleteAllFiltered,
+  onRescoreMany, rescoreBusy = false,
   categoryNamesById, emptyState, cursorRowId,
 }: Props) => {
   const { isMobile } = useViewport();
@@ -782,6 +788,16 @@ export const JobsTable = ({
               setSelectedIds(new Set());
               onDeleteAllFiltered();
             }}
+            onRescoreSelected={() => {
+              if (!onRescoreMany) return;
+              const ids = [...selectedIds];
+              if (ids.length === 0) return;
+              // Don't clear selection — user may want to act on the same
+              // rows after the rescore completes (e.g. delete the still-
+              // bad ones). Selection is harmless across the await.
+              void onRescoreMany(ids);
+            }}
+            rescoreBusy={rescoreBusy}
           />
         )}
 

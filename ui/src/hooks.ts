@@ -83,7 +83,39 @@ export const useCorpusActions = () => {
     [],
   );
 
-  return { deleteJobs, rateJob };
+  // Re-run the scoring pipeline on a list of existing corpus ids. Used by
+  // the Corpus tab's bulk action bar. Server-side this re-fetches each
+  // job's description and re-runs Claude scoring (falling back to regex
+  // on Claude errors). Slow — caller should show a progress indicator.
+  const rescoreJobs = useCallback(
+    async (ids: string[]): Promise<CorpusActionsResult & { rescored?: number; failed?: number; missing?: string[] }> => {
+      if (ids.length === 0) return { ok: true, rescored: 0 };
+      try {
+        const res = await fetch('/api/corpus/rescore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        });
+        const body = (await res.json()) as {
+          ok?: boolean; error?: string;
+          rescored?: number; failed?: number; missing?: string[];
+        };
+        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        fireStale();
+        return {
+          ok: true,
+          rescored: body.rescored,
+          failed: body.failed,
+          missing: body.missing,
+        };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    },
+    [fireStale],
+  );
+
+  return { deleteJobs, rateJob, rescoreJobs };
 };
 
 /** Application-tracker mutation hook. Wraps `/api/corpus/app-status` and

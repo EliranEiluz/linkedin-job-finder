@@ -166,7 +166,10 @@ export const CorpusPage = () => {
   );
   const searchRef = useRef<HTMLInputElement | null>(null);
   const { setAppStatus } = useAppStatus();
-  const { rateJob, deleteJobs } = useCorpusActions();
+  const { rateJob, deleteJobs, rescoreJobs } = useCorpusActions();
+  // True while a bulk rescore POST is in flight. Used to disable the
+  // "Re-score" button + show a spinner so the user can't double-fire.
+  const [rescoreBusy, setRescoreBusy] = useState(false);
 
   // Source of truth for "applied" is now the server (`job.app_status`),
   // unifying state with the Tracker tab. localStorage was a per-browser
@@ -600,6 +603,23 @@ export const CorpusPage = () => {
               onSetApplyPref={setApplyMovesToEnd}
               hasNonDefaultFilter={!isDefault(filters)}
               onDeleteAllFiltered={() => deleteJobs(filtered.map((j) => j.id))}
+              onRescoreMany={async (ids) => {
+                setRescoreBusy(true);
+                try {
+                  const r = await rescoreJobs(ids);
+                  if (!r.ok) {
+                    window.alert(`Re-score failed: ${r.error}`);
+                  } else if (r.failed && r.failed > 0) {
+                    window.alert(
+                      `Re-scored ${r.rescored ?? 0} of ${ids.length}. ` +
+                      `${r.failed} failed (likely Claude timeout — try again or check run.log).`,
+                    );
+                  }
+                } finally {
+                  setRescoreBusy(false);
+                }
+              }}
+              rescoreBusy={rescoreBusy}
               onRate={rateJob}
               onDelete={deleteOne}
               categoryNamesById={categoryNamesById}

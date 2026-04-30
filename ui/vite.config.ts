@@ -1342,6 +1342,60 @@ const configApiPlugin = (): Plugin => ({
           return sendJson(res, 400, parsed);
         }
 
+        // ---- corpus rescore (POST) ---------------------------------------
+        // Re-run scoring on a list of existing corpus job ids. Used by the
+        // Corpus tab's bulk "Re-score" button. Each id walks the same per-
+        // job pipeline a scraped row does (description fetch + Claude scoring
+        // with regex fallback). Timeout is generous since N can be 20-30
+        // and each Claude call is ~30s in the worst case.
+        if (url.startsWith('/api/corpus/rescore') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          let body: { ids?: unknown };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+          if (!Array.isArray(body.ids) || body.ids.length === 0) {
+            return sendJson(res, 400, {
+              ok: false, error: 'ids must be a non-empty array',
+            });
+          }
+          if (body.ids.length > 100) {
+            return sendJson(res, 400, {
+              ok: false, error: 'rescore is capped at 100 ids per request',
+            });
+          }
+          const args = ['rescore'];
+          // 10-minute ceiling — 100 jobs × ~6s typical = 10min worst case.
+          const result = await runCorpusCtl(
+            args,
+            JSON.stringify({ ids: body.ids }),
+            10 * 60 * 1000,
+          );
+          if (result.spawnError) {
+            return sendJson(res, 500, {
+              ok: false, error: `spawn error: ${result.spawnError}`, args,
+            });
+          }
+          if (result.timedOut) {
+            return sendJson(res, 504, {
+              ok: false,
+              error: 'rescore timed out — too many ids or Claude is slow',
+              stderr: result.stderr.trim().slice(0, 500),
+            });
+          }
+          let parsed: { ok?: boolean; error?: string } & Record<string, unknown>;
+          try { parsed = JSON.parse(result.stdout); }
+          catch {
+            return sendJson(res, 500, {
+              ok: false,
+              error: 'corpus_ctl emitted non-JSON stdout',
+              raw_stdout: result.stdout.trim().slice(0, 500),
+              raw_stderr: result.stderr.trim().slice(0, 500),
+              exit_code: result.exitCode,
+            });
+          }
+          return sendJson(res, parsed.ok ? 200 : 400, parsed);
+        }
+
         // ---- cv save (used by the onboarding flow instead of the old
         //      combined /api/onboarding/save, which clobbers the config
         //      symlink). Tiny endpoint: just writes cv.txt atomically. ------

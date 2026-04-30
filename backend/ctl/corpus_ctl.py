@@ -642,6 +642,92 @@ def cmd_add_manual(_args) -> None:
     }, 0)
 
 
+def cmd_rescore(_args) -> None:
+    """Re-run the scoring pipeline on a list of existing corpus jobs.
+
+    Used by the Corpus tab's bulk "Re-score" button — when the user wants
+    to give Claude another shot at a row that fell back to regex (e.g.
+    after a Claude CLI timeout, rate-limit, or after the user updated the
+    scoring prompt or their CV).
+
+    Stdin:  {"ids": ["<job_id>", ...]}
+    Stdout: {"ok": true, "rescored": <int>, "failed": <int>, "missing": [...]}
+
+    For each id, re-fetches the description (LinkedIn detail endpoint),
+    runs Claude single-item scoring, falls back to regex on Claude error,
+    and atomic-merges the updated row back into results.json. The row's
+    other fields (rating, comment, app_status, etc.) are preserved —
+    process_one_job mutates the existing dict in place.
+    """
+    try:
+        body = _read_stdin_json()
+    except json.JSONDecodeError as e:
+        _emit({"ok": False, "error": f"invalid JSON on stdin: {e}"}, 1)
+
+    ids = body.get("ids") if isinstance(body, dict) else None
+    if not isinstance(ids, list) or not ids:
+        _emit({"ok": False, "error": "ids must be a non-empty array"}, 1)
+    ids = [str(i) for i in ids]
+
+    try:
+        existing = search.load_results()
+    except Exception as e:
+        _emit({"ok": False, "error": f"failed to read results.json: {e}"}, 1)
+
+    by_id = {r.get("id"): r for r in existing if isinstance(r, dict)}
+    targets = []
+    missing = []
+    for jid in ids:
+        row = by_id.get(jid)
+        if row is None:
+            missing.append(jid)
+        else:
+            targets.append(row)
+
+    if not targets:
+        _emit({
+            "ok": True, "rescored": 0, "failed": 0, "missing": missing,
+        }, 0)
+
+    # Reuse the guest-mode session + fetch helper. process_one_job will
+    # call this once per target. No browser, no LinkedIn auth needed.
+    session = search._guest_session()
+
+    def _fetch_one(job):
+        return search.fetch_description_guest(session, job["id"])
+
+    cv_text = search._load_cv_text()
+
+    rescored = 0
+    failed = 0
+    for job in targets:
+        # Reset score-derived fields so process_one_job starts fresh.
+        # Without this, an existing 'good'/'skip' fit would short-circuit
+        # nothing — the helper writes new values either way — but clearing
+        # makes the intent explicit and lets the regex fallback see a
+        # clean slate too.
+        for k in ("fit", "score", "fit_reasons", "scored_by", "msc_required"):
+            job[k] = None if k != "fit_reasons" else []
+        try:
+            search.process_one_job(
+                job,
+                cv_text=cv_text,
+                fetch_one=_fetch_one,
+                persist=True,
+                already_scored=False,
+            )
+            rescored += 1
+        except Exception:
+            failed += 1
+
+    _emit({
+        "ok": True,
+        "rescored": rescored,
+        "failed": failed,
+        "missing": missing,
+    }, 0)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -650,6 +736,7 @@ def main():
     sub.add_parser("app-status").set_defaults(func=cmd_app_status)
     sub.add_parser("applied-import").set_defaults(func=cmd_applied_import)
     sub.add_parser("add-manual").set_defaults(func=cmd_add_manual)
+    sub.add_parser("rescore").set_defaults(func=cmd_rescore)
     args = p.parse_args()
     try:
         args.func(args)

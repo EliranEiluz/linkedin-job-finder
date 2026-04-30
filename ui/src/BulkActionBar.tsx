@@ -16,6 +16,11 @@ interface Props {
   onDeleteSelected: () => void;
   onApplySelected: () => void;
   onMarkUnappliedSelected: () => void;
+  onRescoreSelected: () => void;
+  // True while the rescore POST is in flight; disables the Re-score button
+  // and any other selection-mutating action so the user can't double-fire
+  // a long-running call.
+  rescoreBusy?: boolean;
   onDeleteAllFiltered: () => void;
 }
 
@@ -35,6 +40,7 @@ interface Props {
 export const BulkActionBar = ({
   selectedCount, filteredCount, hasFilter, allSelectedApplied,
   onClear, onDeleteSelected, onApplySelected, onMarkUnappliedSelected,
+  onRescoreSelected, rescoreBusy = false,
   onDeleteAllFiltered,
 }: Props) => {
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -126,6 +132,26 @@ export const BulkActionBar = ({
               Mark unapplied
             </button>
           )}
+          <button
+            type="button"
+            onClick={onRescoreSelected}
+            disabled={rescoreBusy}
+            className="inline-flex min-h-[28px] items-center gap-1 rounded border border-brand-300 bg-white px-2 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60"
+            title={
+              rescoreBusy
+                ? 'Re-scoring in progress…'
+                : `Re-fetch each description and re-run Claude scoring on ${selectedCount} selected`
+            }
+          >
+            {rescoreBusy ? (
+              <>
+                <span aria-hidden="true" className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-brand-300 border-t-brand-700" />
+                Re-scoring…
+              </>
+            ) : (
+              <>↻ Re-score selected</>
+            )}
+          </button>
         </>
       ) : (
         // Selection-empty state still renders the bar IFF a filter is active.
