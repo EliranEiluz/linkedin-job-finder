@@ -177,6 +177,8 @@ interface Props {
   pushedToEndIds?: Set<string>;
   // Per-row push-to-end action; surfaced in JobActionsPopover.
   onPushToEnd?: (id: string) => void;
+  // Inverse of onPushToEnd — clears the pushed_to_end flag.
+  onRestoreFromEnd?: (id: string) => void;
   // Bulk push-to-end action; surfaced in BulkActionBar.
   onPushManyToEnd?: (ids: string[]) => void;
   onToggleApplied: (id: string) => void;
@@ -245,7 +247,7 @@ const MOBILE_SORT_OPTIONS = [
 
 export const JobsTable = ({
   data, applied, keepInPlaceIds, pushedToEndIds,
-  onPushToEnd, onPushManyToEnd, onSetAppliedMany,
+  onPushToEnd, onRestoreFromEnd, onPushManyToEnd, onSetAppliedMany,
   onApply, onUnapply, applyMovesToEnd = null, onSetApplyPref,
   onRate, onDelete, hasNonDefaultFilter = false, onDeleteAllFiltered,
   onRescoreMany, rescoreBusy = false,
@@ -1272,6 +1274,8 @@ export const JobsTable = ({
             onApply={onApply}
             onUnapply={onUnapply}
             onPushToEnd={onPushToEnd}
+            onRestoreFromEnd={onRestoreFromEnd}
+            isPushedToEnd={pushedToEndIds?.has(job.id) ?? false}
             applyMovesToEnd={applyMovesToEnd}
             onSetApplyPref={onSetApplyPref}
             onRate={onRate}

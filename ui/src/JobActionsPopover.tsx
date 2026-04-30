@@ -13,8 +13,15 @@ interface Props {
   onUnapply: (id: string) => void;
   // Push this row to the end of the sort WITHOUT marking it applied.
   // For "I don't want to deal with this now" — distinct from Apply.
-  // Local-only override; clears on full page reload.
+  // Persisted server-side as `pushed_to_end: true` on the row.
   onPushToEnd?: (id: string) => void;
+  // Inverse of onPushToEnd — clears the pushed_to_end flag so the row
+  // returns to its natural sort position. Shown only when the row IS
+  // currently pushed.
+  onRestoreFromEnd?: (id: string) => void;
+  // Whether this row is currently flagged pushed_to_end (server-side or
+  // optimistic). Drives which action the popover renders.
+  isPushedToEnd?: boolean;
   // Global preference for whether Apply moves the row to the end of the
   // corpus. `null` = unset (user has not made an explicit choice yet — we
   // show both buttons every time + a "Remember" checkbox). `true|false` =
@@ -50,7 +57,8 @@ interface Props {
  * expanded-row panel. All three write to the same results.json fields.
  */
 export const JobActionsPopover = ({
-  job, isApplied, onApply, onUnapply, onPushToEnd, applyMovesToEnd, onSetApplyPref,
+  job, isApplied, onApply, onUnapply, onPushToEnd, onRestoreFromEnd,
+  isPushedToEnd = false, applyMovesToEnd, onSetApplyPref,
   onRate, onDelete, anchorRef, onClose,
 }: Props) => {
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -166,6 +174,8 @@ export const JobActionsPopover = ({
             onApply={handleApply}
             onUnapply={onUnapply}
             onPushToEnd={onPushToEnd}
+            onRestoreFromEnd={onRestoreFromEnd}
+            isPushedToEnd={isPushedToEnd}
             applyMovesToEnd={applyMovesToEnd}
             onSetApplyPref={onSetApplyPref}
             remember={remember}
@@ -201,6 +211,9 @@ export const JobActionsPopover = ({
         isApplied={isApplied}
         onApply={handleApply}
         onUnapply={onUnapply}
+        onPushToEnd={onPushToEnd}
+        onRestoreFromEnd={onRestoreFromEnd}
+        isPushedToEnd={isPushedToEnd}
         applyMovesToEnd={applyMovesToEnd}
         onSetApplyPref={onSetApplyPref}
         remember={remember}
@@ -220,7 +233,8 @@ export const JobActionsPopover = ({
 // sheet render the exact same content — same Apply buttons, rating editor,
 // and delete button. Only the wrapper (positioning + backdrop) differs.
 const PopoverBody = ({
-  job, isApplied, onApply, onUnapply, onPushToEnd, applyMovesToEnd, onSetApplyPref,
+  job, isApplied, onApply, onUnapply, onPushToEnd, onRestoreFromEnd,
+  isPushedToEnd, applyMovesToEnd, onSetApplyPref,
   remember, setRemember, onRate, onClose,
   confirmDelete, deleting, err, handleDelete,
 }: {
@@ -229,6 +243,8 @@ const PopoverBody = ({
   onApply: (moveToEnd: boolean) => void;
   onUnapply: (id: string) => void;
   onPushToEnd?: (id: string) => void;
+  onRestoreFromEnd?: (id: string) => void;
+  isPushedToEnd: boolean;
   applyMovesToEnd: boolean | null;
   onSetApplyPref: (v: boolean | null) => void;
   remember: boolean;
@@ -309,20 +325,31 @@ const PopoverBody = ({
             {applyMovesToEnd ? 'Apply and move to end' : 'Apply but keep in place'}
           </button>
         )}
-        {/* "Move to end without applying" — for rows the user wants to
-            demote from view but isn't ready to mark applied. Local-only;
-            survives until full-page reload. Only renders when not yet
-            applied (an applied row's sort already handled by Apply
-            choice). */}
-        {!isApplied && onPushToEnd && (
+        {/* "Move to end" toggle. Persisted server-side as
+            `pushed_to_end` on the row, so the demote survives reloads
+            and syncs across devices. Visible regardless of applied
+            state — even an applied-keep-in-place row can be demoted.
+            Label flips based on current state. */}
+        {isPushedToEnd && onRestoreFromEnd ? (
           <button
             type="button"
-            onClick={() => { onPushToEnd(job.id); onClose(); }}
+            onClick={() => { onRestoreFromEnd(job.id); onClose(); }}
             className="mt-1 self-start text-[11px] font-medium text-slate-500 hover:text-brand-700"
-            title="Sort this row to the bottom without marking it applied"
+            title="Return this row to its natural sort position"
           >
-            ↓ Move to end without applying
+            ↑ Restore to natural sort
           </button>
+        ) : (
+          onPushToEnd && (
+            <button
+              type="button"
+              onClick={() => { onPushToEnd(job.id); onClose(); }}
+              className="mt-1 self-start text-[11px] font-medium text-slate-500 hover:text-brand-700"
+              title="Sort this row to the bottom — doesn't change apply status"
+            >
+              ↓ Move to end
+            </button>
+          )
         )}
       </div>
 

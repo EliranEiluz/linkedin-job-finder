@@ -1342,6 +1342,53 @@ const configApiPlugin = (): Plugin => ({
           return sendJson(res, 400, parsed);
         }
 
+        // ---- corpus push-to-end (POST) -----------------------------------
+        // Set / clear `pushed_to_end` on a list of corpus rows. Used by
+        // the Corpus tab's per-row + bulk "Move to end" action — promoted
+        // from local-only state to a persisted field so the demote
+        // survives reloads and syncs across devices.
+        if (url.startsWith('/api/corpus/push-to-end') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          let body: { ids?: unknown; pushed?: unknown };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+          if (!Array.isArray(body.ids) || body.ids.length === 0) {
+            return sendJson(res, 400, {
+              ok: false, error: 'ids must be a non-empty array',
+            });
+          }
+          if (typeof body.pushed !== 'boolean') {
+            return sendJson(res, 400, {
+              ok: false, error: 'pushed must be a boolean',
+            });
+          }
+          const args = ['push-to-end'];
+          const result = await runCorpusCtl(
+            args, JSON.stringify({ ids: body.ids, pushed: body.pushed }),
+          );
+          if (result.spawnError) {
+            return sendJson(res, 500, {
+              ok: false, error: `spawn error: ${result.spawnError}`, args,
+            });
+          }
+          if (result.timedOut) {
+            return sendJson(res, 504, {
+              ok: false, error: 'push-to-end timed out',
+            });
+          }
+          let parsed: { ok?: boolean; error?: string } & Record<string, unknown>;
+          try { parsed = JSON.parse(result.stdout); }
+          catch {
+            return sendJson(res, 500, {
+              ok: false, error: 'corpus_ctl emitted non-JSON stdout',
+              raw_stdout: result.stdout.trim().slice(0, 500),
+              raw_stderr: result.stderr.trim().slice(0, 500),
+              exit_code: result.exitCode,
+            });
+          }
+          return sendJson(res, parsed.ok ? 200 : 400, parsed);
+        }
+
         // ---- corpus rescore (POST) ---------------------------------------
         // Re-run scoring on a list of existing corpus job ids. Used by the
         // Corpus tab's bulk "Re-score" button. Each id walks the same per-

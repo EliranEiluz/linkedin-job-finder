@@ -115,7 +115,31 @@ export const useCorpusActions = () => {
     [fireStale],
   );
 
-  return { deleteJobs, rateJob, rescoreJobs };
+  // Set / clear the `pushed_to_end` flag on a list of corpus rows. Used
+  // by the Corpus tab's per-row + bulk "Move to end" action — promoted to
+  // a real persisted field so the demote survives reloads and syncs across
+  // devices.
+  const pushToEndJobs = useCallback(
+    async (ids: string[], pushed: boolean): Promise<CorpusActionsResult> => {
+      if (ids.length === 0) return { ok: true };
+      try {
+        const res = await fetch('/api/corpus/push-to-end', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids, pushed }),
+        });
+        const body = (await res.json()) as { ok?: boolean; error?: string };
+        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        fireStale();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    },
+    [fireStale],
+  );
+
+  return { deleteJobs, rateJob, rescoreJobs, pushToEndJobs };
 };
 
 /** Application-tracker mutation hook. Wraps `/api/corpus/app-status` and

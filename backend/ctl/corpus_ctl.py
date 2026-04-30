@@ -642,6 +642,66 @@ def cmd_add_manual(_args) -> None:
     }, 0)
 
 
+def cmd_push_to_end(_args) -> None:
+    """Set / clear `pushed_to_end` on a list of corpus rows.
+
+    Used by the Corpus tab's per-row + bulk "Move to end" action — for
+    jobs the user wants to demote without marking applied. Persisted on
+    the row so the override survives reloads and syncs across devices.
+
+    Stdin:  {"ids": [...], "pushed": true|false}
+    Stdout: {"ok": true, "updated": <int>, "missing": [...]}
+    """
+    try:
+        body = _read_stdin_json()
+    except json.JSONDecodeError as e:
+        _emit({"ok": False, "error": f"invalid JSON on stdin: {e}"}, 1)
+
+    if not isinstance(body, dict):
+        _emit({"ok": False, "error": "body must be a JSON object"}, 1)
+
+    ids = body.get("ids")
+    pushed = body.get("pushed")
+    if not isinstance(ids, list) or not ids:
+        _emit({"ok": False, "error": "ids must be a non-empty array"}, 1)
+    if not isinstance(pushed, bool):
+        _emit({"ok": False, "error": "pushed must be a boolean"}, 1)
+    ids = [str(i) for i in ids]
+
+    target_ids = set(ids)
+    updated = {"n": 0}
+    missing_seen = set(ids)
+
+    def _mutate(current):
+        rows = current or []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            rid = r.get("id")
+            if rid in target_ids:
+                missing_seen.discard(rid)
+                if pushed:
+                    if r.get("pushed_to_end") is not True:
+                        r["pushed_to_end"] = True
+                        updated["n"] += 1
+                else:
+                    if r.get("pushed_to_end") is True:
+                        r["pushed_to_end"] = None
+                        updated["n"] += 1
+        return rows
+
+    try:
+        search._atomic_merge_json(search.RESULTS_FILE, _mutate)
+    except Exception as e:
+        _emit({"ok": False, "error": f"failed to update results.json: {e}"}, 1)
+
+    _emit({
+        "ok": True,
+        "updated": updated["n"],
+        "missing": sorted(missing_seen),
+    }, 0)
+
+
 def cmd_rescore(_args) -> None:
     """Re-run the scoring pipeline on a list of existing corpus jobs.
 
@@ -737,6 +797,7 @@ def main():
     sub.add_parser("applied-import").set_defaults(func=cmd_applied_import)
     sub.add_parser("add-manual").set_defaults(func=cmd_add_manual)
     sub.add_parser("rescore").set_defaults(func=cmd_rescore)
+    sub.add_parser("push-to-end").set_defaults(func=cmd_push_to_end)
     args = p.parse_args()
     try:
         args.func(args)

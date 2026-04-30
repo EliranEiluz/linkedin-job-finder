@@ -166,7 +166,7 @@ export const CorpusPage = () => {
   );
   const searchRef = useRef<HTMLInputElement | null>(null);
   const { setAppStatus } = useAppStatus();
-  const { rateJob, deleteJobs, rescoreJobs } = useCorpusActions();
+  const { rateJob, deleteJobs, rescoreJobs, pushToEndJobs } = useCorpusActions();
   // True while a bulk rescore POST is in flight. Used to disable the
   // "Re-score" button + show a spinner so the user can't double-fire.
   const [rescoreBusy, setRescoreBusy] = useState(false);
@@ -195,41 +195,129 @@ export const CorpusPage = () => {
   // scrape repopulates the corpus.
   const [keepInPlaceIds, setKeepInPlaceIds] = useState<Set<string>>(new Set());
 
-  // Per-row "push to end without applying" override. Independent of the
-  // applied state — lets the user demote a job they're not ready to act
-  // on yet. The sort accessor in JobsTable ORs this with the applied-pin
-  // logic so a row sinks if it's applied (default) OR explicitly pushed.
-  // Ephemeral, like keepInPlaceIds. Cleared by the unapply-mark-as-new
-  // path so demoting a row is reversible.
-  const [pushedToEndIds, setPushedToEndIds] = useState<Set<string>>(new Set());
-  const pushToEnd = useCallback((id: string) => {
-    setPushedToEndIds((s) => {
-      if (s.has(id)) return s;
-      const next = new Set(s);
-      next.add(id);
-      return next;
-    });
-    // Also clear from keepInPlaceIds so the two overrides don't fight —
-    // explicit "push to end" wins over a previous "keep in place".
-    setKeepInPlaceIds((s) => {
-      if (!s.has(id)) return s;
-      const next = new Set(s);
-      next.delete(id);
-      return next;
-    });
-  }, []);
-  const pushManyToEnd = useCallback((ids: string[]) => {
-    setPushedToEndIds((s) => {
-      const next = new Set(s);
-      for (const id of ids) next.add(id);
-      return next;
-    });
-    setKeepInPlaceIds((s) => {
-      const next = new Set(s);
-      for (const id of ids) next.delete(id);
-      return next;
-    });
-  }, []);
+  // "Push to end without applying" — promoted from local-only state to a
+  // persisted field on the row (`pushed_to_end`). The Set passed into
+  // JobsTable is derived from corpus rows (true = in set) plus an
+  // optimistic-overrides Map so clicks feel instant before the
+  // /api/corpus/push-to-end round-trip + corpus reload completes.
+  const [pushedPending, setPushedPending] = useState<
+    Map<string, 'add' | 'remove'>
+  >(new Map());
+
+  const pushedToEndIds = useMemo(() => {
+    const result = new Set<string>();
+    for (const j of allJobs) {
+      const isPushedOnServer = j.pushed_to_end === true;
+      const pendingOp = pushedPending.get(j.id);
+      const effective =
+        pendingOp === 'add'
+          ? true
+          : pendingOp === 'remove'
+            ? false
+            : isPushedOnServer;
+      if (effective) result.add(j.id);
+    }
+    return result;
+  }, [allJobs, pushedPending]);
+
+  const pushToEnd = useCallback(
+    (id: string) => {
+      // Optimistic flip + clear keep-in-place override (they'd fight).
+      setPushedPending((m) => new Map(m).set(id, 'add'));
+      setKeepInPlaceIds((s) => {
+        if (!s.has(id)) return s;
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+      void pushToEndJobs([id], true).then((r) => {
+        // On success: leave the pending mark — the corpus reload
+        // (fired via fireStale inside the hook) will repopulate the
+        // row's pushed_to_end and the pending mark becomes redundant.
+        // We GC the pending Map after a beat to keep it small.
+        if (r.ok) {
+          window.setTimeout(
+            () => setPushedPending((m) => {
+              const next = new Map(m);
+              next.delete(id);
+              return next;
+            }),
+            1500,
+          );
+        } else {
+          // Roll back optimistic flip on failure.
+          setPushedPending((m) => {
+            const next = new Map(m);
+            next.delete(id);
+            return next;
+          });
+          window.alert(`Move to end failed: ${r.error}`);
+        }
+      });
+    },
+    [pushToEndJobs],
+  );
+
+  const restoreFromEnd = useCallback(
+    (id: string) => {
+      setPushedPending((m) => new Map(m).set(id, 'remove'));
+      void pushToEndJobs([id], false).then((r) => {
+        if (r.ok) {
+          window.setTimeout(
+            () => setPushedPending((m) => {
+              const next = new Map(m);
+              next.delete(id);
+              return next;
+            }),
+            1500,
+          );
+        } else {
+          setPushedPending((m) => {
+            const next = new Map(m);
+            next.delete(id);
+            return next;
+          });
+          window.alert(`Restore failed: ${r.error}`);
+        }
+      });
+    },
+    [pushToEndJobs],
+  );
+
+  const pushManyToEnd = useCallback(
+    (ids: string[]) => {
+      setPushedPending((m) => {
+        const next = new Map(m);
+        for (const id of ids) next.set(id, 'add');
+        return next;
+      });
+      setKeepInPlaceIds((s) => {
+        const next = new Set(s);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+      void pushToEndJobs(ids, true).then((r) => {
+        if (r.ok) {
+          window.setTimeout(
+            () => setPushedPending((m) => {
+              const next = new Map(m);
+              for (const id of ids) next.delete(id);
+              return next;
+            }),
+            1500,
+          );
+        } else {
+          setPushedPending((m) => {
+            const next = new Map(m);
+            for (const id of ids) next.delete(id);
+            return next;
+          });
+          window.alert(`Move to end failed: ${r.error}`);
+        }
+      });
+    },
+    [pushToEndJobs],
+  );
 
   // Global "should Apply move the row to the end?" preference. Persists in
   // localStorage so the choice survives reloads. `null` (= no key set) means
@@ -633,6 +721,7 @@ export const CorpusPage = () => {
               keepInPlaceIds={keepInPlaceIds}
               pushedToEndIds={pushedToEndIds}
               onPushToEnd={pushToEnd}
+              onRestoreFromEnd={restoreFromEnd}
               onPushManyToEnd={pushManyToEnd}
               onToggleApplied={toggleApplied}
               onSetAppliedMany={setAppliedMany}

@@ -97,6 +97,12 @@ export interface Job {
   app_status_at?: string | null;
   app_status_history?: AppStatusHistoryEntry[];
   app_notes?: string | null;
+  // "Sort this row to the bottom even though it isn't applied yet."
+  // Persisted server-side via `corpus_ctl.py push-to-end` so the demote
+  // survives reloads and syncs across devices. Independent of app_status —
+  // applied rows already sink by default; this flag is mainly for "not
+  // applied but I don't want to see this near the top right now."
+  pushed_to_end?: boolean | null;
   // ISO-8601 timestamp set when the row was ingested via "+ Add Job".
   // Only present on rows with `source === 'manual'`. Useful for an
   // "added by me yesterday" sort + as a debug marker.
