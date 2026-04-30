@@ -193,7 +193,9 @@ export const CorpusPage = () => {
   // applied for everything else (pill, filter, dimmed treatment). Cleared
   // on stale-event reload so the natural sort picks back up after a fresh
   // scrape repopulates the corpus.
-  const [keepInPlaceIds, setKeepInPlaceIds] = useState<Set<string>>(new Set());
+  // (keepInPlaceIds removed — sort is now driven purely by pushed_to_end,
+  // which is server-persisted. Apply with moveToEnd=false sets
+  // pushed_to_end=false, with moveToEnd=true sets pushed_to_end=true.)
 
   // "Push to end without applying" — promoted from local-only state to a
   // persisted field on the row (`pushed_to_end`). The Set passed into
@@ -222,14 +224,7 @@ export const CorpusPage = () => {
 
   const pushToEnd = useCallback(
     (id: string) => {
-      // Optimistic flip + clear keep-in-place override (they'd fight).
       setPushedPending((m) => new Map(m).set(id, 'add'));
-      setKeepInPlaceIds((s) => {
-        if (!s.has(id)) return s;
-        const next = new Set(s);
-        next.delete(id);
-        return next;
-      });
       void pushToEndJobs([id], true).then((r) => {
         // On success: leave the pending mark — the corpus reload
         // (fired via fireStale inside the hook) will repopulate the
@@ -289,11 +284,6 @@ export const CorpusPage = () => {
       setPushedPending((m) => {
         const next = new Map(m);
         for (const id of ids) next.set(id, 'add');
-        return next;
-      });
-      setKeepInPlaceIds((s) => {
-        const next = new Set(s);
-        for (const id of ids) next.delete(id);
         return next;
       });
       void pushToEndJobs(ids, true).then((r) => {
@@ -403,6 +393,18 @@ export const CorpusPage = () => {
         }
         return next;
       });
+      // Bulk apply also flips pushed_to_end per the user's pref. Bulk
+      // unapply does NOT touch pushed_to_end — the user may have a
+      // mix of states they want preserved across the unapply.
+      if (appliedState) {
+        const moveToEnd = applyMovesToEnd ?? true;
+        setPushedPending((prev) => {
+          const next = new Map(prev);
+          for (const id of ids) next.set(id, moveToEnd ? 'add' : 'remove');
+          return next;
+        });
+        void pushToEndJobs(ids, moveToEnd);
+      }
       // Fire all in parallel — the existing endpoint is per-id; for
       // typical bulk-toggles (visible page = up to 200 rows) this is fine.
       void Promise.all(
@@ -419,7 +421,7 @@ export const CorpusPage = () => {
         }
       });
     },
-    [setAppStatus],
+    [setAppStatus, applyMovesToEnd, pushToEndJobs],
   );
   // Wrap deleteJobs into a single-id helper for the row popover.
   const deleteOne = useCallback(
@@ -427,10 +429,10 @@ export const CorpusPage = () => {
     [deleteJobs],
   );
 
-  // Apply a single row with explicit "move to end?" choice. Sets the
-  // server-side app_status; when `moveToEnd === false`, also adds the id
-  // to keepInPlaceIds so the sort pin treats the row as not-applied (its
-  // existing position in the filtered sort survives).
+  // Apply a single row with explicit "move to end?" choice. Both fields
+  // are now persisted server-side as separate concerns: `app_status`
+  // says "I applied to this", `pushed_to_end` says "sort to bottom".
+  // moveToEnd=true → both. moveToEnd=false → applied without demoting.
   const applyOne = useCallback(
     (id: string, moveToEnd: boolean) => {
       setAppliedPending((prev) => {
@@ -438,20 +440,14 @@ export const CorpusPage = () => {
         next.set(id, 'add');
         return next;
       });
-      if (!moveToEnd) {
-        setKeepInPlaceIds((prev) => {
-          const next = new Set(prev);
-          next.add(id);
-          return next;
-        });
-      } else {
-        setKeepInPlaceIds((prev) => {
-          if (!prev.has(id)) return prev;
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }
+      // Optimistic flip on pushed_to_end too, then fire-and-forget
+      // both POSTs in parallel.
+      setPushedPending((prev) => {
+        const next = new Map(prev);
+        next.set(id, moveToEnd ? 'add' : 'remove');
+        return next;
+      });
+      void pushToEndJobs([id], moveToEnd);
       void setAppStatus(id, 'applied').then((r) => {
         setAppliedPending((prev) => {
           const next = new Map(prev);
@@ -461,7 +457,7 @@ export const CorpusPage = () => {
         if (!r.ok) console.error('apply failed:', r.error);
       });
     },
-    [setAppStatus],
+    [setAppStatus, pushToEndJobs],
   );
 
   const unapplyOne = useCallback(
@@ -471,14 +467,10 @@ export const CorpusPage = () => {
         next.set(id, 'remove');
         return next;
       });
-      // Un-applying never reorders — the natural sort will move the row
-      // back to where it belongs. Drop any keep-in-place override too.
-      setKeepInPlaceIds((prev) => {
-        if (!prev.has(id)) return prev;
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
+      // Un-applying does NOT touch pushed_to_end — the user may have
+      // explicitly demoted the row independently of the apply state,
+      // and clearing the demote here would surprise them. They can
+      // restore the natural sort separately via the popover toggle.
       void setAppStatus(id, 'new').then((r) => {
         setAppliedPending((prev) => {
           const next = new Map(prev);
@@ -551,13 +543,6 @@ export const CorpusPage = () => {
   }, [allJobs]);
 
   // Listen for ScrapeRunPanel's "scrape finished" signal and re-fetch.
-  //
-  // Note: we deliberately do NOT clear `keepInPlaceIds` here. The stale
-  // event also fires after every per-row Apply (via `setAppStatus` →
-  // `fireStale` in hooks.ts) — clearing the set on stale would race
-  // against the very Apply call that just populated it, sinking the row
-  // the user explicitly chose to keep in place. The set is short-lived
-  // anyway (resets on full page reload + on filter changes via re-render).
   useEffect(() => {
     const onStale = () => {
       void reload();
@@ -718,7 +703,6 @@ export const CorpusPage = () => {
             <JobsTable
               data={filtered}
               applied={applied}
-              keepInPlaceIds={keepInPlaceIds}
               pushedToEndIds={pushedToEndIds}
               onPushToEnd={pushToEnd}
               onRestoreFromEnd={restoreFromEnd}

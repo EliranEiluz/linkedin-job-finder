@@ -169,8 +169,7 @@ interface Props {
   // the sort accessor reads them as 0 (not-applied) so they don't sink to
   // the bottom. Pill, filter and dimmed treatment still light up. CorpusPage
   // owns this state and clears it on stale-event reload.
-  keepInPlaceIds?: Set<string>;
-  // "Pushed to the end without applying" — additional sort-pin source.
+  // "Pushed to the end" — sort-pin source.
   // Independent of `applied`: a row in this set sinks even if not applied,
   // and a row outside this set follows the natural applied-pinned sort.
   // Ephemeral (lives in CorpusPage state, not server-side).
@@ -246,7 +245,7 @@ const MOBILE_SORT_OPTIONS = [
 ] as const;
 
 export const JobsTable = ({
-  data, applied, keepInPlaceIds, pushedToEndIds,
+  data, applied, pushedToEndIds,
   onPushToEnd, onRestoreFromEnd, onPushManyToEnd, onSetAppliedMany,
   onApply, onUnapply, applyMovesToEnd = null, onSetApplyPref,
   onRate, onDelete, hasNonDefaultFilter = false, onDeleteAllFiltered,
@@ -370,12 +369,11 @@ export const JobsTable = ({
       // "Applied" pill when applied. Header checkbox = select-all-visible.
       // Sort id stays 'applied' so setSortingPinned still finds it.
       columnHelper.accessor(
-        (r) => {
-          const sinkByApply =
-            applied.has(r.id) && !(keepInPlaceIds?.has(r.id) ?? false);
-          const sinkByPush = pushedToEndIds?.has(r.id) ?? false;
-          return sinkByApply || sinkByPush ? 1 : 0;
-        },
+        // Sort-pin: rows with `pushed_to_end` (server-side flag) sink to the
+        // bottom. Apply now sets that flag explicitly per the user's choice
+        // ("Apply and move to end" → true, "Apply but keep in place" → false),
+        // so the sort follows directly from a single persisted field.
+        (r) => (pushedToEndIds?.has(r.id) ?? false ? 1 : 0),
         {
           id: 'applied',
           // Header is an indeterminate checkbox that selects/deselects every
@@ -635,8 +633,7 @@ export const JobsTable = ({
       }),
     ],
     [
-      confirmDeleteId, handleInlineDelete, onDelete, applied, keepInPlaceIds,
-      pushedToEndIds,
+      confirmDeleteId, handleInlineDelete, onDelete, applied, pushedToEndIds,
       selectedIds, toggleSelected, categoryNamesById,
     ],
   );
