@@ -12,7 +12,20 @@ requires-python = ">=3.10"
 dev = [
     "ruff>=0.6",
     "mypy>=1.10",
+    # Test runner. Pinned to >=8 — that's where pytest-mock 3.x's `mocker.patch.object`
+    # fast-path landed and where `pytest.MonkeyPatch` became a stable public symbol.
     "pytest>=8.0",
+    # mocker fixture — readable mocks vs nested with-monkeypatch ladders.
+    "pytest-mock>=3.14",
+    # Coverage report so contributors see the unit-test surface area shrink/grow.
+    "pytest-cov>=5.0",
+    # Mocks `requests` HTTP calls the LLM providers + guest scraper make. v0.25+
+    # works with requests >=2.31 (pinned via runtime requirements). responses is
+    # the canonical equivalent of MSW for Python's `requests` stack.
+    "responses>=0.25",
+    # Freezes datetime.now() so feedback-example timestamps + scored_at are stable
+    # in golden-output assertions.
+    "freezegun>=1.5",
 ]
 
 # ---------- ruff ----------------------------------------------------------
@@ -172,10 +185,26 @@ module = "backend.search"
 disallow_untyped_calls = false
 
 # ---------- pytest -------------------------------------------------------
-# The existing phase_d_test.py is a script (sys.exit at module level), not
-# pytest-collectable. We wire pytest to skip it so `python3 -m pytest backend/`
-# doesn't error; the script is still invoked directly by CI / Phase D harness.
+# The existing phase_d_test.py is a long script (sys.exit at module level),
+# NOT pytest-collectable. We restrict discovery to the standard `test_*.py`
+# pattern; phase_d_test.py is still invoked directly via
+# `python3 backend/tests/phase_d_test.py` by CI / the Phase D harness.
+#
+# Sane defaults:
+#   - `--strict-markers` so a typo'd marker fails the run (no silent skips).
+#   - `--strict-config` catches typos in this section (e.g. "addopt" not "addopts").
+#   - `-ra` short-summary at the end for skips/xfails.
+#   - `--import-mode=importlib` is pytest's modern import strategy; avoids the
+#     legacy rootdir/sys.path hacks needed by the script-style phase_d harness.
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
 norecursedirs = ["ui", "node_modules", "dist"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+]
