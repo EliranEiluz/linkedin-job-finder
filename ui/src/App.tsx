@@ -168,29 +168,28 @@ export const App = () => {
         </div>
       </nav>
 
-      {/* Active page. While not onboarded we force-render the OnboardingPage
-          regardless of the `tab` state, so a URL-pinned ?tab=corpus on a
-          fresh install can't bypass the wizard. */}
+      {/* Active page. While not onboarded we force the wizard regardless of
+          the `tab` state, so a URL-pinned ?tab=corpus on a fresh install
+          can't bypass setup. CRITICAL: OnboardingPage must live at the SAME
+          JSX position in both cases — when `onOnboarded` flips the parent's
+          `onboarded` state from false→true, a branch swap would unmount +
+          remount the wizard, resetting it to Step 0 and losing Step 7's
+          "what's next" view that the user just earned by saving. */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {onboarded === false ? (
+        {onboarded === false || tab === 'setup' ? (
           <OnboardingPage
             onSwitchTab={(t) => switchTab(t)}
             onOnboarded={refreshOnboarded}
           />
-        ) : (
-          <>
-            {tab === 'corpus' && <CorpusPage />}
-            {tab === 'tracker' && <ApplicationsPage />}
-            {tab === 'config' && <ConfigPage />}
-            {tab === 'history' && <RunHistoryPage />}
-            {tab === 'setup' && (
-              <OnboardingPage
-                onSwitchTab={(t) => switchTab(t)}
-                onOnboarded={refreshOnboarded}
-              />
-            )}
-          </>
-        )}
+        ) : tab === 'corpus' ? (
+          <CorpusPage />
+        ) : tab === 'tracker' ? (
+          <ApplicationsPage />
+        ) : tab === 'config' ? (
+          <ConfigPage />
+        ) : tab === 'history' ? (
+          <RunHistoryPage />
+        ) : null}
       </div>
     </div>
   );
