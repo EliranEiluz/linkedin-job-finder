@@ -21,6 +21,8 @@ import {
   PREFLIGHT_CTL,
   LLM_CTL,
   CV_EXTRACT_CTL,
+  NOTIFICATIONS_CTL,
+  DIGEST_HTML_PATH,
   SCHEDULER_TIMEOUT_MS,
   ONBOARDING_GENERATE_TIMEOUT_MS,
   ONBOARDING_SAVE_TIMEOUT_MS,
@@ -33,6 +35,9 @@ import {
   LLM_TEST_TIMEOUT_MS,
   CV_EXTRACT_TIMEOUT_MS,
   CV_EXTRACT_MAX_BYTES,
+  NOTIFICATIONS_STATUS_TIMEOUT_MS,
+  NOTIFICATIONS_SAVE_TIMEOUT_MS,
+  NOTIFICATIONS_TEST_TIMEOUT_MS,
 } from './middleware/paths';
 import { runCtl, type CtlResult as SchedulerCtlResult } from './middleware/runCtl';
 import { readJsonBody, sendJson } from './middleware/http';
@@ -742,6 +747,44 @@ const configApiPlugin = (): Plugin => ({
       res.end('{}');
     });
 
+    // /digest.html — serve the latest rendered email digest from REPO_ROOT.
+    // Same shape as the rootJsonFiles handler above but with text/html and
+    // a friendlier ENOENT page (the wizard surfaces this link before the
+    // user has run their first scrape, so a 404 is the common case).
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- connect's `use()` typings ignore the returned Promise; async handler is fine in practice.
+    server.middlewares.use(async (req, res, next) => {
+      const pathOnly = (req.url ?? '').split('?')[0] ?? '';
+      if (pathOnly !== '/digest.html') { next(); return; }
+      try {
+        const html = await fs.readFile(DIGEST_HTML_PATH, 'utf8');
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(html);
+        return;
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') { next(err); return; }
+      }
+      // No digest yet — render an inline placeholder so the user knows
+      // the link works and what to do next (rather than a generic 404
+      // that looks like the dev server is broken).
+      res.statusCode = 404;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(
+        '<!doctype html><html><head><meta charset="utf-8">' +
+        '<title>No digest yet</title>' +
+        '<style>body{font:14px -apple-system,sans-serif;color:#111;margin:60px auto;max-width:520px;padding:0 16px;line-height:1.5}' +
+        'h1{font-size:20px;margin:0 0 12px}code{background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:13px}</style>' +
+        '</head><body>' +
+        '<h1>No digest yet</h1>' +
+        '<p>Run a scrape first — the next finished run will write ' +
+        '<code>digest.html</code> in your repo root and this page will ' +
+        'show it.</p>' +
+        '<p>Run History tab → Reload after the scrape finishes.</p>' +
+        '</body></html>',
+      );
+    });
+
     // eslint-disable-next-line @typescript-eslint/no-misused-promises -- connect's `use()` typings ignore the returned Promise; async handler is fine in practice.
     server.middlewares.use(async (req, res, next) => {
       const url = req.url ?? '';
@@ -1098,6 +1141,96 @@ const configApiPlugin = (): Plugin => ({
           } catch {
             sendJson(res, 500, {
               ok: false, error: 'llm_ctl emitted non-JSON',
+              raw_stderr: result.stderr.slice(0, 500),
+            }); return;
+          }
+        }
+
+        // ---- notifications endpoints --------------------------------------
+        // Mirrors /api/llm/* — three thin pass-through handlers around
+        // notifications_ctl.py. Same SENSITIVE-body hygiene as the LLM
+        // save-credential path: never log the request body (it carries the
+        // SMTP app-password). The script's own envelope is surfaced verbatim
+        // so the UI can show the structured `error` field on failure.
+        if (url.startsWith('/api/notifications/status') && req.method === 'GET') {
+          const result = await runCtl(
+            NOTIFICATIONS_CTL, ['status'], null, NOTIFICATIONS_STATUS_TIMEOUT_MS,
+          );
+          if (result.spawnError) {
+            sendJson(res, 500, { ok: false, error: result.spawnError }); return;
+          }
+          if (result.timedOut) {
+            sendJson(res, 504, { ok: false, error: 'notifications_ctl status timed out' }); return;
+          }
+          try {
+            sendJson(res, 200, JSON.parse(result.stdout)); return;
+          } catch {
+            sendJson(res, 500, {
+              ok: false, error: 'notifications_ctl emitted non-JSON',
+              raw_stderr: result.stderr.slice(0, 500),
+            }); return;
+          }
+        }
+
+        if (url.startsWith('/api/notifications/save-smtp') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          // *** SENSITIVE *** never log raw — it carries the SMTP password. ***
+          let body: {
+            host?: unknown; port?: unknown; user?: unknown;
+            password?: unknown; email_to?: unknown; use_ssl?: unknown;
+          };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return; }
+          if (typeof body.host !== 'string' || !body.host.trim()) {
+            sendJson(res, 400, { ok: false, error: 'host must be a non-empty string' }); return;
+          }
+          if (typeof body.user !== 'string' || !body.user.trim()) {
+            sendJson(res, 400, { ok: false, error: 'user must be a non-empty string' }); return;
+          }
+          // password / port / email_to / use_ssl validated by the python
+          // ctl — keeping the JS shim minimal so the schema lives in one
+          // place. We pass the body verbatim.
+          const result = await runCtl(
+            NOTIFICATIONS_CTL, ['save-smtp'],
+            JSON.stringify(body),
+            NOTIFICATIONS_SAVE_TIMEOUT_MS,
+          );
+          if (result.spawnError) {
+            sendJson(res, 500, { ok: false, error: result.spawnError }); return;
+          }
+          if (result.timedOut) {
+            sendJson(res, 504, { ok: false, error: 'notifications_ctl save-smtp timed out' }); return;
+          }
+          try {
+            const parsed = JSON.parse(result.stdout) as { ok?: boolean };
+            sendJson(res, parsed.ok ? 200 : 400, parsed); return;
+          } catch {
+            sendJson(res, 500, {
+              ok: false, error: 'notifications_ctl emitted non-JSON',
+              raw_stderr: result.stderr.slice(0, 500),
+            }); return;
+          }
+        }
+
+        if (url.startsWith('/api/notifications/test-smtp') && req.method === 'POST') {
+          // No body required — the script reads creds from disk. The 35s
+          // outer cap is bigger than the script's own SMTP_TIMEOUT_S (30s)
+          // so the user sees the structured envelope rather than 504.
+          const result = await runCtl(
+            NOTIFICATIONS_CTL, ['test-smtp'], null, NOTIFICATIONS_TEST_TIMEOUT_MS,
+          );
+          if (result.spawnError) {
+            sendJson(res, 500, { ok: false, error: result.spawnError }); return;
+          }
+          if (result.timedOut) {
+            sendJson(res, 504, { ok: false, error: 'notifications_ctl test-smtp timed out' }); return;
+          }
+          try {
+            const parsed = JSON.parse(result.stdout) as { ok?: boolean };
+            sendJson(res, parsed.ok ? 200 : 400, parsed); return;
+          } catch {
+            sendJson(res, 500, {
+              ok: false, error: 'notifications_ctl emitted non-JSON',
               raw_stderr: result.stderr.slice(0, 500),
             }); return;
           }
