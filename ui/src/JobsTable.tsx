@@ -528,16 +528,28 @@ export const JobsTable = ({
         header: 'Found',
         cell: (info) => {
           const v = info.getValue();
-          const abs = (() => {
-            try {
-              return new Date(v).toLocaleString();
-            } catch {
-              return v;
-            }
-          })();
+          const scored = info.row.original.scored_at;
+          const fmtAbs = (iso: string | null | undefined): string => {
+            if (!iso) return '—';
+            try { return new Date(iso).toLocaleString(); } catch { return iso; }
+          };
+          // Show a re-scored marker only when the scored timestamp drifts
+          // meaningfully past the found timestamp (~1 min). Backfilled rows
+          // (scored_at == found_at) collapse to a single line.
+          const drifted = scored
+            ? Date.parse(scored) - Date.parse(v) > 60_000
+            : false;
+          const tooltip =
+            `Found:  ${fmtAbs(v)}` +
+            (scored ? `\nScored: ${fmtAbs(scored)}` : '');
           return (
-            <span className="text-slate-600" title={abs}>
-              {relTime(v)}
+            <span className="block text-slate-600" title={tooltip}>
+              <span>{relTime(v)}</span>
+              {drifted && scored && (
+                <span className="block text-[10px] leading-tight text-slate-400">
+                  ↻ {relTime(scored)}
+                </span>
+              )}
             </span>
           );
         },
@@ -910,11 +922,23 @@ export const JobsTable = ({
                     <span
                       className="text-xs text-slate-500"
                       title={(() => {
-                        try { return new Date(j.found_at).toLocaleString(); }
-                        catch { return j.found_at; }
+                        const fmt = (iso: string | null | undefined) => {
+                          if (!iso) return '—';
+                          try { return new Date(iso).toLocaleString(); }
+                          catch { return iso; }
+                        };
+                        const parts = [`Found:  ${fmt(j.found_at)}`];
+                        if (j.scored_at) parts.push(`Scored: ${fmt(j.scored_at)}`);
+                        return parts.join('\n');
                       })()}
                     >
                       · {relTime(j.found_at)}
+                      {j.scored_at &&
+                        Date.parse(j.scored_at) - Date.parse(j.found_at) > 60_000 && (
+                          <span className="ml-1 text-slate-400">
+                            · ↻ {relTime(j.scored_at)}
+                          </span>
+                        )}
                     </span>
                   </div>
 
