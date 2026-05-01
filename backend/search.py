@@ -32,11 +32,17 @@ import argparse
 import re
 import random
 import shutil
-import subprocess
 import traceback
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote_plus
+
+# When run as `python3 backend/search.py`, sys.path[0] is backend/ — so
+# `from backend.llm import ...` would 404. Prepend the repo root so the
+# `backend` namespace package is importable in both script and `-m` modes.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 # Playwright is the engine for --mode=loggedin. Imported lazily so that
 # --mode=guest can run on a stripped-down Python install (e.g. the one
 # launchd picks up from a minimal PATH) without playwright present.
@@ -634,78 +640,16 @@ def _build_batch_prompt(cv_text: str, batch: list[dict]) -> str:
         )
 
 
-def _score_batch_via_cli(cv_text: str, batch: list[dict]) -> list | None:
-    if not shutil.which("claude"):
-        return None
-    prompt = _build_batch_prompt(cv_text, batch)
-    try:
-        # Force Sonnet — Opus high can take 30+ min on a multi-job batch.
-        # We don't need extended reasoning for a structured ranking call.
-        # Timeout at 240s — 8-job batches occasionally cross 180s when one
-        # job has a very long description or Claude's servers are slow.
-        proc = subprocess.run(
-            ["claude", "-p", prompt,
-             "--output-format", "text",
-             "--model", "claude-sonnet-4-5"],
-            capture_output=True, text=True, timeout=240,
-        )
-        if proc.returncode != 0:
-            print(f"    claude CLI rc={proc.returncode}: {proc.stderr.strip()[:300]}")
-            return None
-        parsed = _parse_claude_json(proc.stdout)
-        if isinstance(parsed, list):
-            return parsed
-        print(f"    claude CLI returned non-array: {str(proc.stdout)[:200]}")
-        return None
-    except Exception as e:
-        # Print the exception class + the TAIL of the message — TimeoutExpired
-        # / CalledProcessError both put the giant cmd argv at the START of
-        # str(e), so a head-truncated dump told us nothing about WHY. The
-        # actual "timed out after Ns" / "returned non-zero exit status N"
-        # lives at the end of the string.
-        msg = str(e)
-        print(f"    claude CLI error ({type(e).__name__}): …{msg[-300:]}")
-        return None
-
-
-_anthropic_client = None
-
-
-def _score_batch_via_sdk(cv_text: str, batch: list[dict]) -> list | None:
-    global _anthropic_client
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return None
-    if _anthropic_client is None:
-        try:
-            from anthropic import Anthropic
-            _anthropic_client = Anthropic()
-        except Exception:
-            return None
-    prompt = _build_batch_prompt(cv_text, batch)
-    try:
-        msg = _anthropic_client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=2048,
-            system=[{
-                "type": "text",
-                "text": f"You score LinkedIn jobs for fit against this CV:\n\n{cv_text}",
-                "cache_control": {"type": "ephemeral"},
-            }],
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-        parsed = _parse_claude_json(raw)
-        return parsed if isinstance(parsed, list) else None
-    except Exception as e:
-        print(f"    SDK error: {str(e)[:150]}")
-        return None
-
-
 def claude_batch_score(cv_text: str, batch: list[dict]) -> dict | None:
-    """Return {job_id: scoring_dict}. None = caller should use regex fallback."""
+    """Return {job_id: scoring_dict}. None = caller should use regex fallback.
+
+    Stage 2: delegates to the LLM provider abstraction in backend/llm/.
+    Resolves the active provider (claude_cli, claude_sdk, gemini, openrouter,
+    or ollama) from config.llm_provider; defaults to 'auto'."""
     if not cv_text or not batch:
         return None
-    arr = _score_batch_via_cli(cv_text, batch) or _score_batch_via_sdk(cv_text, batch)
+    from backend.llm import score_batch as _llm_score_batch
+    arr = _llm_score_batch(cv_text, batch)
     if not arr:
         return None
     out = {}
@@ -853,6 +797,11 @@ def _hardcoded_defaults() -> dict:
         "fit_negative_patterns": list(FIT_NEGATIVE),
         "offtopic_title_patterns": list(OFFTOPIC_TITLE_PATTERNS),
         "feedback_examples_max": FEEDBACK_EXAMPLES_MAX_DEFAULT,
+        # Stage 2 LLM provider abstraction. "auto" = resolver picks the first
+        # working provider (claude_cli -> claude_sdk -> gemini -> openrouter
+        # -> ollama). Specific names use only that provider. Optional `model`
+        # field overrides the provider's default.
+        "llm_provider": {"name": "auto"},
     }
 
 
@@ -903,6 +852,27 @@ def _normalize_categories(raw, fallback: list[dict]) -> list[dict]:
             cid = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or f"cat_{len(out)}"
         out.append({"id": cid, "name": name, "type": ctype, "queries": queries})
     return out or fallback
+
+
+_VALID_LLM_PROVIDER_NAMES = {
+    "auto", "claude_cli", "claude_sdk", "gemini", "openrouter", "ollama",
+}
+
+
+def _normalize_llm_provider(raw, fallback: dict) -> dict:
+    """Validate the llm_provider config block. Drops malformed payloads back
+    to the fallback (defaults to {'name': 'auto'}). Optional `model` is kept
+    only if it's a non-empty string."""
+    if not isinstance(raw, dict):
+        return dict(fallback)
+    name = str(raw.get("name") or "").strip().lower()
+    if name not in _VALID_LLM_PROVIDER_NAMES:
+        return dict(fallback)
+    out: dict = {"name": name}
+    model = raw.get("model")
+    if isinstance(model, str) and model.strip():
+        out["model"] = model.strip()
+    return out
 
 
 def load_config() -> dict:
@@ -983,6 +953,11 @@ def load_config() -> dict:
             max(0, min(int(user_cfg["feedback_examples_max"]), 20))
             if isinstance(user_cfg.get("feedback_examples_max"), int)
             else defaults["feedback_examples_max"]
+        ),
+        # Stage 2 LLM provider selector. Validate name against known providers;
+        # silently fall back to "auto" on anything malformed.
+        "llm_provider": _normalize_llm_provider(
+            user_cfg.get("llm_provider"), defaults["llm_provider"]
         ),
     }
 
@@ -2511,7 +2486,19 @@ def main():
                         help="Override the geoId for guest mode (default: Israel "
                              "101620260). Ignored in loggedin mode (LinkedIn picks "
                              "geo from the session).")
+    parser.add_argument("--test-llm", nargs="?", const="auto", default=None,
+                        metavar="PROVIDER",
+                        help="Test the LLM scoring backend and exit. Optional "
+                             "PROVIDER ∈ {auto, claude_cli, claude_sdk, gemini, "
+                             "openrouter, ollama}. Default: auto.")
     args = parser.parse_args()
+
+    if args.test_llm is not None:
+        from backend.llm import test_provider
+        ok, msg = test_provider(args.test_llm)
+        prefix = "OK" if ok else "FAIL"
+        print(f"[{prefix}] {msg}")
+        sys.exit(0 if ok else 1)
 
     if args.print_defaults:
         # Print the *hardcoded* defaults — not the merged active config —

@@ -5,6 +5,22 @@
 
 export type CategoryType = 'keyword' | 'company';
 
+// Stage 2: LLM provider abstraction. UI control lands in Stage 3 (welcome
+// wizard); for now the field round-trips through save/load so a hand-edited
+// config.json or a future wizard write doesn't get clobbered.
+export type LLMProviderName =
+  | 'auto'
+  | 'claude_cli'
+  | 'claude_sdk'
+  | 'gemini'
+  | 'openrouter'
+  | 'ollama';
+
+export interface LLMProviderConfig {
+  name: LLMProviderName;
+  model?: string; // optional — provider has a sensible default if omitted
+}
+
 export interface Category {
   id: string;            // stable client-side id; preserved across saves when possible
   name: string;          // user-facing label, e.g. "Keywords", "Companies", "ML researcher"
@@ -33,6 +49,8 @@ export interface CrawlerConfig {
   // examples. Backend clamps to [0, 20]; default 6. Larger = Claude has
   // more of your taste, smaller = leaner prompt (faster + cheaper).
   feedback_examples_max?: number;
+  // Stage 2 — backend LLM provider selector. Omit to keep "auto" behavior.
+  llm_provider?: LLMProviderConfig;
 
   // --- legacy (one-time migrate via normalizeConfig) ---------------------
   // Kept optional so older config.json files load without a type error.
@@ -95,5 +113,9 @@ export const configsEqual = (a: CrawlerConfig, b: CrawlerConfig): boolean => {
   if (!eqOptStrArr(a.fit_negative_patterns, b.fit_negative_patterns)) return false;
   if (!eqOptStrArr(a.offtopic_title_patterns, b.offtopic_title_patterns)) return false;
   if ((a.feedback_examples_max ?? null) !== (b.feedback_examples_max ?? null)) return false;
+  const ap = a.llm_provider;
+  const bp = b.llm_provider;
+  if ((ap?.name ?? null) !== (bp?.name ?? null)) return false;
+  if ((ap?.model ?? null) !== (bp?.model ?? null)) return false;
   return true;
 };

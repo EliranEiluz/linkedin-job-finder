@@ -93,17 +93,36 @@ python3 backend/search.py --print-defaults > defaults.json
 ### Pick an LLM auth path (you need one)
 
 ```bash
-# Option A: Claude Code CLI — uses your Claude.ai subscription, no key needed
-npm i -g @anthropic-ai/claude-code
-claude /login
+# Option A — Claude Code CLI (uses your Claude.ai subscription, no key)
+npm i -g @anthropic-ai/claude-code && claude /login
 
-# Option B: Anthropic API key
+# Option B — Anthropic API key
 export ANTHROPIC_API_KEY=sk-ant-...
+
+# Option C — Gemini (free tier, 1500 RPM): https://aistudio.google.com/apikey
+export GEMINI_API_KEY=...
+
+# Option D — OpenRouter (catalog of free models): https://openrouter.ai/keys
+export OPENROUTER_API_KEY=sk-or-...
+
+# Option E — Ollama (fully local, no key, no network)
+ollama serve && ollama pull qwen2.5:32b
 ```
 
-Both onboarding (`onboarding_ctl.py`), per-job scoring (`search.py`), and
-the config suggester (`config_suggest_ctl.py`) try the CLI first and fall
-back to the SDK when `ANTHROPIC_API_KEY` is set.
+Resolution order on a fresh run is: `claude_cli → claude_sdk → gemini →
+openrouter → ollama`. The first one configured wins. Pin a specific
+provider by editing `config.json`:
+
+```json
+{ "llm_provider": { "name": "gemini" } }
+```
+
+Verify your setup without scraping:
+
+```bash
+python3 backend/search.py --test-llm           # auto-resolve
+python3 backend/search.py --test-llm gemini    # specific provider
+```
 
 ### Optional: SMTP for the email digest
 

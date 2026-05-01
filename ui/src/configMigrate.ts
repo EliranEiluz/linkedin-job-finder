@@ -17,7 +17,34 @@
 // `priority_companies` was historically allowed as a CSV string in some hand-edited
 // configs — split on comma if so.
 
-import type { Category, CategoryType, CrawlerConfig } from './configTypes';
+import type {
+  Category,
+  CategoryType,
+  CrawlerConfig,
+  LLMProviderConfig,
+  LLMProviderName,
+} from './configTypes';
+
+const VALID_PROVIDER_NAMES: ReadonlySet<LLMProviderName> = new Set([
+  'auto',
+  'claude_cli',
+  'claude_sdk',
+  'gemini',
+  'openrouter',
+  'ollama',
+]);
+
+const normalizeLLMProvider = (v: unknown): LLMProviderConfig | undefined => {
+  if (!v || typeof v !== 'object') return undefined;
+  const r = v as Record<string, unknown>;
+  const rawName = typeof r.name === 'string' ? r.name : '';
+  if (!VALID_PROVIDER_NAMES.has(rawName as LLMProviderName)) return undefined;
+  const out: LLMProviderConfig = { name: rawName as LLMProviderName };
+  if (typeof r.model === 'string' && r.model.trim()) {
+    out.model = r.model.trim();
+  }
+  return out;
+};
 
 let _idCounter = 0;
 export const newCategoryId = (): string => {
@@ -172,6 +199,8 @@ export const normalizeConfig = (raw: unknown): CrawlerConfig => {
     ? r.offtopic_title_patterns
     : undefined;
 
+  const llmProvider = normalizeLLMProvider(r.llm_provider);
+
   const feedbackMax =
     typeof r.feedback_examples_max === 'number'
     && Number.isFinite(r.feedback_examples_max)
@@ -193,6 +222,7 @@ export const normalizeConfig = (raw: unknown): CrawlerConfig => {
     fit_negative_patterns: fitNegative,
     offtopic_title_patterns: offtopic,
     feedback_examples_max: feedbackMax,
+    llm_provider: llmProvider,
   };
 };
 
@@ -228,6 +258,11 @@ export const serializeConfig = (cfg: CrawlerConfig): Record<string, unknown> => 
   }
   if (cfg.feedback_examples_max !== undefined) {
     out.feedback_examples_max = cfg.feedback_examples_max;
+  }
+  if (cfg.llm_provider && cfg.llm_provider.name) {
+    const lp: Record<string, unknown> = { name: cfg.llm_provider.name };
+    if (cfg.llm_provider.model) lp.model = cfg.llm_provider.model;
+    out.llm_provider = lp;
   }
   return out;
 };
