@@ -45,6 +45,21 @@ export const App = () => {
   // ≥1 profile. cv.txt is the real "user has uploaded their CV via the
   // wizard" signal.
   const [onboarded, setOnboarded] = useState<boolean | null>(null);
+  // Re-fetch /api/profiles. Called on mount + by the wizard right after a
+  // successful save so Step 7's "Schedule daily auto-scrape" / "Skip — go to
+  // Corpus" / Run-First-Scrape buttons can actually leave OnboardingPage
+  // (otherwise App keeps force-rendering the wizard while onboarded stays
+  // stale at false).
+  const refreshOnboarded = useCallback(async () => {
+    try {
+      const res = await fetch('/api/profiles');
+      if (!res.ok) return;
+      const j = (await res.json()) as { cv_present?: boolean };
+      if (j.cv_present === true) setOnboarded(true);
+    } catch {
+      /* network blip — keep current state */
+    }
+  }, []);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -158,7 +173,10 @@ export const App = () => {
           fresh install can't bypass the wizard. */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {onboarded === false ? (
-          <OnboardingPage onSwitchTab={(t) => switchTab(t)} />
+          <OnboardingPage
+            onSwitchTab={(t) => switchTab(t)}
+            onOnboarded={refreshOnboarded}
+          />
         ) : (
           <>
             {tab === 'corpus' && <CorpusPage />}
@@ -168,6 +186,7 @@ export const App = () => {
             {tab === 'setup' && (
               <OnboardingPage
                 onSwitchTab={(t) => switchTab(t)}
+                onOnboarded={refreshOnboarded}
               />
             )}
           </>

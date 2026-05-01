@@ -57,7 +57,7 @@ PROVIDER_META = [
         "free_tier": True,
         "env_var": "GEMINI_API_KEY",
         "help_url": "https://aistudio.google.com/apikey",
-        "blurb": "Google's Gemini 2.5 Flash. Free tier available — recommended for fresh installs.",
+        "blurb": "Google Gemini. Free tier available — recommended for fresh installs.",
     },
     {
         "name": "openai",
@@ -66,7 +66,7 @@ PROVIDER_META = [
         "free_tier": False,
         "env_var": "OPENAI_API_KEY",
         "help_url": "https://platform.openai.com/api-keys",
-        "blurb": "GPT-4o-mini. Reliable but no free tier — pay per call.",
+        "blurb": "OpenAI. Reliable but no free tier — pay per call.",
     },
     {
         "name": "openrouter",
@@ -75,7 +75,7 @@ PROVIDER_META = [
         "free_tier": True,
         "env_var": "OPENROUTER_API_KEY",
         "help_url": "https://openrouter.ai/keys",
-        "blurb": "Routes to many models including free Llama 3.3. Variable quality.",
+        "blurb": "Routes to many models including free options. Variable quality.",
     },
     {
         "name": "ollama",
@@ -84,8 +84,8 @@ PROVIDER_META = [
         "free_tier": True,
         "env_var": None,
         "help_url": "https://ollama.com/download",
-        "blurb": "Runs a local model (qwen2.5:32b default). Free, fully offline. "
-                 "Requires `ollama serve` running with the model pulled.",
+        "blurb": "Runs a local model. Free, fully offline. "
+                 "Requires `ollama serve` running with a model pulled.",
     },
 ]
 

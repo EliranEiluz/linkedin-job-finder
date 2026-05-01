@@ -6,3 +6,4 @@ defusedxml
 lxml
 anthropic
 filelock>=3.13
+pypdf>=4.0

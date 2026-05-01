@@ -43,8 +43,9 @@ Multi-profile so one repo can drive several parallel searches.
   results because no personalization) or `loggedin` (Playwright + a saved
   session for jobs the guest endpoint hides). Both can run concurrently —
   `filelock`-coordinated atomic merges keep `results.json` consistent.
-- **Claude scoring with a feedback loop.** Each job description goes to
-  `claude-sonnet-4-5` with your CV. Outputs `fit ∈ {good, ok, skip}`,
+- **LLM scoring with a feedback loop.** Each job description goes to
+  your configured LLM (Claude / Gemini / OpenAI / OpenRouter / Ollama)
+  with your CV. Outputs `fit ∈ {good, ok, skip}`,
   `score 1–10`, free-text reasons. As you rate jobs and progress them
   through the kanban, the scorer's few-shot prompt automatically picks
   up your most recent positive/negative signals — recency-weighted,
@@ -102,14 +103,15 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # Option C — Gemini (free tier, 1500 RPM): https://aistudio.google.com/apikey
 export GEMINI_API_KEY=...
 
-# Option D — OpenAI / ChatGPT (paid; ~$0.15/M input, $0.60/M output for gpt-4o-mini)
+# Option D — OpenAI / ChatGPT (paid)
 export OPENAI_API_KEY=sk-...
 
 # Option E — OpenRouter (catalog of free models): https://openrouter.ai/keys
 export OPENROUTER_API_KEY=sk-or-...
 
 # Option F — Ollama (fully local, no key, no network)
-ollama serve && ollama pull qwen2.5:32b
+# (pull whichever model you want; defaults are in backend/llm/ollama.py)
+ollama serve && ollama pull <model>
 ```
 
 Resolution order on a fresh run is: `claude_cli → claude_sdk → gemini →

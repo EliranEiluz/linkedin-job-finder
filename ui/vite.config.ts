@@ -42,6 +42,11 @@ const LLM_LIST_TIMEOUT_MS = 10_000;
 const LLM_SAVE_TIMEOUT_MS = 10_000;
 const LLM_TEST_TIMEOUT_MS = 30_000;
 const LINKEDIN_SESSION_PATH = path.join(REPO_ROOT, 'linkedin_session.json');
+// CV PDF extraction — wizard Step 4 pipes uploaded PDFs through this so the
+// user gets real text instead of FileReader.readAsText() gibberish.
+const CV_EXTRACT_CTL = path.join(BACKEND_DIR, 'ctl', 'cv_extract_ctl.py');
+const CV_EXTRACT_TIMEOUT_MS = 30_000;
+const CV_EXTRACT_MAX_BYTES = 10 * 1024 * 1024; // mirrors MAX_BYTES in cv_extract_ctl.py
 
 type ScrapeMode = 'loggedin' | 'guest';
 type RunStatus = 'running' | 'done' | 'error' | 'killed';
@@ -737,10 +742,23 @@ const configApiPlugin = (): Plugin => ({
     // Serve root-level JSON files that used to be symlinks in ui/public/.
     // Replaces ui/public/{results,run_history,defaults}.json symlinks so
     // Windows clones (no Developer Mode) don't end up with text stubs.
+    //
+    // Fresh-clone fallbacks: results.json + run_history.json are gitignored
+    // (per-user scrape state) and defaults.json is generated on-demand from
+    // backend/search.py. A new user finishes the wizard and immediately
+    // navigates to Corpus / Tracker / Run History / Crawler Config — those
+    // pages must NOT see a 404, or they render the error state. So:
+    //   - results.json missing  -> 200 []           (empty corpus)
+    //   - run_history.json miss -> 200 {"runs":[]}  (no scrapes yet)
+    //   - defaults.json missing -> spawn `--print-defaults`, persist, serve
     const rootJsonFiles: Record<string, string> = {
       '/results.json':     path.join(REPO_ROOT, 'results.json'),
       '/run_history.json': path.join(REPO_ROOT, 'run_history.json'),
       '/defaults.json':    path.join(REPO_ROOT, 'defaults.json'),
+    };
+    const enoentFallback: Record<string, string> = {
+      '/results.json':     '[]\n',
+      '/run_history.json': '{"runs": []}\n',
     };
     server.middlewares.use(async (req, res, next) => {
       // Strip cache-busting query string (UI fetches use `?t=Date.now()`).
@@ -752,11 +770,65 @@ const configApiPlugin = (): Plugin => ({
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         res.end(data);
+        return;
       } catch (err: unknown) {
         const code = (err as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT') { res.statusCode = 404; res.end('{}'); }
-        else next(err);
+        if (code !== 'ENOENT') return next(err);
       }
+
+      // Static fallbacks (results / run_history) — empty defaults that let
+      // the page render its EmptyState instead of an error.
+      const fallback = enoentFallback[pathOnly];
+      if (fallback !== undefined) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(fallback);
+        return;
+      }
+
+      // defaults.json — auto-generate via `--print-defaults`. Removes the
+      // README's "regenerate via python3 backend/search.py --print-defaults
+      // > defaults.json" footnote that no first-time user catches.
+      if (pathOnly === '/defaults.json') {
+        let stdout = '';
+        let stderr = '';
+        try {
+          const child = spawn('python3', [SEARCH_SCRIPT, '--print-defaults'], {
+            cwd: REPO_ROOT, env: process.env,
+          });
+          child.stdout.on('data', (c: Buffer) => { stdout += c.toString('utf8'); });
+          child.stderr.on('data', (c: Buffer) => { stderr += c.toString('utf8'); });
+          const exitCode: number | null = await new Promise((resolve) => {
+            const t = setTimeout(() => {
+              try { child.kill('SIGKILL'); } catch { /* dead */ }
+              resolve(null);
+            }, 15_000);
+            child.once('close', (c) => { clearTimeout(t); resolve(c); });
+            child.once('error', () => { clearTimeout(t); resolve(null); });
+          });
+          if (exitCode === 0 && stdout.trim()) {
+            // Persist atomically so subsequent reads hit the file path.
+            try {
+              const tmp = target + '.tmp';
+              await fs.writeFile(tmp, stdout, 'utf8');
+              await fs.rename(tmp, target);
+            } catch { /* serve from memory regardless */ }
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(stdout);
+            return;
+          }
+          console.error(
+            `[defaults] auto-gen exit=${exitCode}, stderr=${stderr.slice(0, 400)}`,
+          );
+        } catch (e) {
+          console.error('[defaults] spawn error:', (e as Error).message);
+        }
+        // Auto-gen failed — fall through to 404 so the page surfaces it.
+      }
+
+      res.statusCode = 404;
+      res.end('{}');
     });
 
     server.middlewares.use(async (req, res, next) => {
@@ -1554,6 +1626,105 @@ const configApiPlugin = (): Plugin => ({
         // ---- cv save (used by the onboarding flow instead of the old
         //      combined /api/onboarding/save, which clobbers the config
         //      symlink). Tiny endpoint: just writes cv.txt atomically. ------
+
+        // ---- cv extract-pdf — pipe raw PDF bytes through cv_extract_ctl.py
+        //      so the wizard's CV step gets real text instead of the gibberish
+        //      FileReader.readAsText() produces on a binary PDF.
+        //      Body is the raw PDF (no JSON envelope, no base64). Content-Type
+        //      should be application/pdf but we don't enforce — Python parses
+        //      the bytes and rejects non-PDFs with a clear error.
+        if (url.startsWith('/api/cv/extract-pdf') && req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          let total = 0;
+          let aborted = false;
+          await new Promise<void>((resolve) => {
+            req.on('data', (c: Buffer) => {
+              total += c.length;
+              if (total > CV_EXTRACT_MAX_BYTES) {
+                aborted = true;
+                // Drop further chunks — let `end` settle the promise.
+                return;
+              }
+              chunks.push(c);
+            });
+            req.on('end', () => resolve());
+            req.on('error', () => resolve());
+          });
+          if (aborted) {
+            return sendJson(res, 413, {
+              ok: false,
+              error: `PDF exceeds ${CV_EXTRACT_MAX_BYTES / (1024 * 1024)} MB cap`,
+            });
+          }
+          const body = Buffer.concat(chunks);
+          if (body.length === 0) {
+            return sendJson(res, 400, { ok: false, error: 'empty body' });
+          }
+
+          // Inline spawn — runCtl is string-stdin only; PDFs are binary so
+          // we pipe Buffers straight to the child's stdin.
+          const result: { stdout: string; stderr: string; code: number | null;
+            timedOut: boolean; spawnError: string | null } =
+            await new Promise((resolve) => {
+              let stdout = '';
+              let stderr = '';
+              let timedOut = false;
+              let spawnError: string | null = null;
+              let settled = false;
+              const child = spawn('python3', [CV_EXTRACT_CTL], {
+                cwd: REPO_ROOT, env: process.env,
+              });
+              const timer = setTimeout(() => {
+                timedOut = true;
+                try { child.kill('SIGKILL'); } catch { /* dead already */ }
+              }, CV_EXTRACT_TIMEOUT_MS);
+              child.stdout.on('data', (c: Buffer) => { stdout += c.toString('utf8'); });
+              child.stderr.on('data', (c: Buffer) => { stderr += c.toString('utf8'); });
+              child.on('error', (err) => {
+                spawnError = (err as Error).message;
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve({ stdout, stderr, code: null, timedOut, spawnError });
+              });
+              child.on('close', (code) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve({ stdout, stderr, code, timedOut, spawnError });
+              });
+              child.stdin.on('error', (err) => {
+                if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
+                  console.error('[cv-extract] stdin error:', err);
+                }
+              });
+              child.stdin.end(body);
+            });
+
+          if (result.spawnError) {
+            return sendJson(res, 500, {
+              ok: false,
+              error: `failed to spawn cv_extract_ctl.py: ${result.spawnError}`,
+            });
+          }
+          if (result.timedOut) {
+            return sendJson(res, 504, {
+              ok: false, error: 'PDF extraction timed out',
+            });
+          }
+          let parsed: { ok?: boolean } & Record<string, unknown>;
+          try { parsed = JSON.parse(result.stdout); }
+          catch {
+            return sendJson(res, 500, {
+              ok: false,
+              error: 'cv_extract_ctl emitted non-JSON stdout',
+              raw_stdout: result.stdout.slice(0, 500),
+              raw_stderr: result.stderr.slice(0, 500),
+              exit_code: result.code,
+            });
+          }
+          return sendJson(res, parsed.ok ? 200 : 400, parsed);
+        }
 
         if (url.startsWith('/api/cv/save') && req.method === 'POST') {
           const raw = await readJsonBody(req);

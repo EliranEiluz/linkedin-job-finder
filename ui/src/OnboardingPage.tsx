@@ -820,16 +820,34 @@ session and exits. Then come back here and click "I've completed this".`}</code>
   );
 };
 
-// Read an uploaded file as UTF-8 text. For .pdf we just try the same thing —
-// it won't be clean, but the user can paste instead and the warning banner
-// tells them so.
-const readFileAsText = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
+// Read an uploaded file as UTF-8 text. PDFs go through the server-side
+// pypdf extractor at /api/cv/extract-pdf — FileReader.readAsText() on
+// PDF binary returns gibberish. Plain-text files (.txt / .md) round-trip
+// through the browser as before.
+const readFileAsText = async (file: File): Promise<string> => {
+  const isPdf = file.type === 'application/pdf' ||
+    file.name.toLowerCase().endsWith('.pdf');
+  if (isPdf) {
+    const buf = await file.arrayBuffer();
+    const res = await fetch('/api/cv/extract-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/pdf' },
+      body: buf,
+    });
+    const j = (await res.json().catch(() => ({}))) as
+      { ok?: boolean; text?: string; error?: string };
+    if (!res.ok || !j.ok || typeof j.text !== 'string') {
+      throw new Error(j.error || `extract-pdf failed (HTTP ${res.status})`);
+    }
+    return j.text;
+  }
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ''));
     reader.onerror = () => reject(reader.error ?? new Error('read failed'));
     reader.readAsText(file);
   });
+};
 
 // --- Step 4: CV upload (existing) ----------------------------------------
 
@@ -846,16 +864,18 @@ const Step4CV = ({
   onBack: () => void;
   haveExistingConfig: boolean;
 }) => {
-  const [pdfWarn, setPdfWarn] = useState(false);
+  const [pdfErr, setPdfErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const onFile = useCallback(async (file: File) => {
-    setPdfWarn(file.name.toLowerCase().endsWith('.pdf'));
+    setPdfErr(null);
     try {
       const text = await readFileAsText(file);
       setCv(text);
-    } catch {
-      // leave cv untouched; user can paste
+    } catch (e) {
+      // Surface the real reason (image-only PDF, encrypted, too big, …)
+      // so the user knows whether to paste instead or re-export the PDF.
+      setPdfErr((e as Error).message || 'failed to read file');
     }
   }, [setCv]);
 
@@ -922,7 +942,7 @@ const Step4CV = ({
             type="button"
             onClick={() => {
               setCv('');
-              setPdfWarn(false);
+              setPdfErr(null);
               if (fileRef.current) fileRef.current.value = '';
             }}
             className="text-xs text-slate-500 hover:text-rose-600"
@@ -931,10 +951,9 @@ const Step4CV = ({
           </button>
         )}
       </div>
-      {pdfWarn && (
+      {pdfErr && (
         <Banner kind="warn">
-          PDF text extraction is best-effort — if the textarea below looks
-          garbled, paste the plain text instead.
+          {pdfErr} — paste the plain text below instead.
         </Banner>
       )}
       <textarea
@@ -1142,6 +1161,7 @@ const Step6Generate = ({
   intent,
   current,
   draft,
+  haveExisting,
   onBack,
   onSaved,
 }: {
@@ -1149,6 +1169,7 @@ const Step6Generate = ({
   intent: string;
   current: CrawlerConfig | null;
   draft: WizardDraft;
+  haveExisting: boolean;
   onBack: () => void;
   onSaved: (profileName?: string) => void;
 }) => {
@@ -1299,7 +1320,7 @@ const Step6Generate = ({
         <Banner kind="info">
           <span className="inline-flex items-center gap-2">
             <span className="h-2 w-2 animate-pulse rounded-full bg-indigo-500" />
-            Claude is generating your config… this takes up to 3 minutes.
+            Generating your config… this takes up to 3 minutes.
           </span>
         </Banner>
       )}
@@ -1310,7 +1331,7 @@ const Step6Generate = ({
           </Banner>
           {gen.raw && (
             <details className="mb-3 rounded border border-slate-200 bg-white p-3 text-xs">
-              <summary className="cursor-pointer text-slate-600">Raw Claude output</summary>
+              <summary className="cursor-pointer text-slate-600">Raw model output</summary>
               <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap text-slate-700">
                 {gen.raw}
               </pre>
@@ -1337,62 +1358,102 @@ const Step6Generate = ({
 
       {gen.kind === 'success' && (
         <>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {haveExisting ? (
+            // Returning user — show side-by-side so they can see what's
+            // changing before they choose between new-profile and overwrite.
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <section>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-indigo-700">
+                  Generated
+                </div>
+                <ConfigInspector cfg={gen.config} />
+              </section>
+              <section>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Current
+                </div>
+                {current ? (
+                  <ConfigInspector cfg={current} />
+                ) : (
+                  <div className="rounded border border-dashed border-slate-300 p-3 text-sm italic text-slate-500">
+                    No existing config — this will be your first one.
+                  </div>
+                )}
+              </section>
+            </div>
+          ) : (
+            // First-run — there's nothing to compare against (the "current"
+            // is just the auto-created empty default profile). Render the
+            // generated config full-width so it's the obvious focus.
             <section>
               <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-indigo-700">
-                Generated
+                Your config
               </div>
               <ConfigInspector cfg={gen.config} />
             </section>
-            <section>
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Current
-              </div>
-              {current ? (
-                <ConfigInspector cfg={current} />
-              ) : (
-                <div className="rounded border border-dashed border-slate-300 p-3 text-sm italic text-slate-500">
-                  No existing config — this will be your first one.
-                </div>
-              )}
-            </section>
-          </div>
+          )}
 
           {saveErr && <div className="mt-4"><Banner kind="err">Save failed: {saveErr}</Banner></div>}
 
           <div className="mt-5 rounded border border-slate-200 bg-slate-50 p-3">
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Profile name
-            </label>
-            <input
-              type="text"
-              value={profileName}
-              onChange={(e) => setProfileName(e.target.value)}
-              disabled={saving}
-              placeholder={defaultProfileName()}
-              className="mb-2 w-full max-w-sm rounded border border-slate-300 bg-white px-2 py-1 text-sm font-mono shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 disabled:opacity-50"
-            />
-            <p className="text-xs text-slate-500">
-              Letters, digits, underscore, hyphen. Max 40 chars.
-            </p>
+            {haveExisting ? (
+              // Returning user — let them pick between new-profile (preserves
+              // their current one) and overwrite (in-place edit).
+              <>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Profile name
+                </label>
+                <input
+                  type="text"
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  disabled={saving}
+                  placeholder={defaultProfileName()}
+                  className="mb-2 w-full max-w-sm rounded border border-slate-300 bg-white px-2 py-1 text-sm font-mono shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 disabled:opacity-50"
+                />
+                <p className="text-xs text-slate-500">
+                  Letters, digits, underscore, hyphen. Max 40 chars.
+                </p>
+              </>
+            ) : (
+              // First-run — only one meaningful action (write into the active
+              // 'default' profile). Skip the profile-name input + the
+              // new-vs-overwrite choice; both are noise here.
+              <p className="text-xs text-slate-500">
+                Saves into your active profile so the next scrape uses it.
+              </p>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={saveAsNewProfile}
-                disabled={saving || !PROFILE_NAME_RE.test(profileName)}
-                className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {saving ? 'Saving…' : 'Save as new profile'}
-              </button>
-              <button
-                type="button"
-                onClick={saveOverwrite}
-                disabled={saving}
-                className="rounded border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                title="Overwrites the currently-active profile in place."
-              >
-                Overwrite active profile
-              </button>
+              {haveExisting ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={saveAsNewProfile}
+                    disabled={saving || !PROFILE_NAME_RE.test(profileName)}
+                    className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {saving ? 'Saving…' : 'Save as new profile'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveOverwrite}
+                    disabled={saving}
+                    className="rounded border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    title="Overwrites the currently-active profile in place."
+                  >
+                    Overwrite active profile
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={saveOverwrite}
+                  disabled={saving}
+                  className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={generate}
@@ -1527,8 +1588,14 @@ const Step7WhatsNext = ({
 
 export const OnboardingPage = ({
   onSwitchTab,
+  onOnboarded,
 }: {
   onSwitchTab: (tab: 'corpus' | 'config' | 'history') => void;
+  // Called by the wizard after a successful Step 6 save so the parent App
+  // can re-fetch /api/profiles and unlock the rest of the tabs. Without
+  // this signal App's `onboarded` stays stale at false and the Step 7
+  // navigation buttons silently no-op (App keeps force-rendering the wizard).
+  onOnboarded?: () => void;
 }) => {
   const [step, setStep] = useState<Step>(0);
   const [draft, setDraft] = useState<WizardDraft>({});
@@ -1540,14 +1607,18 @@ export const OnboardingPage = ({
   const [savedProfile, setSavedProfile] = useState<string | null>(null);
 
   // Load current config on mount so we can show side-by-side diff and the
-  // "you already have a config" banner.
+  // "you already have a config" banner. Note: config.json *always* exists
+  // after _migrate_if_needed auto-creates a default profile on first ctl
+  // call, so we can't use config existence as the "already onboarded" signal.
+  // cv.txt is the real "user finished the wizard before" marker, same as in
+  // App.tsx. /api/profiles reports cv_present.
   useEffect(() => {
     (async () => {
       try {
-        const info = await fetch(`/api/config-info?t=${Date.now()}`);
-        if (info.ok) {
-          const j = (await info.json()) as { exists?: boolean };
-          setHaveExisting(Boolean(j.exists));
+        const profiles = await fetch(`/api/profiles?t=${Date.now()}`);
+        if (profiles.ok) {
+          const j = (await profiles.json()) as { cv_present?: boolean };
+          setHaveExisting(j.cv_present === true);
         }
         const res = await fetch(`/api/config?t=${Date.now()}`);
         if (res.ok) {
@@ -1567,7 +1638,7 @@ export const OnboardingPage = ({
       <h1 className="mb-1 text-lg font-semibold text-slate-900">Setup</h1>
       <p className="mb-4 text-sm text-slate-500">
         Walk through pre-flight, pick an LLM + geo + mode, then upload your CV
-        so Claude can build a tailored scraper config you'll review before saving.
+        so the LLM can build a tailored scraper config you'll review before saving.
       </p>
 
       {canShowSaved && (
@@ -1639,11 +1710,15 @@ export const OnboardingPage = ({
           intent={intent}
           current={current}
           draft={draft}
+          haveExisting={haveExisting}
           onBack={() => setStep(5)}
           onSaved={(name) => {
             setSavedProfile(name ?? null);
             setSaved(true);
             setStep(7);
+            // Tell App to re-check cv_present so the user can leave the
+            // wizard from Step 7 (otherwise App.tsx force-renders us).
+            onOnboarded?.();
           }}
         />
       )}
