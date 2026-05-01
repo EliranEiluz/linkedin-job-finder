@@ -2660,7 +2660,9 @@ def _run_guest_pipeline(
     return prefilter_skipped, diagnosis_counts
 
 
-def main() -> None:
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """CLI parser for backend/search.py. Kept as a standalone helper so
+    tests + the UI middleware can introspect / re-use the same flags."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--all", action="store_true", help="show all results including seen")
     parser.add_argument(
@@ -2712,179 +2714,86 @@ def main() -> None:
         "PROVIDER ∈ {auto, claude_cli, claude_sdk, gemini, "
         "openrouter, ollama}. Default: auto.",
     )
-    args = parser.parse_args()
+    return parser
 
-    if args.test_llm is not None:
-        from backend.llm import test_provider
 
-        ok, msg = test_provider(args.test_llm)
-        prefix = "OK" if ok else "FAIL"
-        print(f"[{prefix}] {msg}")
-        sys.exit(0 if ok else 1)
-
-    if args.print_defaults:
-        # Print the *hardcoded* defaults — not the merged active config —
-        # so the UI's "Reset to defaults" button always lands on the
-        # in-file source-of-truth, regardless of what's currently in
-        # config.json.
-        print(json.dumps(_hardcoded_defaults(), indent=2, ensure_ascii=False))
-        return
-
-    # Track when we started for run history (move now() up here so it's correct
-    # even if early errors abort the run).
-    started_at = datetime.now()
-    started_perf = time.perf_counter()
-
-    # Resolve scrape breadth. Config-file `max_pages` is the new default;
-    # CLI --pages still overrides it; --all-time still bumps to 10 if neither
-    # CLI flag nor config narrows it.
-    config_pages = _ACTIVE_CONFIG.get("max_pages", 3)
+def _resolve_max_pages(args: argparse.Namespace) -> int:
+    """Order of precedence: --pages CLI > --all-time bump > config.max_pages > 3."""
     if args.pages is not None:
-        max_pages = args.pages
-    elif args.all_time:
-        max_pages = 10
-    else:
-        max_pages = config_pages
-    date_filter_override = "" if args.all_time else None  # None = use default DATE_FILTER
-    print(
-        f"Scrape settings: max_pages={max_pages}, "
-        f"date_filter={'ANY' if args.all_time else DATE_FILTER}"
-    )
+        return int(args.pages)
+    if args.all_time:
+        return 10
+    return int(_ACTIVE_CONFIG.get("max_pages", 3))
 
-    seen = load_seen()
-    all_results = load_results()
-    new_jobs: list[dict] = []
 
-    # Build the query plan from the user-defined CATEGORIES list. Each item
-    # is (query, category_id, category_type) — the type drives whether the
-    # scraper applies token-relevance (keyword) or company-name relevance
-    # (company) downstream. Falls back to the legacy three-bucket structure
-    # if CATEGORIES is empty for any reason.
-    all_queries: list[tuple[str, str, str]] = []
+def _build_query_plan() -> list[tuple[str, str, str]]:
+    """Flatten CATEGORIES into (query, category_id, category_type) triples.
+    Falls back to the legacy three-bucket structure (SEARCH_QUERIES /
+    SECURITY_RESEARCHER_QUERIES / COMPANY_QUERIES) when CATEGORIES is empty —
+    keeps externally-fed configs that still use the old keys working."""
+    plan: list[tuple[str, str, str]] = []
     for cat in CATEGORIES:
         cid = cat.get("id") or "uncategorized"
         ctype = cat.get("type") or "keyword"
         for q in cat.get("queries", []):
             if q and isinstance(q, str):
-                all_queries.append((q, cid, ctype))
-    if not all_queries:
-        all_queries = (
-            [(q, "crypto", "keyword") for q in SEARCH_QUERIES]
-            + [(q, "security_researcher", "keyword") for q in SECURITY_RESEARCHER_QUERIES]
-            + [(q, "company", "company") for q in COMPANY_QUERIES]
-        )
+                plan.append((q, cid, ctype))
+    if plan:
+        return plan
+    return (
+        [(q, "crypto", "keyword") for q in SEARCH_QUERIES]
+        + [(q, "security_researcher", "keyword") for q in SECURITY_RESEARCHER_QUERIES]
+        + [(q, "company", "company") for q in COMPANY_QUERIES]
+    )
 
-    cv_text = _load_cv_text()
-    if cv_text:
-        if shutil.which("claude"):
-            print("Fit scoring: Claude Code CLI")
-        elif os.environ.get("ANTHROPIC_API_KEY"):
-            print("Fit scoring: Anthropic SDK (ANTHROPIC_API_KEY)")
-        else:
-            print(
-                "Fit scoring: regex fallback (install `claude` CLI or set ANTHROPIC_API_KEY for LLM scoring)"
-            )
-    else:
+
+def _print_scoring_backend(cv_text: str) -> None:
+    """Log which scorer the run will use. Pure UX — no behavior change."""
+    if not cv_text:
         print(f"Fit scoring: regex fallback (no CV at {CV_FILE})")
-
-    print(f"Backend mode: {args.mode}")
-
-    # Stats accumulators shared across both modes.
-    per_query_stats: list[dict] = []
-    run_errors: list[dict] = []
-    diagnosis_counts = {"ok": 0, "empty-dom": 0, "authwall": 0, "nav-failed": 0, "error": 0}
-
-    # Both pipelines return (prefilter_skipped, diagnosis_counts). Only the
-    # latter is read downstream — the per-row title-filter count is already
-    # baked into each job's `scored_by="title-filter"` so the corpus reflects
-    # it and run_history derives the count via that field at write time.
-    if args.mode == "guest":
-        _prefilter_skipped, diagnosis_counts = _run_guest_pipeline(
-            args=args,
-            all_queries=all_queries,
-            seen=seen,
-            new_jobs=new_jobs,
-            max_pages=max_pages,
-            date_filter_override=date_filter_override,
-            cv_text=cv_text,
-            per_query_stats=per_query_stats,
-            run_errors=run_errors,
-        )
+        return
+    if shutil.which("claude"):
+        print("Fit scoring: Claude Code CLI")
+    elif os.environ.get("ANTHROPIC_API_KEY"):
+        print("Fit scoring: Anthropic SDK (ANTHROPIC_API_KEY)")
     else:
-        _prefilter_skipped, diagnosis_counts = _run_loggedin_pipeline(
-            args=args,
-            all_queries=all_queries,
-            seen=seen,
-            new_jobs=new_jobs,
-            max_pages=max_pages,
-            date_filter_override=date_filter_override,
-            cv_text=cv_text,
-            per_query_stats=per_query_stats,
-            run_errors=run_errors,
+        print(
+            "Fit scoring: regex fallback "
+            "(install `claude` CLI or set ANTHROPIC_API_KEY for LLM scoring)"
         )
 
-    # ===== POST-PROCESSING (shared by both modes) =====
-    display_jobs = []
-    skipped = []
-    for job in new_jobs:
-        if job.get("fit") == "skip":
-            skipped.append(job)
-        else:
-            display_jobs.append(job)
 
-    # Sort display jobs by score (highest first), priority companies first.
-    def _sort_key(j: dict) -> tuple[int, int, int]:
-        return (
-            0 if j.get("priority") else 1,
-            -(j.get("score") or 0),
-            {"good": 0, "ok": 1, None: 2, "skip": 3}.get(j.get("fit"), 2),
-        )
-
-    display_jobs.sort(key=_sort_key)
-
-    all_results.extend(new_jobs)
-    save_seen(seen)
-    # Pass only new_jobs — save_results_merge dedups against the on-disk corpus
-    # under fcntl lock, which makes parallel --mode=guest + --mode=loggedin runs
-    # safe (otherwise the second writer would overwrite the first's additions).
-    save_results_merge(new_jobs)
-
-    # Record the IDs that were new this run so send_email.py can pick them up.
-    # Path MUST be ROOT — that's where send_email.py:NEW_IDS_FILE reads from,
-    # and it matches the convention for every other persistent state file
-    # (results.json, seen_jobs.json, run_history.json, etc.). Writing to
-    # `HERE / new_ids.json` (which lives under backend/) silently dropped
-    # all post-Apr-24 daily digests on the floor — the scrape produced fresh
-    # IDs, but the email kept reading the stale ROOT file.
-    (ROOT / "new_ids.json").write_text(json.dumps([j["id"] for j in new_jobs], indent=2))
-
+def _print_run_summary(
+    new_jobs: list[dict],
+    skipped: list[dict],
+    display_jobs: list[dict],
+    *,
+    show_seen: bool,
+    all_results: list[dict],
+) -> None:
+    """Stdout summary of the run — priority/good/ok/unscored/skipped buckets,
+    plus optional 'previously seen' tail when invoked with --all."""
     print(f"\n{'=' * 55}")
     if display_jobs:
         priority = [j for j in display_jobs if j.get("priority")]
         normal = [j for j in display_jobs if not j.get("priority")]
-
         print(f"NEW JOBS: {len(display_jobs)} shown, {len(skipped)} filtered out")
         print(f"{'=' * 55}")
-
         if priority:
             print("\n--- PRIORITY COMPANIES ---")
             for job in priority:
                 print_job(job)
-
         good_jobs = [j for j in normal if j.get("fit") == "good"]
         ok_jobs = [j for j in normal if j.get("fit") == "ok"]
         unscored = [j for j in normal if j.get("fit") not in ("good", "ok", "skip")]
-
         if good_jobs:
             print("\n--- GOOD FIT ---")
             for job in good_jobs:
                 print_job(job)
-
         if ok_jobs:
             print("\n--- OK FIT ---")
             for job in ok_jobs:
                 print_job(job)
-
         if unscored:
             print("\n--- UNSCORED ---")
             for job in unscored:
@@ -2897,7 +2806,7 @@ def main() -> None:
         for job in skipped:
             print_job(job, label="skipped")
 
-    if args.all:
+    if show_seen:
         old = [j for j in all_results if j not in new_jobs]
         if old:
             print(f"\n--- PREVIOUSLY SEEN ({len(old)}) ---")
@@ -2906,15 +2815,16 @@ def main() -> None:
 
     print(f"\nAll results saved to: {RESULTS_FILE}")
 
-    # Write the polished HTML digest so the user can `open digest.html` after
-    # a manual run. send_email.py will regenerate it (and optionally email)
-    # when invoked from run.py on a schedule.
-    #
-    # Like every other persistent state file (results.json, seen_jobs.json,
-    # run_history.json), digest.html lives at the project ROOT — NOT under
-    # backend/. send_email.py reads ROOT/digest.html; writing it under HERE
-    # would silently de-sync the manual-run path from the scheduled-run path.
-    # Same convention as the HERE/ROOT block comment near search.py:805.
+
+def _write_digest_html(new_jobs: list[dict]) -> None:
+    """Render and write the polished HTML digest so the user can `open
+    digest.html` after a manual run. Best-effort — never raises.
+
+    Like every other persistent state file (results.json, seen_jobs.json,
+    run_history.json), digest.html lives at the project ROOT — NOT under
+    backend/. send_email.py reads ROOT/digest.html; writing it under HERE
+    would silently de-sync the manual-run path from the scheduled-run path.
+    """
     try:
         # `send_email` is a sibling module in backend/ (not installed); both
         # the bare-name and `backend.send_email` paths work because we insert
@@ -2930,8 +2840,20 @@ def main() -> None:
     except Exception as e:
         print(f"Digest generation failed: {str(e)[:200]}")
 
-    # Record run-history entry for the UI's Run History page. Best-effort —
-    # never let history-writing failures crash the scraper.
+
+def _record_run_history(
+    args: argparse.Namespace,
+    *,
+    new_jobs: list[dict],
+    diagnosis_counts: dict[str, int],
+    per_query_stats: list[dict],
+    run_errors: list[dict],
+    started_at: datetime,
+    started_perf: float,
+    max_pages: int,
+) -> None:
+    """Append a run record to run_history.json so the UI's Run History page
+    can chart it. Best-effort — failures are logged, never re-raised."""
     try:
         ended_at = datetime.now()
         scored_claude = sum(1 for j in new_jobs if j.get("scored_by") == "claude")
@@ -2974,6 +2896,123 @@ def main() -> None:
     except Exception as e:
         print(f"⚠ failed to write run history: {e}")
         traceback.print_exc()
+
+
+def main() -> None:
+    args = _build_arg_parser().parse_args()
+
+    if args.test_llm is not None:
+        from backend.llm import test_provider
+
+        ok, msg = test_provider(args.test_llm)
+        prefix = "OK" if ok else "FAIL"
+        print(f"[{prefix}] {msg}")
+        sys.exit(0 if ok else 1)
+
+    if args.print_defaults:
+        # Print the *hardcoded* defaults — not the merged active config —
+        # so the UI's "Reset to defaults" button always lands on the
+        # in-file source-of-truth, regardless of what's currently in
+        # config.json.
+        print(json.dumps(_hardcoded_defaults(), indent=2, ensure_ascii=False))
+        return
+
+    # Track when we started for run history (move now() up here so it's correct
+    # even if early errors abort the run).
+    started_at = datetime.now()
+    started_perf = time.perf_counter()
+
+    max_pages = _resolve_max_pages(args)
+    date_filter_override = "" if args.all_time else None  # None = use default DATE_FILTER
+    print(
+        f"Scrape settings: max_pages={max_pages}, "
+        f"date_filter={'ANY' if args.all_time else DATE_FILTER}"
+    )
+
+    seen = load_seen()
+    all_results = load_results()
+    new_jobs: list[dict] = []
+    all_queries = _build_query_plan()
+
+    cv_text = _load_cv_text()
+    _print_scoring_backend(cv_text)
+    print(f"Backend mode: {args.mode}")
+
+    # Stats accumulators shared across both modes.
+    per_query_stats: list[dict] = []
+    run_errors: list[dict] = []
+    diagnosis_counts = {"ok": 0, "empty-dom": 0, "authwall": 0, "nav-failed": 0, "error": 0}
+
+    # Both pipelines return (prefilter_skipped, diagnosis_counts). Only the
+    # latter is read downstream — the per-row title-filter count is already
+    # baked into each job's `scored_by="title-filter"` so the corpus reflects
+    # it and run_history derives the count via that field at write time.
+    pipeline = _run_guest_pipeline if args.mode == "guest" else _run_loggedin_pipeline
+    _prefilter_skipped, diagnosis_counts = pipeline(
+        args=args,
+        all_queries=all_queries,
+        seen=seen,
+        new_jobs=new_jobs,
+        max_pages=max_pages,
+        date_filter_override=date_filter_override,
+        cv_text=cv_text,
+        per_query_stats=per_query_stats,
+        run_errors=run_errors,
+    )
+
+    # ===== POST-PROCESSING (shared by both modes) =====
+    display_jobs = []
+    skipped = []
+    for job in new_jobs:
+        if job.get("fit") == "skip":
+            skipped.append(job)
+        else:
+            display_jobs.append(job)
+
+    # Sort display jobs by score (highest first), priority companies first.
+    def _sort_key(j: dict) -> tuple[int, int, int]:
+        return (
+            0 if j.get("priority") else 1,
+            -(j.get("score") or 0),
+            {"good": 0, "ok": 1, None: 2, "skip": 3}.get(j.get("fit"), 2),
+        )
+
+    display_jobs.sort(key=_sort_key)
+
+    all_results.extend(new_jobs)
+    save_seen(seen)
+    # Pass only new_jobs — save_results_merge dedups against the on-disk corpus
+    # under fcntl lock, which makes parallel --mode=guest + --mode=loggedin runs
+    # safe (otherwise the second writer would overwrite the first's additions).
+    save_results_merge(new_jobs)
+
+    # Record the IDs that were new this run so send_email.py can pick them up.
+    # Path MUST be ROOT — that's where send_email.py:NEW_IDS_FILE reads from,
+    # and it matches the convention for every other persistent state file
+    # (results.json, seen_jobs.json, run_history.json, etc.). Writing to
+    # `HERE / new_ids.json` (which lives under backend/) silently dropped
+    # all post-Apr-24 daily digests on the floor — the scrape produced fresh
+    # IDs, but the email kept reading the stale ROOT file.
+    (ROOT / "new_ids.json").write_text(json.dumps([j["id"] for j in new_jobs], indent=2))
+
+    _print_run_summary(
+        new_jobs,
+        skipped,
+        display_jobs,
+        show_seen=args.all,
+        all_results=all_results,
+    )
+    _write_digest_html(new_jobs)
+    _record_run_history(
+        args,
+        new_jobs=new_jobs,
+        diagnosis_counts=diagnosis_counts,
+        per_query_stats=per_query_stats,
+        run_errors=run_errors,
+        started_at=started_at,
+        started_perf=started_perf,
+        max_pages=max_pages,
+    )
 
 
 if __name__ == "__main__":
