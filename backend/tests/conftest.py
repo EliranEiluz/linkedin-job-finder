@@ -20,6 +20,7 @@ Two responsibilities:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -68,6 +69,12 @@ def tmp_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def run_ctl(tmp_path: Path):
     """Subprocess runner for ctl scripts.
 
+    Critical: the ctl scripts hardcode ROOT = `Path(__file__).resolve().parent.parent.parent`
+    so they always write into the repo root regardless of cwd. To keep tests
+    hermetic we materialize a fake-repo layout under `tmp_path` (a `backend/`
+    tree mirroring the real one), copy the ctl + its deps into it, and spawn
+    that copy. The script's ROOT then resolves to `tmp_path`.
+
     Usage:
         rc, out, err = run_ctl("corpus_ctl.py", ["delete"], {"ids": ["123"]})
 
@@ -76,13 +83,32 @@ def run_ctl(tmp_path: Path):
         argv:   list of argparse args (e.g. ["delete"] or ["set-interval", "60"])
         stdin_payload: dict to JSON-encode and pipe to stdin, or None for no stdin,
                        or bytes/str to send raw.
-        cwd: working directory; defaults to a fresh tmp dir so writes stay isolated.
+        cwd: working directory; defaults to tmp_path itself.
         timeout: subprocess timeout seconds (default 30).
+        extra_files: dict of {relpath: text} to seed in the fake repo before
+                     the spawn (e.g. {"cv.txt": "my CV"}).
 
     Returns: (returncode, parsed-stdout-dict-or-raw-text, stderr).
-    Stdout parses as JSON when possible; falls back to the raw string on any
-    decode failure so the test gets to assert the actual error.
     """
+    import shutil
+
+    # Materialize the minimal directory tree the ctl scripts assume:
+    # tmp_path/backend/ctl/  + tmp_path/backend/llm/ + tmp_path/backend/search.py
+    # (plus _common, the scheduler package, and probes/tools so any imports succeed).
+    fake_backend = tmp_path / "backend"
+    fake_backend.mkdir(exist_ok=True)
+    fake_ctl = fake_backend / "ctl"
+    if not fake_ctl.exists():
+        shutil.copytree(BACKEND / "ctl", fake_ctl)
+    # Copy single files (search.py + send_email.py) and the llm package.
+    for fname in ("search.py", "send_email.py", "run.py"):
+        src = BACKEND / fname
+        if src.exists() and not (fake_backend / fname).exists():
+            shutil.copy2(src, fake_backend / fname)
+    if not (fake_backend / "llm").exists():
+        shutil.copytree(BACKEND / "llm", fake_backend / "llm")
+    # Empty package marker so `import backend.X` works.
+    (fake_backend / "__init__.py").touch(exist_ok=True)
 
     def _run(
         script: str,
@@ -90,11 +116,16 @@ def run_ctl(tmp_path: Path):
         stdin_payload: dict | bytes | str | None = None,
         cwd: Path | None = None,
         timeout: int = 30,
+        extra_files: dict[str, str] | None = None,
     ) -> tuple[int, Any, str]:
         argv = argv or []
-        script_path = BACKEND / "ctl" / script
+        script_path = fake_ctl / script
         if not script_path.exists():
             raise FileNotFoundError(script_path)
+
+        for relpath, contents in (extra_files or {}).items():
+            (tmp_path / relpath).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / relpath).write_text(contents)
 
         if stdin_payload is None:
             stdin_bytes: bytes | None = None
@@ -105,12 +136,21 @@ def run_ctl(tmp_path: Path):
         else:
             stdin_bytes = json.dumps(stdin_payload).encode("utf-8")
 
+        # PYTHONPATH so `from backend.llm` etc. resolve from the tmp tree.
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(tmp_path) + os.pathsep + env.get("PYTHONPATH", "")
+        # Strip HOME-leaking env vars that might point real tests at a real
+        # ~/.linkedin-jobs.env file (llm_ctl writes there). Tests that need
+        # them re-set explicitly via extra_files.
+        env["HOME"] = str(tmp_path)
+
         proc = subprocess.run(
             [sys.executable, str(script_path), *argv],
             input=stdin_bytes,
             capture_output=True,
             timeout=timeout,
             cwd=str(cwd) if cwd else str(tmp_path),
+            env=env,
         )
         stdout_text = proc.stdout.decode("utf-8", errors="replace")
         stderr_text = proc.stderr.decode("utf-8", errors="replace")
