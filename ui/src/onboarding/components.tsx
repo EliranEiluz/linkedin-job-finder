@@ -8,6 +8,9 @@ import type { Step } from './types';
 
 export const Stepper = ({ step }: { step: Step }) => {
   // Labels: short for mobile, full at md+. [shortLabel, fullLabel].
+  // Notifications step (index 6) sits between Intent and the LLM-driven
+  // Generate so the user picks delivery before kicking off a 1-3min
+  // generate call — no hidden surprise email setup at the end.
   const labels: readonly (readonly [string, string])[] = [
     ['Sys', 'Pre-flight'],
     ['LLM', 'LLM provider'],
@@ -15,6 +18,7 @@ export const Stepper = ({ step }: { step: Step }) => {
     ['Mode', 'LinkedIn mode'],
     ['CV', 'Upload CV'],
     ['Intent', 'Write intent'],
+    ['Notify', 'Notifications'],
     ['Review', 'Generate & review'],
     ['Done', "What's next"],
   ];

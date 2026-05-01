@@ -1,13 +1,18 @@
-// 8-step onboarding wizard. The eight Step components live under
+// 9-step onboarding wizard. The Step components live under
 // `./onboarding/steps/`; shared types in `./onboarding/types`; shared
 // presentational primitives (Stepper, Banner, BackButton, ConfigInspector)
 // in `./onboarding/components`. This file is just the orchestrator: it
 // owns the step-state machine, the wizard draft, and the cv/intent inputs,
 // and routes them through the matching step component.
 //
+// Step 6 (Notifications) was inserted between Intent (5) and the LLM-driven
+// Generate (was 6, now 7). The internal file names of Step6Generate and
+// Step7WhatsNext were kept rather than renamed to Step7/Step8 to keep the
+// rename diff small; the Step <enum> values are the source of truth.
+//
 // POSTs to /api/onboarding/{generate,save,save-as-profile} are handled
 // inside Step6Generate. Other steps hit /api/preflight, /api/llm/*,
-// /api/linkedin-session/*, /api/cv/*, /api/scrape (Step 7).
+// /api/notifications/*, /api/linkedin-session/*, /api/cv/*, /api/scrape.
 
 import { useEffect, useMemo, useState } from 'react';
 import type { CrawlerConfig } from './configTypes';
@@ -19,6 +24,7 @@ import { Step2Geo } from './onboarding/steps/Step2Geo';
 import { Step3Mode } from './onboarding/steps/Step3Mode';
 import { Step4CV } from './onboarding/steps/Step4CV';
 import { Step5Intent } from './onboarding/steps/Step5Intent';
+import { Step6Notifications } from './onboarding/steps/Step6Notifications';
 import { Step6Generate } from './onboarding/steps/Step6Generate';
 import { Step7WhatsNext } from './onboarding/steps/Step7WhatsNext';
 import type { Step, WizardDraft } from './onboarding/types';
@@ -68,7 +74,7 @@ export const OnboardingPage = ({
     })();
   }, []);
 
-  const canShowSaved = useMemo(() => saved && step !== 7, [saved, step]);
+  const canShowSaved = useMemo(() => saved && step !== 8, [saved, step]);
 
   return (
     <div className="mx-auto w-full max-w-4xl overflow-y-auto p-6">
@@ -142,24 +148,30 @@ export const OnboardingPage = ({
         />
       )}
       {step === 6 && (
+        <Step6Notifications
+          onAdvance={() => { setStep(7); }}
+          onBack={() => { setStep(5); }}
+        />
+      )}
+      {step === 7 && (
         <Step6Generate
           cv={cv}
           intent={intent}
           current={current}
           draft={draft}
           haveExisting={haveExisting}
-          onBack={() => { setStep(5); }}
+          onBack={() => { setStep(6); }}
           onSaved={(name) => {
             setSavedProfile(name ?? null);
             setSaved(true);
-            setStep(7);
+            setStep(8);
             // Tell App to re-check cv_present so the user can leave the
-            // wizard from Step 7 (otherwise App.tsx force-renders us).
+            // wizard from the final step (otherwise App.tsx force-renders us).
             onOnboarded?.();
           }}
         />
       )}
-      {step === 7 && (
+      {step === 8 && (
         <Step7WhatsNext
           savedProfile={savedProfile}
           defaultMode={draft.default_mode ?? 'guest'}

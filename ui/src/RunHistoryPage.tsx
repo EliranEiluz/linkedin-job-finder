@@ -443,13 +443,27 @@ export const RunHistoryPage = () => {
         <div className="text-xs text-slate-500">
           loaded {state.loadedAt.toLocaleTimeString()}
         </div>
-        <button
-          type="button"
-          onClick={() => void reload()}
-          className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
-        >
-          ↻ Reload
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Opens the latest rendered email digest. The dev middleware
+              serves /digest.html from the repo root and falls back to a
+              "no digest yet" placeholder if no scrape has finished yet
+              — see ui/vite.config.ts. */}
+          <a
+            href="/digest.html"
+            target="_blank"
+            rel="noreferrer"
+            className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+          >
+            View latest digest ↗
+          </a>
+          <button
+            type="button"
+            onClick={() => void reload()}
+            className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
+          >
+            ↻ Reload
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4">

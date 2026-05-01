@@ -15,7 +15,6 @@ as preflight_ctl.py / scheduler_ctl.py.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import os
 import sys
 from pathlib import Path
@@ -26,8 +25,12 @@ sys.path.insert(0, str(HERE))  # → backend/ctl/  (for _common)
 sys.path.insert(0, str(HERE.parent))  # → backend/
 sys.path.insert(0, str(ROOT))  # so `from backend.llm` resolves
 
+from _common import (  # noqa: E402  (sys.path shim above)
+    atomic_write_env_var,
+    load_env_file,
+    read_stdin_json,
+)
 from _common import emit as _emit  # noqa: E402  (sys.path shim above)
-from _common import read_stdin_json  # noqa: E402  (sys.path shim above)
 
 from backend.llm import test_provider  # noqa: E402  (sys.path shim above)
 
@@ -108,64 +111,9 @@ def cmd_test() -> None:
     if not isinstance(name, str):
         _emit({"ok": False, "error": "name must be a string"}, code=1)
     # Re-load any creds the caller just saved into ~/.linkedin-jobs.env.
-    _load_env_file()
+    load_env_file(ENV_FILE)
     ok, message = test_provider(name)
     _emit({"ok": ok, "message": message, "name": name})
-
-
-def _load_env_file() -> None:
-    """Read ~/.linkedin-jobs.env (if exists) and set os.environ for any
-    keys not already present in the parent shell. Lets a save-credential
-    + test pair in the same wizard step actually see the new key."""
-    if not ENV_FILE.exists():
-        return
-    try:
-        for raw in ENV_FILE.read_text().splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            k = k.strip()
-            v = v.strip().strip('"').strip("'")
-            if k:
-                os.environ[k] = v
-    except Exception:
-        # Refuse to crash the wizard over a malformed env file — just skip.
-        pass
-
-
-def _atomic_write_env(env_var: str, key_value: str) -> None:
-    """Update or append `<env_var>=<key_value>` in ~/.linkedin-jobs.env.
-    Atomic via temp + rename. chmod 600. Never logs the key value."""
-    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    existing_lines: list[str] = []
-    if ENV_FILE.exists():
-        try:
-            existing_lines = ENV_FILE.read_text().splitlines()
-        except Exception:
-            existing_lines = []
-    out_lines: list[str] = []
-    replaced = False
-    for line in existing_lines:
-        stripped = line.strip()
-        if stripped.startswith(f"{env_var}=") or stripped.startswith(f"export {env_var}="):
-            if not replaced:
-                out_lines.append(f"{env_var}={key_value}")
-                replaced = True
-            # drop subsequent duplicates
-        else:
-            out_lines.append(line)
-    if not replaced:
-        out_lines.append(f"{env_var}={key_value}")
-    body = "\n".join(out_lines).rstrip("\n") + "\n"
-    tmp = ENV_FILE.with_suffix(ENV_FILE.suffix + ".tmp")
-    tmp.write_text(body)
-    # chmod is best-effort (Windows / restrictive umasks may reject 0o600).
-    with contextlib.suppress(OSError):
-        tmp.chmod(0o600)
-    tmp.replace(ENV_FILE)
-    with contextlib.suppress(OSError):
-        ENV_FILE.chmod(0o600)
 
 
 def cmd_save_credential() -> None:
@@ -190,7 +138,7 @@ def cmd_save_credential() -> None:
         )
     env_var: str = env_var_raw  # narrowed above; explicit annotation aids mypy
     try:
-        _atomic_write_env(env_var, key_value.strip())
+        atomic_write_env_var(ENV_FILE, env_var, key_value.strip())
     except Exception as e:
         # Error message refers to the env_var name, NEVER the key value.
         _emit(

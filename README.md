@@ -131,6 +131,9 @@ python3 backend/search.py --test-llm gemini    # specific provider
 
 ### Optional: SMTP for the email digest
 
+Configure SMTP via the Setup wizard's Notifications step, or hand-edit
+`~/.linkedin-jobs.env` (see `.linkedin-jobs.env.example`).
+
 ```bash
 cp .linkedin-jobs.env.example ~/.linkedin-jobs.env
 $EDITOR ~/.linkedin-jobs.env       # paste in Gmail app password etc.
