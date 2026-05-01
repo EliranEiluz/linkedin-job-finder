@@ -167,9 +167,13 @@ export const CorpusPage = () => {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const { setAppStatus } = useAppStatus();
   const { rateJob, deleteJobs, rescoreJobs, pushToEndJobs } = useCorpusActions();
-  // True while a bulk rescore POST is in flight. Used to disable the
-  // "Re-score" button + show a spinner so the user can't double-fire.
-  const [rescoreBusy, setRescoreBusy] = useState(false);
+  // Set of job ids currently being rescored. Tied to ids (not the checkbox
+  // selection) so unchecking a row mid-rescore doesn't make the loading
+  // indicator vanish — the row stays visually "in flight" until the POST
+  // resolves. Multiple overlapping rescores compose by id.
+  const [rescoringIds, setRescoringIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   // Source of truth for "applied" is now the server (`job.app_status`),
   // unifying state with the Tracker tab. localStorage was a per-browser
@@ -745,7 +749,11 @@ export const CorpusPage = () => {
               hasNonDefaultFilter={!isDefault(filters)}
               onDeleteAllFiltered={() => deleteJobs(filtered.map((j) => j.id))}
               onRescoreMany={async (ids) => {
-                setRescoreBusy(true);
+                setRescoringIds((prev) => {
+                  const next = new Set(prev);
+                  for (const id of ids) next.add(id);
+                  return next;
+                });
                 try {
                   const r = await rescoreJobs(ids);
                   if (!r.ok) {
@@ -775,10 +783,14 @@ export const CorpusPage = () => {
                     }
                   }
                 } finally {
-                  setRescoreBusy(false);
+                  setRescoringIds((prev) => {
+                    const next = new Set(prev);
+                    for (const id of ids) next.delete(id);
+                    return next;
+                  });
                 }
               }}
-              rescoreBusy={rescoreBusy}
+              rescoringIds={rescoringIds}
               onRate={wrappedRateJob}
               onDelete={deleteOne}
               categoryNamesById={categoryNamesById}

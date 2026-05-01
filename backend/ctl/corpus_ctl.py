@@ -56,6 +56,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
 import sys
@@ -79,6 +80,16 @@ def _read_stdin_json() -> dict:
 def _emit(obj: dict, code: int = 0):
     print(json.dumps(obj, indent=2, ensure_ascii=False))
     sys.exit(code)
+
+
+# search.py prints status / progress to stdout (e.g. "Scoring batch 1/3...",
+# "↳ guest classification: real=…"). For ctl-style invocations stdout is
+# reserved for the final JSON envelope — anything else breaks the vite
+# middleware's JSON.parse. Wrap any block that calls into search.* heavy
+# pipelines with this context manager so stray prints land on stderr (still
+# visible in the spawn log) instead of corrupting stdout.
+def _silence_stdout() -> contextlib.AbstractContextManager[object]:
+    return contextlib.redirect_stdout(sys.stderr)
 
 
 # ---------- delete ----------
@@ -606,26 +617,35 @@ def cmd_add_manual(_args) -> None:
             return text.lower(), "empty"
         return text.lower(), "ok"
 
-    cv_text = search._load_cv_text()
+    # search.py status prints would corrupt our JSON envelope on stdout —
+    # redirect stdout to stderr for the whole pipeline body.
+    with _silence_stdout():
+        cv_text = search._load_cv_text()
 
-    # Run the same per-job pipeline a scraped row gets. process_one_job
-    # walks: title-filter -> fetch -> Claude (single-item) -> regex fallback
-    # -> atomic-merge persist. On Claude failure / empty desc, the row is
-    # still persisted with whatever scoring fell out (regex / title-filter /
-    # null) — never lost. See backend/search.py:process_one_job docstring.
-    try:
-        result = search.process_one_job(
-            stub,
-            cv_text=cv_text,
-            fetch_one=_fetch_one,
-            persist=True,
-            already_scored=False,
-        )
-    except Exception as e:
-        _emit({
-            "ok": False,
-            "error": f"pipeline failure: {type(e).__name__}: {e}",
-        }, 1)
+        # Run the same per-job pipeline a scraped row gets. process_one_job
+        # walks: title-filter -> fetch -> Claude (single-item) -> regex
+        # fallback -> atomic-merge persist. On Claude failure / empty desc,
+        # the row is still persisted with whatever scoring fell out (regex /
+        # title-filter / null) — never lost. See
+        # backend/search.py:process_one_job docstring.
+        try:
+            result = search.process_one_job(
+                stub,
+                cv_text=cv_text,
+                fetch_one=_fetch_one,
+                persist=True,
+                already_scored=False,
+            )
+        except Exception as e:
+            # Stash the error and exit the redirect block before _emit.
+            result = None
+            err_text = f"pipeline failure: {type(e).__name__}: {e}"
+        else:
+            err_text = None
+
+    if err_text is not None:
+        _emit({"ok": False, "error": err_text}, 1)
+    assert result is not None  # for type-checker — _emit on None path exited
 
     _emit({
         "ok": True,
@@ -749,67 +769,70 @@ def cmd_rescore(_args) -> None:
             "ok": True, "rescored": 0, "failed": 0, "missing": missing,
         }, 0)
 
-    # Reuse the guest-mode session + fetch helper. process_one_job will
-    # call this once per target. No browser, no LinkedIn auth needed.
-    session = search._guest_session()
+    # search.py status prints would corrupt our JSON envelope on stdout —
+    # redirect stdout to stderr for the whole pipeline body.
+    with _silence_stdout():
+        # Reuse the guest-mode session + fetch helper. process_one_job will
+        # call this once per target. No browser, no LinkedIn auth needed.
+        session = search._guest_session()
 
-    def _fetch_one(job):
-        return search.fetch_description_guest(session, job["id"])
+        def _fetch_one(job):
+            return search.fetch_description_guest(session, job["id"])
 
-    cv_text = search._load_cv_text()
+        cv_text = search._load_cv_text()
 
-    # Use the SAME batched Claude path the scraper main loop uses
-    # (search.py:score_jobs_in_batches, BATCH_SIZE=8) instead of looping
-    # process_one_job per row. Per-job calls were ~30s each; batched is
-    # one Claude call per 8 jobs and far less likely to hit per-call
-    # timeouts or rate-limits.
-    #
-    # Steps:
-    #  1. Snapshot pre-state (for the regex-fallback no-op detection).
-    #  2. Reset score-derived fields so the scorer sees a clean slate.
-    #  3. Per-job description fetch (sequential — LinkedIn rate-limits).
-    #     Title pre-filter still runs first via process_one_job's stage 1
-    #     equivalent inline here so off-topic rows don't waste a Claude
-    #     slot in the batch.
-    #  4. Batch-score what's left through Claude.
-    #  5. _compute_hot per row (single source of truth — same as scraper).
-    #  6. Atomic-merge persist all targets in one write.
-    pre_scored_by = {j.get("id"): j.get("scored_by") for j in targets}
+        # Use the SAME batched Claude path the scraper main loop uses
+        # (search.py:score_jobs_in_batches, BATCH_SIZE=8) instead of looping
+        # process_one_job per row. Per-job calls were ~30s each; batched is
+        # one Claude call per 8 jobs and far less likely to hit per-call
+        # timeouts or rate-limits.
+        #
+        # Steps:
+        #  1. Snapshot pre-state (for the regex-fallback no-op detection).
+        #  2. Reset score-derived fields so the scorer sees a clean slate.
+        #  3. Per-job description fetch (sequential — LinkedIn rate-limits).
+        #     Title pre-filter still runs first via process_one_job's stage 1
+        #     equivalent inline here so off-topic rows don't waste a Claude
+        #     slot in the batch.
+        #  4. Batch-score what's left through Claude.
+        #  5. _compute_hot per row (single source of truth — same as scraper).
+        #  6. Atomic-merge persist all targets in one write.
+        pre_scored_by = {j.get("id"): j.get("scored_by") for j in targets}
 
-    title_filtered: list[dict] = []
-    for job in targets:
-        for k in ("fit", "score", "fit_reasons", "scored_by", "msc_required"):
-            job[k] = None if k != "fit_reasons" else []
-        # Stage 1: title pre-filter (priority companies bypass).
-        reason = search.is_obviously_offtopic(job.get("title") or "")
-        if reason and not job.get("priority"):
-            job["fit"] = "skip"
-            job["score"] = 1
-            job["fit_reasons"] = [f"title: matches /{reason}/"]
-            job["scored_by"] = "title-filter"
-            job["scored_at"] = datetime.now().isoformat()
-            title_filtered.append(job)
-            continue
-        # Stage 2: description fetch.
-        try:
-            desc, diag = _fetch_one(job)
-        except Exception as e:
-            desc, diag = "", f"error:{type(e).__name__}"
-        job["_desc"] = desc
-        job["_diag"] = diag
+        title_filtered: list[dict] = []
+        for job in targets:
+            for k in ("fit", "score", "fit_reasons", "scored_by", "msc_required"):
+                job[k] = None if k != "fit_reasons" else []
+            # Stage 1: title pre-filter (priority companies bypass).
+            reason = search.is_obviously_offtopic(job.get("title") or "")
+            if reason and not job.get("priority"):
+                job["fit"] = "skip"
+                job["score"] = 1
+                job["fit_reasons"] = [f"title: matches /{reason}/"]
+                job["scored_by"] = "title-filter"
+                job["scored_at"] = datetime.now().isoformat()
+                title_filtered.append(job)
+                continue
+            # Stage 2: description fetch.
+            try:
+                desc, diag = _fetch_one(job)
+            except Exception as e:
+                desc, diag = "", f"error:{type(e).__name__}"
+            job["_desc"] = desc
+            job["_diag"] = diag
 
-    to_score = [j for j in targets if j not in title_filtered]
-    # Stage 3: batched Claude scoring (regex fallback applied per-job
-    # for anything Claude didn't return).
-    if to_score:
-        search.score_jobs_in_batches(to_score, cv_text)
+        to_score = [j for j in targets if j not in title_filtered]
+        # Stage 3: batched Claude scoring (regex fallback applied per-job
+        # for anything Claude didn't return).
+        if to_score:
+            search.score_jobs_in_batches(to_score, cv_text)
 
-    # Stage 4: hot-flag (single source of truth lives in search.py).
-    for job in targets:
-        job["hot"] = search._compute_hot(job)
+        # Stage 4: hot-flag (single source of truth lives in search.py).
+        for job in targets:
+            job["hot"] = search._compute_hot(job)
 
-    # Stage 5: atomic merge — one write for the whole batch.
-    search.save_results_merge(targets)
+        # Stage 5: atomic merge — one write for the whole batch.
+        search.save_results_merge(targets)
 
     # Per-outcome counters for an honest UI report.
     claude_rescored = 0

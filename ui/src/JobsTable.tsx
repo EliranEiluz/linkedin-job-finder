@@ -215,10 +215,12 @@ interface Props {
   // from CorpusPage as `() => deleteJobs(filtered.map(j => j.id))`.
   onDeleteAllFiltered?: () => void;
   // Bulk re-score: runs the scoring pipeline (description re-fetch + Claude)
-  // on the given ids. Slow — `rescoreBusy` is set while the request is in
-  // flight so the bar disables the button + shows a spinner.
+  // on the given ids. Slow. `rescoringIds` is the set of ids currently in
+  // flight — drives both the bar's disabled-spinner state (size > 0) AND
+  // a per-row dimmed "↻ Re-scoring…" overlay so the user sees progress
+  // even after they uncheck the row.
   onRescoreMany?: (ids: string[]) => Promise<void>;
-  rescoreBusy?: boolean;
+  rescoringIds?: ReadonlySet<string>;
   // category-id → human-readable name from /api/config. When provided, the
   // Category column renders the name ("Security") instead of the de-snaked
   // id ("Cat Mobyb81c 5").
@@ -249,7 +251,7 @@ export const JobsTable = ({
   onPushToEnd, onRestoreFromEnd, onPushManyToEnd, onSetAppliedMany,
   onApply, onUnapply, applyMovesToEnd = null, onSetApplyPref,
   onRate, onDelete, hasNonDefaultFilter = false, onDeleteAllFiltered,
-  onRescoreMany, rescoreBusy = false,
+  onRescoreMany, rescoringIds,
   categoryNamesById, emptyState, cursorRowId,
 }: Props) => {
   const { isMobile } = useViewport();
@@ -812,7 +814,7 @@ export const JobsTable = ({
               // bad ones). Selection is harmless across the await.
               void onRescoreMany(ids);
             }}
-            rescoreBusy={rescoreBusy}
+            rescoreBusy={(rescoringIds?.size ?? 0) > 0}
             onPushToEndSelected={() => {
               if (!onPushManyToEnd) return;
               const ids = [...selectedIds];
@@ -832,14 +834,17 @@ export const JobsTable = ({
               const isCursor = cursorRowId === j.id;
               const isOpen = expanded.has(j.id);
               const isHot = isHotJob(j);
+              const isRescoring = rescoringIds?.has(j.id) ?? false;
               return (
                 <li
                   key={j.id}
+                  aria-busy={isRescoring || undefined}
                   className={clsx(
                     'relative bg-white px-3 py-3 transition-colors active:bg-slate-100',
                     isHot && 'border-l-4 border-l-amber-500',
                     isApplied && 'bg-slate-50 text-slate-500 opacity-80',
                     isCursor && 'bg-brand-50 ring-2 ring-inset ring-brand-700',
+                    isRescoring && 'pointer-events-none animate-pulse opacity-60',
                   )}
                 >
                   {/* Top row: title + applied checkbox + priority emoji.
@@ -1079,10 +1084,12 @@ export const JobsTable = ({
                 const isOpen = expanded.has(j.id);
                 const isApplied = applied.has(j.id);
                 const isCursor = cursorRowId === j.id;
+                const isRescoring = rescoringIds?.has(j.id) ?? false;
                 return (
                   <Fragment key={j.id}>
                     <tr
                       onClick={() => toggleExpand(j.id)}
+                      aria-busy={isRescoring || undefined}
                       className={clsx(
                         'cursor-pointer border-b border-slate-100 hover:bg-slate-100',
                         // Hot match gets an amber accent border. Priority-only
@@ -1095,6 +1102,10 @@ export const JobsTable = ({
                         // with the priority red border (cursor wins on ring;
                         // border still visible to its left).
                         isCursor && 'bg-brand-50 ring-2 ring-inset ring-brand-700',
+                        // Rescore in flight: dim the row + pulse + block clicks
+                        // so the loading state survives even if the user
+                        // unchecks the box that triggered the bulk action.
+                        isRescoring && 'pointer-events-none animate-pulse opacity-60',
                       )}
                     >
                       {row.getVisibleCells().map((cell) => (
