@@ -75,12 +75,12 @@ const toggle = <T,>(set: Set<T>, v: T): Set<T> => {
  * security_researcher + ...). A click toggles every id in the group as a
  * single unit. Same "empty = match all" semantics as the scalar version.
  */
-type CategoryGroup = {
+interface CategoryGroup {
   displayId: string;
   displayName: string;
   repId: string;
   allIds: string[];
-};
+}
 
 const toggleCategoryGroup = (
   current: Set<string>,
@@ -261,7 +261,7 @@ const TriToggle = ({
           type="button"
           role="radio"
           aria-checked={isSel}
-          onClick={() => onChange(k)}
+          onClick={() => { onChange(k); }}
           className={clsx(
             // Equal-width segments. `min-h-9 md:min-h-8` = 36/32px tap target.
             'inline-flex flex-1 items-center justify-center px-2 py-1.5 leading-5',
@@ -515,9 +515,9 @@ export const FilterPanel = ({
   }, [categoryOptions, categoryNamesById]);
 
   const setQuick = (q: DateQuick) =>
-    onChange({ ...f, dateQuick: q, ...(q !== 'custom' ? { dateFrom: '', dateTo: '' } : {}) });
+    { onChange({ ...f, dateQuick: q, ...(q !== 'custom' ? { dateFrom: '', dateTo: '' } : {}) }); };
 
-  const clearAll = () => onChange(defaultFilters());
+  const clearAll = () => { onChange(defaultFilters()); };
 
   const scoreIsAny = f.scoreMin === 1 && f.scoreMax === 10;
 
@@ -542,12 +542,12 @@ export const FilterPanel = ({
     () => new Set(),
   );
   const toggleExpanded = (key: string) =>
-    setExpandedSections((prev) => {
+    { setExpandedSections((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
-    });
+    }); };
 
   // "Show all N" / "Show fewer" row. Visual language matches SectionReset
   // (small, slate-400, brand-700 on hover) but lives at the END of the list
@@ -589,13 +589,13 @@ export const FilterPanel = ({
           type="text"
           placeholder="Search title, company, reason…"
           value={f.search}
-          onChange={(e) => onChange({ ...f, search: e.target.value })}
+          onChange={(e) => { onChange({ ...f, search: e.target.value }); }}
           className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 pr-16 text-sm placeholder:text-slate-400 focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
         />
         {f.search ? (
           <button
             type="button"
-            onClick={() => onChange({ ...f, search: '' })}
+            onClick={() => { onChange({ ...f, search: '' }); }}
             aria-label="Clear search"
             className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >
@@ -617,7 +617,7 @@ export const FilterPanel = ({
         accessory={
           <SectionReset
             show={f.fits.size > 0}
-            onReset={() => onChange({ ...f, fits: new Set() })}
+            onReset={() => { onChange({ ...f, fits: new Set() }); }}
           />
         }
       >
@@ -642,7 +642,7 @@ export const FilterPanel = ({
                     tooltip={m.tooltip}
                     selected={f.fits.size === 0 || f.fits.has(k)}
                     onClick={() =>
-                      onChange({ ...f, fits: cycleEnumFilter(f.fits, ALL_FITS, k) })
+                      { onChange({ ...f, fits: cycleEnumFilter(f.fits, ALL_FITS, k) }); }
                     }
                   />
                 );
@@ -651,7 +651,7 @@ export const FilterPanel = ({
                 <ShowMoreToggle
                   expanded={fitsExpanded}
                   total={ALL_FITS.length}
-                  onClick={() => toggleExpanded('fit')}
+                  onClick={() => { toggleExpanded('fit'); }}
                   controlsId={listId('fit')}
                 />
               )}
@@ -663,7 +663,7 @@ export const FilterPanel = ({
       <Section title="Priority company">
         <TriToggle
           value={f.priority}
-          onChange={(v) => onChange({ ...f, priority: v })}
+          onChange={(v) => { onChange({ ...f, priority: v }); }}
           labels={['All', 'Only', 'Hide']}
           ariaLabel="Priority company filter"
         />
@@ -675,7 +675,7 @@ export const FilterPanel = ({
         accessory={
           <SectionReset
             show={f.categories.size > 0}
-            onReset={() => onChange({ ...f, categories: new Set() })}
+            onReset={() => { onChange({ ...f, categories: new Set() }); }}
           />
         }
       >
@@ -712,14 +712,14 @@ export const FilterPanel = ({
                     label={g.displayName}
                     selected={groupSelected}
                     onClick={() =>
-                      onChange({
+                      { onChange({
                         ...f,
                         categories: toggleCategoryGroup(
                           f.categories,
                           categoryGroups,
                           g,
                         ),
-                      })
+                      }); }
                     }
                   />
                 );
@@ -728,7 +728,7 @@ export const FilterPanel = ({
                 <ShowMoreToggle
                   expanded={catsExpanded}
                   total={categoryGroups.length}
-                  onClick={() => toggleExpanded('category')}
+                  onClick={() => { toggleExpanded('category'); }}
                   controlsId={listId('category')}
                 />
               )}
@@ -747,7 +747,7 @@ export const FilterPanel = ({
         accessory={
           <SectionReset
             show={f.sources.size > 0}
-            onReset={() => onChange({ ...f, sources: new Set() })}
+            onReset={() => { onChange({ ...f, sources: new Set() }); }}
           />
         }
       >
@@ -770,10 +770,10 @@ export const FilterPanel = ({
                     tooltip={m.tooltip}
                     selected={f.sources.size === 0 || f.sources.has(k)}
                     onClick={() =>
-                      onChange({
+                      { onChange({
                         ...f,
                         sources: cycleEnumFilter(f.sources, ALL_SOURCES, k),
-                      })
+                      }); }
                     }
                   />
                 );
@@ -782,7 +782,7 @@ export const FilterPanel = ({
                 <ShowMoreToggle
                   expanded={srcExpanded}
                   total={ALL_SOURCES.length}
-                  onClick={() => toggleExpanded('source')}
+                  onClick={() => { toggleExpanded('source'); }}
                   controlsId={listId('source')}
                 />
               )}
@@ -796,7 +796,7 @@ export const FilterPanel = ({
         accessory={
           <SectionReset
             show={f.scoredBy.size > 0}
-            onReset={() => onChange({ ...f, scoredBy: new Set() })}
+            onReset={() => { onChange({ ...f, scoredBy: new Set() }); }}
           />
         }
       >
@@ -819,10 +819,10 @@ export const FilterPanel = ({
                     tooltip={m.tooltip}
                     selected={f.scoredBy.size === 0 || f.scoredBy.has(k)}
                     onClick={() =>
-                      onChange({
+                      { onChange({
                         ...f,
                         scoredBy: cycleEnumFilter(f.scoredBy, ALL_SCORED_BY, k),
-                      })
+                      }); }
                     }
                   />
                 );
@@ -831,7 +831,7 @@ export const FilterPanel = ({
                 <ShowMoreToggle
                   expanded={byExpanded}
                   total={ALL_SCORED_BY.length}
-                  onClick={() => toggleExpanded('scoredBy')}
+                  onClick={() => { toggleExpanded('scoredBy'); }}
                   controlsId={listId('scoredBy')}
                 />
               )}
@@ -846,7 +846,7 @@ export const FilterPanel = ({
         accessory={
           <SectionReset
             show={!scoreIsAny}
-            onReset={() => onChange({ ...f, scoreMin: 1, scoreMax: 10 })}
+            onReset={() => { onChange({ ...f, scoreMin: 1, scoreMax: 10 }); }}
           />
         }
       >
@@ -855,7 +855,7 @@ export const FilterPanel = ({
           max={10}
           lo={f.scoreMin}
           hi={f.scoreMax}
-          onChange={(scoreMin, scoreMax) => onChange({ ...f, scoreMin, scoreMax })}
+          onChange={(scoreMin, scoreMax) => { onChange({ ...f, scoreMin, scoreMax }); }}
           isDefault={scoreIsAny}
         />
         {!scoreIsAny && (
@@ -870,7 +870,7 @@ export const FilterPanel = ({
         accessory={
           <SectionReset
             show={f.dateQuick !== 'all' || !!f.dateFrom || !!f.dateTo}
-            onReset={() => onChange({ ...f, dateQuick: 'all', dateFrom: '', dateTo: '' })}
+            onReset={() => { onChange({ ...f, dateQuick: 'all', dateFrom: '', dateTo: '' }); }}
           />
         }
       >
@@ -879,7 +879,7 @@ export const FilterPanel = ({
             <button
               key={q}
               type="button"
-              onClick={() => setQuick(q)}
+              onClick={() => { setQuick(q); }}
               className={clsx(
                 'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
                 'min-h-8 focus-visible:outline-none focus-visible:ring-2',
@@ -898,14 +898,14 @@ export const FilterPanel = ({
             <input
               type="date"
               value={f.dateFrom}
-              onChange={(e) => onChange({ ...f, dateFrom: e.target.value })}
+              onChange={(e) => { onChange({ ...f, dateFrom: e.target.value }); }}
               className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
               aria-label="From date"
             />
             <input
               type="date"
               value={f.dateTo}
-              onChange={(e) => onChange({ ...f, dateTo: e.target.value })}
+              onChange={(e) => { onChange({ ...f, dateTo: e.target.value }); }}
               className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
               aria-label="To date"
             />
@@ -919,7 +919,7 @@ export const FilterPanel = ({
       >
         <TriToggle
           value={f.applied}
-          onChange={(v) => onChange({ ...f, applied: v })}
+          onChange={(v) => { onChange({ ...f, applied: v }); }}
           labels={['All', 'Applied', 'Open']}
           ariaLabel="Applied filter"
         />
@@ -957,7 +957,7 @@ export const FilterPanel = ({
         </button>
         <button
           type="button"
-          onClick={() => setCollapsed(true)}
+          onClick={() => { setCollapsed(true); }}
           aria-expanded={true}
           aria-label="Collapse filters sidebar"
           title="Collapse"
@@ -980,7 +980,7 @@ export const FilterPanel = ({
       <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2 md:hidden">
         <button
           type="button"
-          onClick={() => setOpen((s) => !s)}
+          onClick={() => { setOpen((s) => !s); }}
           className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
           <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
@@ -1020,7 +1020,7 @@ export const FilterPanel = ({
           // up top so the badge doesn't disappear when collapsed.
           <button
             type="button"
-            onClick={() => setCollapsed(false)}
+            onClick={() => { setCollapsed(false); }}
             aria-expanded={false}
             aria-label={
               activeCount > 0
@@ -1063,7 +1063,7 @@ export const FilterPanel = ({
         <div className="fixed inset-0 z-40 flex md:hidden">
           <div
             className="flex-1 bg-slate-900/40"
-            onClick={() => setOpen(false)}
+            onClick={() => { setOpen(false); }}
             aria-hidden="true"
           />
           <div className="flex w-[85vw] max-w-sm flex-col bg-white shadow-xl">
@@ -1090,7 +1090,7 @@ export const FilterPanel = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setOpen(false)}
+                  onClick={() => { setOpen(false); }}
                   aria-label="Close filters"
                   className="rounded p-1.5 text-slate-500 hover:bg-slate-100"
                 >

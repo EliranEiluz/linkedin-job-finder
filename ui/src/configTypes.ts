@@ -97,6 +97,7 @@ const eqCategories = (a: Category[], b: Category[]): boolean => {
   for (let i = 0; i < a.length; i++) {
     const ca = a[i];
     const cb = b[i];
+    if (!ca || !cb) return false;
     // Compare structural equality, not id-on-id — a freshly-rebuilt list (e.g. after
     // discard) will get the same content but new ids.
     if (ca.name !== cb.name) return false;

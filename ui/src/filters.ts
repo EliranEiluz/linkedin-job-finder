@@ -164,7 +164,7 @@ export const fromSearchParams = (p: URLSearchParams): FilterState => {
   const fits = parseCsv<FitKey>('fits', ALL_FITS);
   if (fits) f.fits = fits;
   const cats = parseStringSet('cat');
-  if (cats) f.categories = cats as Set<Category>;
+  if (cats) f.categories = cats;
   const by = parseCsv<ScoredByKey>('by', ALL_SCORED_BY);
   if (by) f.scoredBy = by;
   const src = parseCsv<SourceKey>('src', ALL_SOURCES);
@@ -278,7 +278,7 @@ export const applyFilters = (
         ' ' +
         j.company +
         ' ' +
-        (j.fit_reasons || []).join(' ')
+        j.fit_reasons.join(' ')
       ).toLowerCase();
       if (!hay.includes(q)) return false;
     }

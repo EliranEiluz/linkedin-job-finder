@@ -8,6 +8,10 @@ import { useAddManual, type AddManualJob } from './hooks';
 const BARE_ID_RE = /^\d{8,12}$/;
 const JOBVIEW_RE = /\/jobs\/view\/(?:[^/?#]*-)?(\d{8,12})/;
 
+// Exported alongside the component for the unit test in CI; the
+// react-refresh rule wants component-only files but the cost of a
+// dedicated module just for one helper isn't worth it here.
+// eslint-disable-next-line react-refresh/only-export-components
 export const extractJobIdTs = (input: string): string | null => {
   const s = (input || '').trim();
   if (!s) return null;
@@ -26,7 +30,7 @@ export const extractJobIdTs = (input: string): string | null => {
   const cur = u.searchParams.get('currentJobId');
   if (cur && /^\d{8,12}$/.test(cur)) return cur;
   const m = JOBVIEW_RE.exec(u.pathname);
-  return m ? m[1] : null;
+  return m?.[1] ?? null;
 };
 
 type ModalState =
@@ -65,7 +69,7 @@ export const AddManualModal = ({ open, onClose }: Props) => {
       setState({ kind: 'idle' });
       // Defer focus so the modal mount transition completes first.
       const id = window.setTimeout(() => inputRef.current?.focus(), 50);
-      return () => window.clearTimeout(id);
+      return () => { window.clearTimeout(id); };
     }
     return;
   }, [open]);
@@ -79,7 +83,7 @@ export const AddManualModal = ({ open, onClose }: Props) => {
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); };
   }, [open, onClose, state.kind]);
 
   if (!open) return null;
@@ -96,7 +100,7 @@ export const AddManualModal = ({ open, onClose }: Props) => {
       setState({ kind: 'duplicate', existingId: r.existingId });
       return;
     }
-    setState({ kind: 'error', message: r.error || 'unknown error' });
+    setState({ kind: 'error', message: r.error ?? 'unknown error' });
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -116,7 +120,7 @@ export const AddManualModal = ({ open, onClose }: Props) => {
     >
       <div
         className="w-full max-w-md overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl"
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); }}
         role="dialog"
         aria-modal="true"
         aria-labelledby="add-manual-title"
@@ -196,16 +200,16 @@ export const AddManualModal = ({ open, onClose }: Props) => {
                 </div>
               </div>
             )}
-            {state.kind === 'success' && state.job && (
+            {state.kind === 'success' && (
               <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2">
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
                   Added
                 </div>
                 <div className="mt-1 truncate text-sm font-medium text-slate-900">
-                  {state.job.title || `(no title) — ${state.job.id}`}
+                  {state.job.title ?? `(no title) — ${state.job.id}`}
                 </div>
                 <div className="truncate text-xs text-slate-600">
-                  {state.job.company || 'unknown company'}
+                  {state.job.company ?? 'unknown company'}
                   {state.job.location ? ` · ${state.job.location}` : ''}
                 </div>
                 <div className="mt-1.5 flex items-center gap-2">

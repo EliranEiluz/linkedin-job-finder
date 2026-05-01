@@ -29,12 +29,12 @@ type LoadState =
 
 const DEFAULTS_URL = `${import.meta.env.BASE_URL}defaults.json`;
 
-const fetchJsonOr = async (url: string): Promise<unknown | null> => {
+const fetchJsonOr = async (url: string): Promise<unknown> => {
   try {
-    const res = await fetch(`${url}?t=${Date.now()}`);
+    const res = await fetch(`${url}?t=${Date.now().toString()}`);
     if (!res.ok) return null;
     const text = await res.text();
-    return text.trim() ? JSON.parse(text) : null;
+    return text.trim() ? (JSON.parse(text) as unknown) : null;
   } catch {
     return null;
   }
@@ -96,14 +96,14 @@ const PriorityCompaniesEditor = ({
         <input
           type="text"
           value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          onChange={(e) => { setFilter(e.target.value); }}
           placeholder="filter chips…"
           className="flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
         />
         {filtered.length > HEAD_N && (
           <button
             type="button"
-            onClick={() => setShowAll((v) => !v)}
+            onClick={() => { setShowAll((v) => !v); }}
             className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
           >
             {showAll ? `Show first ${HEAD_N}` : `Show all (${filtered.length})`}
@@ -119,7 +119,7 @@ const PriorityCompaniesEditor = ({
             {v}
             <button
               type="button"
-              onClick={() => removeChip(v)}
+              onClick={() => { removeChip(v); }}
               className="-mr-0.5 rounded-full px-1 text-brand-700 hover:bg-brand-100 hover:text-brand-900"
               title="Remove"
               aria-label={`Remove ${v}`}
@@ -155,7 +155,7 @@ const PriorityChipDraftInput = ({
     <input
       type="text"
       value={draft}
-      onChange={(e) => setDraft(e.target.value)}
+      onChange={(e) => { setDraft(e.target.value); }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ',') {
           e.preventDefault();
@@ -191,7 +191,7 @@ const CollapsibleCard = ({
     <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { setOpen((v) => !v); }}
         className="flex w-full items-center justify-between rounded-t-lg px-4 py-3 text-left hover:bg-slate-50"
         aria-expanded={open}
       >
@@ -275,32 +275,34 @@ export const ConfigPage = () => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/results.json?t=${Date.now()}`);
+        const res = await fetch(`/results.json?t=${Date.now().toString()}`);
         if (!res.ok) return;
-        const corpus = (await res.json()) as Array<Record<string, unknown>>;
+        const corpus = (await res.json()) as unknown;
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mutated by cleanup
         if (cancelled || !Array.isArray(corpus)) return;
         const POS = new Set(['interview', 'take-home', 'screening', 'offer']);
         const NEG = new Set(['rejected', 'withdrew']);
+        // String-coerce defensively: legacy rows can have undefined or null
+        // here, and non-string values would crash `.trim().toLowerCase()`.
+        const asStr = (v: unknown): string =>
+          typeof v === 'string' ? v.trim().toLowerCase() : '';
         let n = 0;
-        for (const row of corpus) {
+        for (const row of corpus as unknown[]) {
           if (!row || typeof row !== 'object') continue;
           const rating = (row as { rating?: unknown }).rating;
           if (typeof rating === 'number' && rating >= 1 && rating <= 5) {
             n++;
             continue;
           }
-          const status = String((row as { app_status?: unknown }).app_status ?? '')
-            .trim()
-            .toLowerCase();
+          const status = asStr((row as { app_status?: unknown }).app_status);
           if (POS.has(status) || NEG.has(status)) {
             n++;
             continue;
           }
-          const source = String((row as { source?: unknown }).source ?? '')
-            .trim()
-            .toLowerCase();
+          const source = asStr((row as { source?: unknown }).source);
           if (source === 'manual') n++;
         }
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mutated by cleanup
         if (!cancelled) setSignalCount(n);
       } catch {
         /* leave signalCount=null — button stays in "loading" state */
@@ -314,8 +316,8 @@ export const ConfigPage = () => {
   // Auto-dismiss toast.
   useEffect(() => {
     if (!toast) return;
-    const id = window.setTimeout(() => setToast(null), 3500);
-    return () => window.clearTimeout(id);
+    const id = window.setTimeout(() => { setToast(null); }, 3500);
+    return () => { window.clearTimeout(id); };
   }, [toast]);
 
   const dirty = useMemo(() => {
@@ -348,7 +350,7 @@ export const ConfigPage = () => {
         const info = (await res.json()) as { mtimeMs: number };
         setState((prev) =>
           prev.kind === 'ready'
-            ? { ...prev, config: target, mtimeMs: info.mtimeMs ?? Date.now() }
+            ? { ...prev, config: target, mtimeMs: info.mtimeMs }
             : prev,
         );
         if (override) setDraft(target);
@@ -433,7 +435,7 @@ export const ConfigPage = () => {
       <ConfigSuggestModal
         open={suggestOpen}
         config={draft}
-        onClose={() => setSuggestOpen(false)}
+        onClose={() => { setSuggestOpen(false); }}
         onApply={(next) => saveConfig(next)}
       />
 
@@ -449,7 +451,7 @@ export const ConfigPage = () => {
             extraActions={
               <button
                 type="button"
-                onClick={() => setSuggestOpen(true)}
+                onClick={() => { setSuggestOpen(true); }}
                 disabled={
                   signalCount === null || signalCount < MIN_SIGNALS_FOR_SUGGEST
                 }
@@ -478,7 +480,7 @@ export const ConfigPage = () => {
 
           <CategoryManager
             categories={draft.categories}
-            onChange={(categories) => setDraft({ ...draft, categories })}
+            onChange={(categories) => { setDraft({ ...draft, categories }); }}
           />
 
           <Card title="Search behavior">
@@ -493,7 +495,7 @@ export const ConfigPage = () => {
                 </label>
                 <select
                   value={draft.date_filter}
-                  onChange={(e) => setDraft({ ...draft, date_filter: e.target.value })}
+                  onChange={(e) => { setDraft({ ...draft, date_filter: e.target.value }); }}
                   className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
                 >
                   {DATE_FILTER_OPTIONS.map((o) => (
@@ -582,7 +584,7 @@ export const ConfigPage = () => {
                     type="text"
                     placeholder="Custom geoId (numeric)"
                     value={draft.geo_id}
-                    onChange={(e) => setDraft({ ...draft, geo_id: e.target.value })}
+                    onChange={(e) => { setDraft({ ...draft, geo_id: e.target.value }); }}
                     className="mt-1.5 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
                   />
                 )}
@@ -595,7 +597,7 @@ export const ConfigPage = () => {
                 <input
                   type="text"
                   value={draft.location}
-                  onChange={(e) => setDraft({ ...draft, location: e.target.value })}
+                  onChange={(e) => { setDraft({ ...draft, location: e.target.value }); }}
                   placeholder='e.g. "Israel" or "Tel Aviv"'
                   className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
                 />
@@ -618,11 +620,11 @@ export const ConfigPage = () => {
               <textarea
                 value={draft.claude_scoring_prompt ?? ''}
                 onChange={(e) =>
-                  setDraft({
+                  { setDraft({
                     ...draft,
                     claude_scoring_prompt:
                       e.target.value.length > 0 ? e.target.value : undefined,
-                  })
+                  }); }
                 }
                 rows={10}
                 placeholder="(blank — using built-in default)"
@@ -633,7 +635,7 @@ export const ConfigPage = () => {
             <div className="rounded border border-slate-200">
               <button
                 type="button"
-                onClick={() => setShowRegexFallback((v) => !v)}
+                onClick={() => { setShowRegexFallback((v) => !v); }}
                 className="flex w-full items-center justify-between bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-600 hover:bg-slate-100"
                 aria-expanded={showRegexFallback}
               >
@@ -649,7 +651,7 @@ export const ConfigPage = () => {
                     <ChipInput
                       values={draft.fit_positive_patterns ?? []}
                       onChange={(next) =>
-                        setDraft({ ...draft, fit_positive_patterns: next })
+                        { setDraft({ ...draft, fit_positive_patterns: next }); }
                       }
                       placeholder="e.g. cryptograph, machine.learning"
                       monospace
@@ -662,7 +664,7 @@ export const ConfigPage = () => {
                     <ChipInput
                       values={draft.fit_negative_patterns ?? []}
                       onChange={(next) =>
-                        setDraft({ ...draft, fit_negative_patterns: next })
+                        { setDraft({ ...draft, fit_negative_patterns: next }); }
                       }
                       placeholder="e.g. devSecOps, IT support"
                       monospace
@@ -675,7 +677,7 @@ export const ConfigPage = () => {
                     <ChipInput
                       values={draft.offtopic_title_patterns ?? []}
                       onChange={(next) =>
-                        setDraft({ ...draft, offtopic_title_patterns: next })
+                        { setDraft({ ...draft, offtopic_title_patterns: next }); }
                       }
                       placeholder="e.g. \\bintern\\b, sales"
                       monospace
@@ -696,7 +698,7 @@ export const ConfigPage = () => {
             </p>
             <PriorityCompaniesEditor
               values={draft.priority_companies}
-              onChange={(next) => setDraft({ ...draft, priority_companies: next })}
+              onChange={(next) => { setDraft({ ...draft, priority_companies: next }); }}
             />
             <div className="mt-1 text-right text-[11px] tabular-nums text-slate-500">
               {priorityCount} {priorityCount === 1 ? 'company' : 'companies'}

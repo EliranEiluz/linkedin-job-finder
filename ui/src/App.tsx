@@ -65,6 +65,7 @@ export const App = () => {
     (async () => {
       try {
         const res = await fetch('/api/profiles');
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mutated by cleanup
         if (!res.ok || cancelled) return;
         const j = (await res.json()) as {
           profiles?: string[]; cv_present?: boolean;
@@ -118,7 +119,7 @@ export const App = () => {
       if (t !== null) setTab(t);
     };
     window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
+    return () => { window.removeEventListener('popstate', onPop); };
   }, []);
 
   // Scroll the active tab button into view inside the horizontal nav strip
@@ -151,7 +152,7 @@ export const App = () => {
                 tabRefs.current[t.id] = el;
               }}
               type="button"
-              onClick={() => switchTab(t.id)}
+              onClick={() => { switchTab(t.id); }}
               className={clsx(
                 'relative -mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors md:py-2.5',
                 tab === t.id
@@ -178,8 +179,8 @@ export const App = () => {
       <div className="flex flex-1 flex-col overflow-hidden">
         {onboarded === false || tab === 'setup' ? (
           <OnboardingPage
-            onSwitchTab={(t) => switchTab(t)}
-            onOnboarded={refreshOnboarded}
+            onSwitchTab={(t) => { switchTab(t); }}
+            onOnboarded={() => { void refreshOnboarded(); }}
           />
         ) : tab === 'corpus' ? (
           <CorpusPage />
@@ -187,9 +188,9 @@ export const App = () => {
           <ApplicationsPage />
         ) : tab === 'config' ? (
           <ConfigPage />
-        ) : tab === 'history' ? (
+        ) : (
           <RunHistoryPage />
-        ) : null}
+        )}
       </div>
     </div>
   );

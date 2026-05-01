@@ -24,7 +24,7 @@ const fetchHistory = async (): Promise<LoadState> => {
       return { kind: 'ready', runs: [], loadedAt: new Date() };
     }
     const data = JSON.parse(text) as RunHistoryFile;
-    const runs = Array.isArray(data?.runs) ? data.runs : [];
+    const runs = Array.isArray(data.runs) ? data.runs : [];
     return { kind: 'ready', runs, loadedAt: new Date() };
   } catch (e) {
     return { kind: 'error', message: (e as Error).message };
@@ -178,7 +178,7 @@ const RunRow = ({ run }: { run: RunRecord }) => {
     <div className="border-b border-slate-200 bg-white">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { setOpen((v) => !v); }}
         className="flex w-full flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-left hover:bg-slate-50 md:flex-nowrap md:gap-4"
       >
         <span className="text-xs text-slate-400">{open ? '▼' : '▶'}</span>
@@ -368,7 +368,7 @@ export const RunHistoryPage = () => {
       void reload();
     };
     window.addEventListener('linkedinjobs:corpus-stale', onStale);
-    return () => window.removeEventListener('linkedinjobs:corpus-stale', onStale);
+    return () => { window.removeEventListener('linkedinjobs:corpus-stale', onStale); };
   }, [reload]);
 
   const summary = useMemo(() => {

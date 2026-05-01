@@ -171,14 +171,14 @@ export const SchedulerCard = () => {
     const id = window.setInterval(() => {
       void reload(true);
     }, POLL_MS);
-    return () => window.clearInterval(id);
+    return () => { window.clearInterval(id); };
   }, [reload]);
 
   // Auto-dismiss toast.
   useEffect(() => {
     if (!toast) return;
-    const id = window.setTimeout(() => setToast(null), 3000);
-    return () => window.clearTimeout(id);
+    const id = window.setTimeout(() => { setToast(null); }, 3000);
+    return () => { window.clearTimeout(id); };
   }, [toast]);
 
   // Cleanup any pending debounce on unmount.
@@ -315,7 +315,7 @@ export const SchedulerCard = () => {
     const btn = (mode: SchedulerMode, label: string) => (
       <button
         type="button"
-        onClick={() => onModeToggle(mode)}
+        onClick={() => { onModeToggle(mode); }}
         aria-pressed={effectiveMode === mode}
         className={clsx(
           'rounded px-2.5 py-1 text-xs font-medium transition-colors',
@@ -406,7 +406,7 @@ export const SchedulerCard = () => {
                 </span>
                 <select
                   value={intervalSelectValue}
-                  onChange={(e) => onIntervalSelectChange(e.target.value)}
+                  onChange={(e) => { onIntervalSelectChange(e.target.value); }}
                   className="rounded border border-slate-300 bg-white px-2 py-1 text-xs focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
                 >
                   {INTERVAL_PRESETS.map((p) => (
@@ -422,7 +422,7 @@ export const SchedulerCard = () => {
                     min={1}
                     placeholder="seconds"
                     value={intervalDraft ?? status.interval_seconds ?? ''}
-                    onChange={(e) => onCustomIntervalChange(e.target.value)}
+                    onChange={(e) => { onCustomIntervalChange(e.target.value); }}
                     className="w-28 rounded border border-slate-300 bg-white px-2 py-1 text-xs tabular-nums focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
                   />
                 )}
@@ -511,7 +511,7 @@ export const SchedulerCard = () => {
           <div className="mt-3 border-t border-slate-100 pt-2">
             <button
               type="button"
-              onClick={() => setLogOpen((v) => !v)}
+              onClick={() => { setLogOpen((v) => !v); }}
               className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-brand-700"
             >
               <span className="text-slate-400">{logOpen ? '▼' : '▶'}</span>
@@ -519,7 +519,7 @@ export const SchedulerCard = () => {
             </button>
             {logOpen && (
               <div className="mt-2 rounded border border-slate-200 bg-slate-900 px-3 py-2">
-                {status.log_tail && status.log_tail.trim() ? (
+                {status.log_tail.trim() ? (
                   <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-emerald-300">
                     {status.log_tail}
                   </pre>

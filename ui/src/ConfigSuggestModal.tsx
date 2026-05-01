@@ -86,11 +86,12 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
           signal_count?: number;
           error?: string;
         };
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mutated by cleanup
         if (cancelled) return;
         if (!body.ok || !body.suggestions) {
           setState({
             kind: 'error',
-            message: body.error || `request failed (HTTP ${res.status})`,
+            message: body.error ?? `request failed (HTTP ${res.status.toString()})`,
           });
           return;
         }
@@ -100,7 +101,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
         if (totalActions === 0) {
           setState({
             kind: 'empty',
-            reasoning: s.reasoning || '',
+            reasoning: s.reasoning,
             signalCount: body.signal_count ?? 0,
           });
         } else {
@@ -111,6 +112,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
           });
         }
       } catch (e) {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mutated by cleanup
         if (cancelled) return;
         setState({ kind: 'error', message: (e as Error).message });
       }
@@ -129,13 +131,13 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
       if (e.key === 'Escape' && !applying) onClose();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); };
   }, [open, onClose, applying]);
 
   if (!open) return null;
 
   const toggle = (id: string) =>
-    setPicked((prev) => ({ ...prev, [id]: !prev[id] }));
+    { setPicked((prev) => ({ ...prev, [id]: !prev[id] })); };
 
   const pickedCount = Object.values(picked).filter(Boolean).length;
 
@@ -159,10 +161,11 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
     for (let i = 0; i < s.add_queries.length; i++) {
       if (!picked[qId(i)]) continue;
       const sug = s.add_queries[i];
+      if (!sug) continue;
       const cat = next.categories.find((c) => c.id === sug.category_id);
       if (!cat) {
         // Hallucinated id — skip with a warn so we can audit if it recurs.
-        // eslint-disable-next-line no-console
+         
         console.warn(
           `[ConfigSuggestModal] dropping suggestion: category_id "${sug.category_id}" not found`,
           sug,
@@ -183,7 +186,9 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
     const seenCo = new Set(next.priority_companies.map((p) => p.toLowerCase()));
     for (let i = 0; i < s.add_companies.length; i++) {
       if (!picked[cId(i)]) continue;
-      const name = s.add_companies[i].name.trim().toLowerCase();
+      const co = s.add_companies[i];
+      if (!co) continue;
+      const name = co.name.trim().toLowerCase();
       if (name && !seenCo.has(name)) {
         seenCo.add(name);
         next.priority_companies.push(name);
@@ -199,7 +204,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
     for (let i = 0; i < s.regex_tweaks.length; i++) {
       if (!picked[rId(i)]) continue;
       const tweak = s.regex_tweaks[i];
-      if (tweak.action !== 'add_to_off_topic') continue;
+      if (tweak?.action !== 'add_to_off_topic') continue;
       const pat = tweak.pattern.trim();
       if (pat && !existingPatterns.has(pat)) {
         existingPatterns.add(pat);
@@ -228,7 +233,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
     >
       <div
         className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl"
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); }}
         role="dialog"
         aria-modal="true"
         aria-labelledby="suggest-title"
@@ -320,7 +325,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
                         key={id}
                         id={id}
                         checked={!!picked[id]}
-                        onToggle={() => toggle(id)}
+                        onToggle={() => { toggle(id); }}
                         primary={
                           <>
                             <span className="font-mono">{s.query}</span>
@@ -345,7 +350,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
                         key={id}
                         id={id}
                         checked={!!picked[id]}
-                        onToggle={() => toggle(id)}
+                        onToggle={() => { toggle(id); }}
                         primary={<span className="font-mono">{s.name}</span>}
                         reason={s.reason}
                       />
@@ -363,7 +368,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
                         key={id}
                         id={id}
                         checked={!!picked[id]}
-                        onToggle={() => toggle(id)}
+                        onToggle={() => { toggle(id); }}
                         primary={<span className="font-mono">{s.pattern}</span>}
                         reason={s.reason}
                       />

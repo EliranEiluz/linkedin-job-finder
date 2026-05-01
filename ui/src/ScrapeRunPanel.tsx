@@ -123,7 +123,7 @@ const RunRow = ({
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 md:flex-nowrap md:gap-3">
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => { setOpen((v) => !v); }}
           className="text-xs text-slate-400 hover:text-slate-700"
           title={open ? 'Collapse log' : 'Expand log'}
         >
@@ -153,7 +153,7 @@ const RunRow = ({
           {run.status === 'running' && (
             <button
               type="button"
-              onClick={() => onStop(run.id)}
+              onClick={() => { onStop(run.id); }}
               className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:border-red-300 hover:text-red-600"
             >
               Stop
@@ -238,7 +238,7 @@ export const ScrapeRunPanel = () => {
     const id = window.setInterval(() => {
       void reload();
     }, POLL_MS);
-    return () => window.clearInterval(id);
+    return () => { window.clearInterval(id); };
   }, [runs, reload]);
 
   // Detect running -> done transitions and fire the corpus-stale event.
@@ -267,8 +267,8 @@ export const ScrapeRunPanel = () => {
   // Auto-dismiss toast.
   useEffect(() => {
     if (!toast) return;
-    const id = window.setTimeout(() => setToast(null), 3000);
-    return () => window.clearTimeout(id);
+    const id = window.setTimeout(() => { setToast(null); }, 3000);
+    return () => { window.clearTimeout(id); };
   }, [toast]);
 
   const startScrape = useCallback(

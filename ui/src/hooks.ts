@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { postJson } from './api';
 import type { AppStatus, Fit, Source } from './types';
 
 export const useDebounced = <T>(value: T, delay = 150): T => {
   const [v, setV] = useState(value);
   useEffect(() => {
-    const id = window.setTimeout(() => setV(value), delay);
-    return () => window.clearTimeout(id);
+    const id = window.setTimeout(() => { setV(value); }, delay);
+    return () => { window.clearTimeout(id); };
   }, [value, delay]);
   return v;
 };
@@ -35,13 +36,9 @@ export const useCorpusActions = () => {
     async (ids: string[]): Promise<CorpusActionsResult> => {
       if (ids.length === 0) return { ok: true };
       try {
-        const res = await fetch('/api/corpus/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids }),
-        });
+        const res = await postJson('/api/corpus/delete', { ids });
         const body = (await res.json()) as { ok?: boolean; error?: string };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
         return { ok: true };
       } catch (e) {
@@ -62,13 +59,9 @@ export const useCorpusActions = () => {
       try {
         const payload: Record<string, unknown> = { id, rating };
         if (comment !== undefined) payload.comment = comment;
-        const res = await fetch('/api/corpus/rate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
+        const res = await postJson('/api/corpus/rate', payload);
         const body = (await res.json()) as { ok?: boolean; error?: string };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         // NOTE: do NOT fire corpus-stale here. The autosave inside
         // RatingCommentEditor calls this on every keystroke debounce; firing
         // stale would reload results.json mid-typing, remount the row card,
@@ -97,17 +90,13 @@ export const useCorpusActions = () => {
     }> => {
       if (ids.length === 0) return { ok: true, rescored: 0 };
       try {
-        const res = await fetch('/api/corpus/rescore', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids }),
-        });
+        const res = await postJson('/api/corpus/rescore', { ids });
         const body = (await res.json()) as {
           ok?: boolean; error?: string;
           rescored?: number; claude_rescored?: number;
           regex_fallback?: number; failed?: number; missing?: string[];
         };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
         return {
           ok: true,
@@ -132,13 +121,9 @@ export const useCorpusActions = () => {
     async (ids: string[], pushed: boolean): Promise<CorpusActionsResult> => {
       if (ids.length === 0) return { ok: true };
       try {
-        const res = await fetch('/api/corpus/push-to-end', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids, pushed }),
-        });
+        const res = await postJson('/api/corpus/push-to-end', { ids, pushed });
         const body = (await res.json()) as { ok?: boolean; error?: string };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
         return { ok: true };
       } catch (e) {
@@ -184,13 +169,9 @@ export const useAppStatus = () => {
       try {
         const payload: Record<string, unknown> = { id, status };
         if (note !== undefined) payload.note = note;
-        const res = await fetch('/api/corpus/app-status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
+        const res = await postJson('/api/corpus/app-status', payload);
         const body = (await res.json()) as { ok?: boolean; error?: string };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
         return { ok: true };
       } catch (e) {
@@ -203,15 +184,13 @@ export const useAppStatus = () => {
   const bulkImportApplied = useCallback(
     async (ids: string[]): Promise<BulkImportResult> => {
       try {
-        const res = await fetch('/api/corpus/applied-bulk-import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ applied_ids: ids }),
+        const res = await postJson('/api/corpus/applied-bulk-import', {
+          applied_ids: ids,
         });
         const body = (await res.json()) as {
           ok?: boolean; error?: string; imported?: number;
         };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
         return { ok: true, imported: body.imported ?? 0 };
       } catch (e) {
@@ -263,15 +242,13 @@ export const useAddManual = () => {
 
   const addManual = useCallback(
     async (input: string): Promise<AddManualResult> => {
-      const trimmed = (input || '').trim();
+      const trimmed = input.trim();
       if (!trimmed) {
         return { ok: false, error: 'paste a LinkedIn URL or job id' };
       }
       try {
-        const res = await fetch('/api/corpus/add-manual', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url_or_id: trimmed }),
+        const res = await postJson('/api/corpus/add-manual', {
+          url_or_id: trimmed,
         });
         const body = (await res.json()) as {
           ok?: boolean;
@@ -293,11 +270,11 @@ export const useAddManual = () => {
             ok: false,
             alreadyInCorpus: true,
             existingId: body.existing_id,
-            error: body.error || 'already in corpus',
+            error: body.error ?? 'already in corpus',
           };
         }
         if (!body.ok || !body.id) {
-          return { ok: false, error: body.error || `HTTP ${res.status}` };
+          return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         }
         fireStale();
         return {

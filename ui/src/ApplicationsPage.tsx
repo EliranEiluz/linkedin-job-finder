@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import {
   DndContext,
   DragOverlay,
@@ -31,110 +30,24 @@ import {
 } from '@tanstack/react-table';
 import { APP_STATUS_ORDER, type AppStatus, type Job } from './types';
 import { useAppStatus, useCorpusActions } from './hooks';
-import { Dot, type DotColor } from './Dot';
-import { RatingCommentEditor } from './RatingCommentEditor';
+import { Dot } from './Dot';
 import { useViewport } from './useViewport';
+import {
+  COLUMNS,
+  STALE_DAYS,
+  STATUS_ACCENT,
+  STATUS_BLURB,
+  STATUS_CHIP,
+  STATUS_DOT,
+  STATUS_LABEL,
+  isStaleJob,
+  safeRel,
+} from './applications/constants';
+import { AppDetailModal } from './applications/AppDetailModal';
 
 // ---- Constants ------------------------------------------------------------
-
-// 7 visible columns. `'new'` is intentionally hidden — jobs with no
-// `app_status` (or `'new'`) live in the Corpus tab, not here.
-const COLUMNS: readonly AppStatus[] = [
-  'applied',
-  'screening',
-  'interview',
-  'take-home',
-  'offer',
-  'rejected',
-  'withdrew',
-] as const;
-
-const STATUS_LABEL: Record<AppStatus, string> = {
-  new: 'New',
-  applied: 'Applied',
-  screening: 'Screening',
-  interview: 'Interview',
-  'take-home': 'Take-home',
-  offer: 'Offer',
-  rejected: 'Rejected',
-  withdrew: 'Withdrew',
-};
-
-// Hover blurbs surfaced as the column-header title=… on the kanban. One short
-// sentence each — tells the user what counts as that stage. Mobile devices
-// won't see these (no hover) but desktop scanning is the main use case.
-const STATUS_BLURB: Record<AppStatus, string> = {
-  new: 'Default state — lives in the Corpus tab, not here.',
-  applied: "You sent the application; waiting for a reply.",
-  screening: 'Recruiter or hiring manager has reached out for a screen.',
-  interview: 'In an interview round (technical, behavioural, on-site).',
-  'take-home': 'Working on (or waiting on) a take-home assignment.',
-  offer: 'You have an offer in hand.',
-  rejected: 'Closed — they passed, or you got a clear no.',
-  withdrew: 'Closed — you pulled out (no longer interested or accepted elsewhere).',
-};
-
-// Tailwind tints for the column accent bar. Kept inline (instead of dynamic
-// class names) so Tailwind's JIT picks them up at build time.
-const STATUS_ACCENT: Record<AppStatus, string> = {
-  new: 'bg-slate-300',
-  applied: 'bg-slate-400',
-  screening: 'bg-blue-500',
-  interview: 'bg-indigo-500',
-  'take-home': 'bg-amber-500',
-  offer: 'bg-emerald-500',
-  rejected: 'bg-red-500',
-  withdrew: 'bg-slate-300',
-};
-
-// Per-stage summary + table-view status chips. Per §3.5 the chip
-// background is uniform slate; semantic meaning is carried by the leading
-// dot. The dot color collapses the original 7-tint palette into the
-// new 4-token palette:
-//   in-progress active stages → neutral (applied/screening/interview/take-home)
-//   offer                     → good
-//   rejected                  → bad
-//   withdrew / new            → neutral (muted text)
-// Note: the per-column accent BAR (STATUS_ACCENT above) keeps its 5
-// distinct colors — the user explicitly called those out as "status-
-// specific, not decorative" in the polish spec.
-const STATUS_CHIP_BG: Record<AppStatus, string> = {
-  new: 'bg-slate-100 text-slate-500',
-  applied: 'bg-slate-100 text-slate-700',
-  screening: 'bg-slate-100 text-slate-700',
-  interview: 'bg-slate-100 text-slate-700',
-  'take-home': 'bg-slate-100 text-slate-700',
-  offer: 'bg-slate-100 text-slate-700',
-  rejected: 'bg-slate-100 text-slate-600',
-  withdrew: 'bg-slate-100 text-slate-500',
-};
-const STATUS_DOT: Record<AppStatus, DotColor> = {
-  new: 'neutral',
-  applied: 'neutral',
-  screening: 'neutral',
-  interview: 'neutral',
-  'take-home': 'warn',
-  offer: 'good',
-  rejected: 'bad',
-  withdrew: 'neutral',
-};
-
-// Convenience: full chip className for the existing call sites that
-// concatenate STATUS_CHIP with their own positioning/sizing classes.
-// This is just the bg+text part — call sites still wrap with their own
-// `inline-flex items-center …` and prefix a <Dot color={STATUS_DOT[s]} />.
-const STATUS_CHIP = STATUS_CHIP_BG;
-
-// "Active" stages where a follow-up makes sense — terminal states
-// (offer / rejected / withdrew) are excluded. Threshold matches the
-// design doc: 14 days since last move flags the row as stale.
-const STALE_DAYS = 14;
-const STALE_ACTIVE: ReadonlySet<AppStatus> = new Set<AppStatus>([
-  'applied',
-  'screening',
-  'interview',
-  'take-home',
-]);
+// Stage labels, chip styles, stale-detection, and the Notes editor knobs
+// live in ./applications/constants — shared with AppDetailModal.
 
 const RESULTS_URL = `${import.meta.env.BASE_URL}results.json`;
 
@@ -145,13 +58,6 @@ const APPLIED_IMPORTED_FLAG_KEY = 'linkedinjobs:applied-imported-v1';
 // other UI prefs under the `linkedinjobs:` namespace.
 const VIEW_LOCALSTORAGE_KEY = 'linkedinjobs:tracker-view';
 type ViewMode = 'kanban' | 'table';
-
-// Notes editor sizing + autosave cadence. Server caps at 4000 chars (see
-// vite.config.ts → /api/corpus/app-status). 600ms debounce mirrors the
-// rating-comment editor in JobActionsPopover.tsx so the two surfaces feel
-// identical to the user.
-const NOTES_MAX = 4000;
-const NOTES_AUTOSAVE_MS = 600;
 
 // Pointer-down → pointer-up displacement threshold (in CSS px) under which
 // a card pointer interaction is treated as a click (open the detail modal)
@@ -178,33 +84,14 @@ const readInitialView = (): ViewMode => {
 };
 
 // ---- Helpers --------------------------------------------------------------
-
-const safeRel = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  try {
-    return formatDistanceToNowStrict(parseISO(iso), { addSuffix: true });
-  } catch {
-    return '—';
-  }
-};
-
-// "Stale" = active stage AND last status move was >STALE_DAYS ago. Pure
-// derived overlay — never written to disk, never a column of its own.
-const isStaleJob = (j: Job): boolean => {
-  if (!j.app_status || !STALE_ACTIVE.has(j.app_status)) return false;
-  if (!j.app_status_at) return false;
-  const t = Date.parse(j.app_status_at);
-  if (Number.isNaN(t)) return false;
-  const ageMs = Date.now() - t;
-  return ageMs >= STALE_DAYS * 24 * 60 * 60 * 1000;
-};
+// safeRel + isStaleJob live in ./applications/constants for the modal too.
 
 const fetchJobs = async (): Promise<Job[]> => {
-  const res = await fetch(`${RESULTS_URL}?t=${Date.now()}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const res = await fetch(`${RESULTS_URL}?t=${Date.now().toString()}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status.toString()}`);
   const text = await res.text();
   if (!text.trim()) return [];
-  const data = JSON.parse(text);
+  const data: unknown = JSON.parse(text);
   if (!Array.isArray(data)) throw new Error('results.json root must be an array');
   return data as Job[];
 };
@@ -330,8 +217,8 @@ const CardContent = ({ job, stale }: { job: Job; stale?: boolean }) => (
           href={job.url}
           target="_blank"
           rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); }}
+          onPointerDown={(e) => { e.stopPropagation(); }}
           className="shrink-0 text-[11px] font-medium text-brand-700 hover:underline"
         >
           Open ↗
@@ -385,7 +272,7 @@ const SortableCard = ({ job, stale, isFirstStale, onOpen }: CardProps) => {
         // Ignore clicks that originated on inner handlers (the "Open ↗"
         // anchor calls stopPropagation on pointerdown so its event never
         // reaches us). Defer slightly so any in-flight drag-end runs first.
-        window.setTimeout(() => onOpen(job), 0);
+        window.setTimeout(() => { onOpen(job); }, 0);
       }}
       data-stale={stale ? '1' : undefined}
       data-first-stale={isFirstStale ? '1' : undefined}
@@ -508,7 +395,7 @@ const ViewToggle = ({ view, onChange }: ViewToggleProps) => {
     <button
       key={mode}
       type="button"
-      onClick={() => onChange(mode)}
+      onClick={() => { onChange(mode); }}
       aria-pressed={view === mode}
       className={clsx(
         'rounded px-2.5 py-1 text-xs font-medium transition-colors',
@@ -544,11 +431,11 @@ const SummaryStrip = ({ counts, staleCount, onClickStale }: SummaryStripProps) =
   // On mobile the strip wrapped to two lines; zero-count chips were just
   // visual noise. Filter them out on mobile so the strip stays compact.
   // Desktop still shows muted zero-count chips (the at-a-glance use case).
-  const visible = COLUMNS.filter((s) => !(isMobile && (counts[s] ?? 0) === 0));
+  const visible = COLUMNS.filter((s) => !(isMobile && counts[s] === 0));
   return (
     <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[11px]">
       {visible.map((s, i) => {
-        const n = counts[s] ?? 0;
+        const n = counts[s];
         const muted = n === 0;
         return (
           <span key={s} className="inline-flex items-center gap-1">
@@ -621,7 +508,7 @@ const TrackerTable = ({
         id: 'title',
         header: 'Title',
         cell: (info) => {
-          const v = info.getValue() ?? '';
+          const v = info.getValue();
           return (
             <span className="text-slate-800" title={v}>
               {TRUNCATE(v || '(untitled)')}
@@ -646,7 +533,7 @@ const TrackerTable = ({
         id: 'status',
         header: 'Status',
         cell: (info) => {
-          const s = (info.row.original.app_status ?? 'new') as AppStatus;
+          const s = (info.row.original.app_status ?? 'new');
           return (
             <span
               className={clsx(
@@ -660,8 +547,8 @@ const TrackerTable = ({
           );
         },
         sortingFn: (a, b) => {
-          const sa = (a.original.app_status ?? 'new') as AppStatus;
-          const sb = (b.original.app_status ?? 'new') as AppStatus;
+          const sa = (a.original.app_status ?? 'new');
+          const sb = (b.original.app_status ?? 'new');
           return APP_STATUS_ORDER_INDEX[sa] - APP_STATUS_ORDER_INDEX[sb];
         },
       }),
@@ -713,8 +600,8 @@ const TrackerTable = ({
         cell: (info) => <FitPill fit={info.row.original.fit} />,
         sortingFn: (a, b) => {
           const order: Record<string, number> = { good: 0, ok: 1, skip: 2 };
-          const av = a.original.fit ? order[a.original.fit] : 3;
-          const bv = b.original.fit ? order[b.original.fit] : 3;
+          const av = (a.original.fit ? order[a.original.fit] : undefined) ?? 3;
+          const bv = (b.original.fit ? order[b.original.fit] : undefined) ?? 3;
           return av - bv;
         },
       }),
@@ -729,7 +616,7 @@ const TrackerTable = ({
               href={j.url}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); }}
               className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
             >
               Open ↗
@@ -812,7 +699,7 @@ const TrackerTable = ({
                   // modal — same affordance as the kanban cards. The "Open ↗"
                   // action cell calls stopPropagation on its inner link so
                   // users can still jump straight to LinkedIn from the table.
-                  onClick={() => onOpenRow(j)}
+                  onClick={() => { onOpenRow(j); }}
                   className={clsx(
                     'cursor-pointer border-b border-slate-100 hover:bg-slate-50',
                     stale && 'border-l-4 border-l-amber-400',
@@ -853,383 +740,6 @@ const APP_STATUS_ORDER_INDEX: Record<AppStatus, number> = (() => {
   return out;
 })();
 
-// ---- Application detail modal --------------------------------------------
-
-const TITLE_TRUNC = 50;
-const truncateTitle = (s: string, n = TITLE_TRUNC): string =>
-  s.length <= n ? s : s.slice(0, n - 1) + '…';
-
-interface AppDetailModalProps {
-  job: Job;
-  onClose: () => void;
-  // Persists app_notes (tri-state on the wire — see hooks.ts setAppStatus).
-  // The modal owns the autosave debounce + flush-on-blur + flush-on-unmount
-  // pattern, so it just needs a simple promise-returning setter here.
-  onSaveNotes: (
-    id: string,
-    status: AppStatus,
-    note: string | null,
-  ) => Promise<{ ok: boolean; error?: string }>;
-  // Status changes via the quick-select dropdown. Same setAppStatus call,
-  // but separated out so the page-level optimistic move logic can run
-  // (mirror of the drag-end handler — no double-history-entry concerns
-  // because the backend de-dupes same-status writes).
-  onChangeStatus: (
-    id: string,
-    next: AppStatus,
-  ) => Promise<{ ok: boolean; error?: string }>;
-  // Rating + rating-comment writer. Distinct from app_notes — different
-  // results.json fields (rating + comment) and different surface
-  // (also editable from the Corpus popover and row-expanded panel). The
-  // <RatingCommentEditor /> below owns its own autosave timers, so its
-  // saves and the app_notes saves don't share state.
-  onRate: (
-    id: string,
-    rating: number | null,
-    comment?: string | null,
-  ) => Promise<{ ok: boolean; error?: string }>;
-}
-
-// Centered overlay modal — picked over an anchored popover because it
-// reads better on the iPhone width (the spec calls this out). Click on
-// the backdrop or Escape closes; the autosave flush runs in the unmount
-// effect so closing never drops a pending edit.
-//
-// Mirrors the rating-comment editor in JobActionsPopover.tsx exactly:
-//   - 600ms debounced autosave on textarea change
-//   - flush on blur (cancels the debounce, saves immediately)
-//   - flush on unmount (best-effort fire-and-forget)
-//   - status indicator: saving… / saved / save failed / unsaved / N/MAX
-//   - empty / whitespace-only normalizes to null = clears app_notes
-const AppDetailModal = ({
-  job, onClose, onSaveNotes, onChangeStatus, onRate,
-}: AppDetailModalProps) => {
-  const status = (job.app_status ?? 'new') as AppStatus;
-
-  // Notes editor state. `notesDraft` is what the user is typing;
-  // `notesSaved` is the last value successfully persisted (used to decide
-  // whether a blur/unmount flush actually has unsaved work).
-  const initialNotes = job.app_notes ?? '';
-  const [notesDraft, setNotesDraft] = useState<string>(initialNotes);
-  const [notesSaved, setNotesSaved] = useState<string>(initialNotes);
-  const [saveStatus, setSaveStatus] =
-    useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [saveErr, setSaveErr] = useState<string | null>(null);
-
-  // Debounce + saved-fade timers. Cleared in the unmount effect.
-  const debounceRef = useRef<number | null>(null);
-  const savedFadeRef = useRef<number | null>(null);
-
-  // Refs used by the unmount-flush so it sees the latest values without
-  // re-binding the cleanup effect (same pattern as JobActionsPopover).
-  const draftRef = useRef(notesDraft);
-  draftRef.current = notesDraft;
-  const savedRef = useRef(notesSaved);
-  savedRef.current = notesSaved;
-  const statusRef = useRef(status);
-  statusRef.current = status;
-
-  // Status-change loading state for the quick-select dropdown.
-  const [statusBusy, setStatusBusy] = useState(false);
-  const [statusErr, setStatusErr] = useState<string | null>(null);
-
-  // ---- Backdrop click + Escape close ----
-  // Backdrop click: only close when the click target IS the backdrop (so
-  // clicks inside the modal panel don't bubble up and dismiss it). Escape
-  // closes from anywhere — the unmount-flush picks up any pending notes.
-  const backdropRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  // Persist the current notes draft. Used by both the debounced autosave
-  // and the blur/unmount flush. No-op when nothing is dirty.
-  const saveNotes = useCallback(
-    async (text: string) => {
-      if (text === savedRef.current) return; // no change
-      setSaveStatus('saving');
-      // Empty (or whitespace-only) → null = clear server-side. Mirrors the
-      // backend's tri-state contract (undefined = don't touch, null = clear,
-      // string = set).
-      const payload: string | null = text.trim() === '' ? null : text;
-      const r = await onSaveNotes(job.id, statusRef.current, payload);
-      if (r.ok) {
-        setSaveStatus('saved');
-        setSaveErr(null);
-        setNotesSaved(text);
-        if (savedFadeRef.current) window.clearTimeout(savedFadeRef.current);
-        savedFadeRef.current = window.setTimeout(
-          () => setSaveStatus('idle'), 1500,
-        );
-      } else {
-        setSaveStatus('error');
-        setSaveErr(r.error || 'notes save failed');
-      }
-    },
-    [job.id, onSaveNotes],
-  );
-
-  // On unmount: clear timers + flush any pending edit. Best-effort
-  // (fire-and-forget — we can't await a React unmount). Same shape as
-  // JobActionsPopover's comment unmount-flush.
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) {
-        window.clearTimeout(debounceRef.current);
-        debounceRef.current = null;
-      }
-      if (savedFadeRef.current) {
-        window.clearTimeout(savedFadeRef.current);
-        savedFadeRef.current = null;
-      }
-      if (draftRef.current !== savedRef.current) {
-        void saveNotes(draftRef.current);
-      }
-    };
-  }, [saveNotes]);
-
-  const handleNotesChange = (text: string) => {
-    setNotesDraft(text);
-    setSaveStatus('idle');
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(() => {
-      void saveNotes(text);
-      debounceRef.current = null;
-    }, NOTES_AUTOSAVE_MS);
-  };
-
-  const handleNotesBlur = () => {
-    if (debounceRef.current) {
-      window.clearTimeout(debounceRef.current);
-      debounceRef.current = null;
-    }
-    void saveNotes(notesDraft);
-  };
-
-  const handleStatusChange = async (next: AppStatus) => {
-    if (next === status) return;
-    setStatusBusy(true);
-    setStatusErr(null);
-    const r = await onChangeStatus(job.id, next);
-    setStatusBusy(false);
-    if (!r.ok) {
-      setStatusErr(r.error || 'status change failed');
-    } else {
-      // Page-level reload (via the corpus-stale event fired by useAppStatus)
-      // will re-render with the new status; we close so the user sees the
-      // card jump to its new column rather than having a stale snapshot.
-      onClose();
-    }
-  };
-
-  // Status history list: most-recent first, distance from now. Server
-  // appends on every transition, so the list reads as a timeline of moves.
-  const history = (job.app_status_history ?? []).slice().reverse();
-
-  return (
-    <div
-      ref={backdropRef}
-      role="presentation"
-      onClick={(e) => {
-        if (e.target === backdropRef.current) onClose();
-      }}
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 px-2 pb-2 sm:items-center sm:p-4"
-    >
-      <div
-        role="dialog"
-        aria-label="Application details"
-        aria-modal="true"
-        className="flex w-full max-w-lg flex-col overflow-hidden rounded-t-lg bg-white shadow-xl sm:rounded-lg"
-      >
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
-          <div className="min-w-0">
-            <div
-              className="truncate text-sm font-semibold text-slate-900"
-              title={job.title}
-            >
-              {truncateTitle(job.title || '(untitled)')}
-            </div>
-            <div className="mt-0.5 truncate text-xs text-slate-500" title={job.company}>
-              {job.company || '—'}
-            </div>
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
-              <span
-                className={clsx(
-                  'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium',
-                  STATUS_CHIP[status],
-                )}
-              >
-                <Dot color={STATUS_DOT[status]} />
-                {STATUS_LABEL[status]}
-              </span>
-              <span className="text-slate-400">
-                moved {safeRel(job.app_status_at)}
-              </span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="-mr-1 rounded px-2 py-1 text-lg leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
-
-        {/* Body — scrollable on small viewports */}
-        <div className="flex-1 overflow-y-auto px-4 py-3">
-          {/* Rating + rating-comment — same component used by the Corpus
-              popover and the JobsTable expanded row. Writes the SAME
-              results.json fields (rating, comment, rated_at), distinct
-              from app_notes below. Owns its own debounce/autosave timers
-              so it doesn't collide with the notes editor's. */}
-          <div className="mb-4 border-b border-slate-100 pb-4">
-            <RatingCommentEditor
-              jobId={job.id}
-              initialRating={job.rating ?? null}
-              initialComment={job.comment ?? null}
-              onSave={(rating, comment) => onRate(job.id, rating, comment)}
-            />
-          </div>
-
-          {/* Notes textarea */}
-          <div>
-            <div className="mb-1 flex items-center justify-between">
-              <label
-                htmlFor={`app-notes-${job.id}`}
-                className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
-              >
-                Notes
-              </label>
-              <span
-                className={clsx(
-                  'text-[10px]',
-                  saveStatus === 'saving' && 'text-slate-400',
-                  saveStatus === 'saved' && 'text-emerald-600',
-                  saveStatus === 'error' && 'text-red-600',
-                  saveStatus === 'idle' && 'text-slate-300',
-                )}
-                aria-live="polite"
-              >
-                {saveStatus === 'saving' && 'saving…'}
-                {saveStatus === 'saved' && 'saved'}
-                {saveStatus === 'error' && 'save failed'}
-                {saveStatus === 'idle' && notesDraft !== notesSaved && 'unsaved'}
-                {saveStatus === 'idle' && notesDraft === notesSaved &&
-                  `${notesDraft.length}/${NOTES_MAX}`}
-              </span>
-            </div>
-            <textarea
-              id={`app-notes-${job.id}`}
-              value={notesDraft}
-              onChange={(e) => handleNotesChange(e.target.value.slice(0, NOTES_MAX))}
-              onBlur={handleNotesBlur}
-              rows={5}
-              placeholder="Recruiter pinged me Friday, interview rescheduled, take-home due Tue…"
-              className="w-full resize-y rounded border border-slate-200 px-2 py-1.5 text-sm text-slate-800 placeholder:text-slate-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-            />
-            {saveErr && (
-              <div className="mt-1 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
-                {saveErr}
-              </div>
-            )}
-          </div>
-
-          {/* Status history */}
-          {history.length > 0 && (
-            <div className="mt-4">
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                History
-              </div>
-              <ol className="space-y-1 text-xs text-slate-600">
-                {history.map((h, i) => (
-                  <li key={`${h.at}-${i}`} className="flex items-center gap-2">
-                    <span
-                      className={clsx(
-                        'inline-flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
-                        STATUS_CHIP[(h.status ?? 'new') as AppStatus],
-                      )}
-                    >
-                      <Dot color={STATUS_DOT[(h.status ?? 'new') as AppStatus]} />
-                      {STATUS_LABEL[(h.status ?? 'new') as AppStatus]}
-                    </span>
-                    <span className="text-slate-400">{safeRel(h.at)}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-        </div>
-
-        {/* Footer — quick actions */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <label
-              htmlFor={`app-status-${job.id}`}
-              className="text-[11px] font-medium text-slate-500"
-            >
-              Move to
-            </label>
-            <select
-              id={`app-status-${job.id}`}
-              value={status}
-              disabled={statusBusy}
-              onChange={(e) => void handleStatusChange(e.target.value as AppStatus)}
-              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
-            >
-              {COLUMNS.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABEL[s]}
-                </option>
-              ))}
-              {/* `new` is the unset/default state hidden from the kanban —
-                  selecting it removes the job from the tracker (status
-                  history is preserved server-side). Same as un-checking
-                  "Applied" in the Corpus tab. */}
-              <option value="new">— Remove from tracker</option>
-            </select>
-            {statusErr && (
-              <span className="text-[11px] text-red-600">{statusErr}</span>
-            )}
-          </div>
-          {/* Order: destructive/secondary LEFT, primary action RIGHT
-              (Apple HIG / standard form-button convention). The "Remove
-              from tracker" sets app_status='new' which hides the job
-              from the kanban; status history is preserved server-side. */}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={statusBusy}
-              onClick={() => void handleStatusChange('new')}
-              className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-              title="Remove from tracker (status history preserved)"
-            >
-              Remove from tracker
-            </button>
-            {job.url ? (
-              <a
-                href={job.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded border border-brand-700 bg-brand-700 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-brand-800"
-              >
-                Open ↗
-              </a>
-            ) : (
-              <span className="text-[11px] text-slate-400">no URL</span>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 // ---- Main page ------------------------------------------------------------
 
@@ -1281,7 +791,7 @@ export const ApplicationsPage = () => {
       const id = Date.now();
       setToast({ id, text, kind });
       toastTimerRef.current = window.setTimeout(() => {
-        setToast((cur) => (cur && cur.id === id ? null : cur));
+        setToast((cur) => (cur?.id === id ? null : cur));
       }, 3500);
     },
     [],
@@ -1308,7 +818,7 @@ export const ApplicationsPage = () => {
   useEffect(() => {
     const onStale = () => void reload();
     window.addEventListener('linkedinjobs:corpus-stale', onStale);
-    return () => window.removeEventListener('linkedinjobs:corpus-stale', onStale);
+    return () => { window.removeEventListener('linkedinjobs:corpus-stale', onStale); };
   }, [reload]);
 
   // ---- One-shot localStorage migration ----
@@ -1331,9 +841,9 @@ export const ApplicationsPage = () => {
         }
         let ids: string[] = [];
         try {
-          const parsed = JSON.parse(raw);
+          const parsed: unknown = JSON.parse(raw);
           if (Array.isArray(parsed)) {
-            ids = parsed.filter((x) => typeof x === 'string');
+            ids = parsed.filter((x): x is string => typeof x === 'string');
           }
         } catch {
           /* malformed — treat as empty */
@@ -1478,7 +988,7 @@ export const ApplicationsPage = () => {
   }, [cards]);
 
   const totalActive = useMemo(
-    () => COLUMNS.reduce((acc, s) => acc + (counts[s] ?? 0), 0),
+    () => COLUMNS.reduce((acc, s) => acc + counts[s], 0),
     [counts],
   );
 
@@ -1490,7 +1000,7 @@ export const ApplicationsPage = () => {
   );
 
   const staleJobs = useMemo(() => allJobs.filter(isStaleJob), [allJobs]);
-  const firstStaleId = staleJobs.length > 0 ? staleJobs[0].id : null;
+  const firstStaleId = staleJobs[0]?.id ?? null;
 
   const scrollToFirstStale = useCallback(() => {
     if (view === 'table') {
@@ -1503,7 +1013,7 @@ export const ApplicationsPage = () => {
     window.setTimeout(() => {
       const el = document.querySelector(
         `[data-first-stale="1"]`,
-      ) as HTMLElement | null;
+      );
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 0);
   }, [view, firstStaleId]);
@@ -1632,7 +1142,7 @@ export const ApplicationsPage = () => {
         <TrackerTable
           jobs={allJobs}
           staleOnly={staleOnly}
-          onClearStaleOnly={() => setStaleOnly(false)}
+          onClearStaleOnly={() => { setStaleOnly(false); }}
           onOpenRow={handleOpenCard}
         />
       ) : (
@@ -1641,8 +1151,8 @@ export const ApplicationsPage = () => {
             sensors={sensors}
             collisionDetection={closestCenter}
             onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDragCancel={() => setActiveJob(null)}
+            onDragEnd={(e) => { void handleDragEnd(e); }}
+            onDragCancel={() => { setActiveJob(null); }}
           >
             <div className="flex h-full gap-3 p-4">
               {COLUMNS.map((status) => (
@@ -1670,7 +1180,7 @@ export const ApplicationsPage = () => {
         <AppDetailModal
           key={openDetailJob.id}
           job={openDetailJob}
-          onClose={() => setOpenDetailFor(null)}
+          onClose={() => { setOpenDetailFor(null); }}
           onSaveNotes={(id, status, note) => setAppStatus(id, status, note)}
           onChangeStatus={handleChangeStatusFromModal}
           onRate={(id, rating, comment) => rateJob(id, rating, comment)}

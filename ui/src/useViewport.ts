@@ -25,17 +25,17 @@ export const useViewport = (): { isMobile: boolean } => {
   const [isMobile, setIsMobile] = useState<boolean>(readIsMobile);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
+    if (typeof window === 'undefined') return;
     const mql = window.matchMedia(MQ);
-    const onChange = (e: MediaQueryListEvent) => setIsMobile(!e.matches);
-    // Sync once in case innerWidth shifted between SSR-default render and now.
+    const onChange = (e: MediaQueryListEvent) => { setIsMobile(!e.matches); };
+    // Sync once in case innerWidth shifted between the synchronous initial
+    // render and this effect (e.g. responsive devtools toggled mid-mount).
     setIsMobile(!mql.matches);
-    if (mql.addEventListener) mql.addEventListener('change', onChange);
-    else mql.addListener(onChange); // older Safari
-    return () => {
-      if (mql.removeEventListener) mql.removeEventListener('change', onChange);
-      else mql.removeListener(onChange);
-    };
+    // MediaQueryList.addEventListener is supported back to Safari 14 — the
+    // deprecated `addListener` fallback was kept around when the codebase
+    // still cared about Safari 13 and below; not worth carrying anymore.
+    mql.addEventListener('change', onChange);
+    return () => { mql.removeEventListener('change', onChange); };
   }, []);
 
   return { isMobile };
