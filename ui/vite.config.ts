@@ -117,7 +117,9 @@ const updateRun = async (
   const status = await readStatus();
   const idx = status.runs.findIndex((r) => r.id === id);
   if (idx === -1) return;
-  status.runs[idx] = { ...status.runs[idx], ...patch };
+  const existing = status.runs[idx];
+  if (!existing) return;
+  status.runs[idx] = { ...existing, ...patch };
   await writeStatus(status);
 };
 
@@ -762,7 +764,7 @@ const configApiPlugin = (): Plugin => ({
     };
     server.middlewares.use(async (req, res, next) => {
       // Strip cache-busting query string (UI fetches use `?t=Date.now()`).
-      const pathOnly = (req.url ?? '').split('?')[0];
+      const pathOnly = (req.url ?? '').split('?')[0] ?? '';
       const target = rootJsonFiles[pathOnly];
       if (!target) return next();
       try {

@@ -16,6 +16,12 @@
     "jsx": "react-jsx",
 
     /* Linting */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    // exactOptionalPropertyTypes intentionally OFF — produced ~70 errors
+    // across legacy result/config shapes that explicitly serialize `undefined`
+    // for optional fields. The cost-vs-payoff isn't there for an OSS scraper.
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,

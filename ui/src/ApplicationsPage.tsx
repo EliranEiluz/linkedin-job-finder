@@ -713,8 +713,8 @@ const TrackerTable = ({
         cell: (info) => <FitPill fit={info.row.original.fit} />,
         sortingFn: (a, b) => {
           const order: Record<string, number> = { good: 0, ok: 1, skip: 2 };
-          const av = a.original.fit ? order[a.original.fit] : 3;
-          const bv = b.original.fit ? order[b.original.fit] : 3;
+          const av = (a.original.fit ? order[a.original.fit] : undefined) ?? 3;
+          const bv = (b.original.fit ? order[b.original.fit] : undefined) ?? 3;
           return av - bv;
         },
       }),
@@ -1490,7 +1490,7 @@ export const ApplicationsPage = () => {
   );
 
   const staleJobs = useMemo(() => allJobs.filter(isStaleJob), [allJobs]);
-  const firstStaleId = staleJobs.length > 0 ? staleJobs[0].id : null;
+  const firstStaleId = staleJobs[0]?.id ?? null;
 
   const scrollToFirstStale = useCallback(() => {
     if (view === 'table') {

@@ -134,7 +134,11 @@ export const CategoryManager = ({
     const j = i + delta;
     if (j < 0 || j >= categories.length) return;
     const arr = [...categories];
-    [arr[i], arr[j]] = [arr[j], arr[i]];
+    const ai = arr[i];
+    const aj = arr[j];
+    if (ai === undefined || aj === undefined) return;
+    arr[i] = aj;
+    arr[j] = ai;
     onChange(arr);
   };
   const add = () => {

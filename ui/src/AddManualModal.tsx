@@ -26,7 +26,7 @@ export const extractJobIdTs = (input: string): string | null => {
   const cur = u.searchParams.get('currentJobId');
   if (cur && /^\d{8,12}$/.test(cur)) return cur;
   const m = JOBVIEW_RE.exec(u.pathname);
-  return m ? m[1] : null;
+  return m?.[1] ?? null;
 };
 
 type ModalState =

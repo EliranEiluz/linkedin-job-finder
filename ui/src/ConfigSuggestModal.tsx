@@ -159,6 +159,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
     for (let i = 0; i < s.add_queries.length; i++) {
       if (!picked[qId(i)]) continue;
       const sug = s.add_queries[i];
+      if (!sug) continue;
       const cat = next.categories.find((c) => c.id === sug.category_id);
       if (!cat) {
         // Hallucinated id — skip with a warn so we can audit if it recurs.
@@ -183,7 +184,9 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
     const seenCo = new Set(next.priority_companies.map((p) => p.toLowerCase()));
     for (let i = 0; i < s.add_companies.length; i++) {
       if (!picked[cId(i)]) continue;
-      const name = s.add_companies[i].name.trim().toLowerCase();
+      const co = s.add_companies[i];
+      if (!co) continue;
+      const name = co.name.trim().toLowerCase();
       if (name && !seenCo.has(name)) {
         seenCo.add(name);
         next.priority_companies.push(name);
@@ -199,7 +202,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
     for (let i = 0; i < s.regex_tweaks.length; i++) {
       if (!picked[rId(i)]) continue;
       const tweak = s.regex_tweaks[i];
-      if (tweak.action !== 'add_to_off_topic') continue;
+      if (!tweak || tweak.action !== 'add_to_off_topic') continue;
       const pat = tweak.pattern.trim();
       if (pat && !existingPatterns.has(pat)) {
         existingPatterns.add(pat);
