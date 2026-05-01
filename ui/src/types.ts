@@ -73,6 +73,13 @@ export interface Job {
   hot?: boolean | null;
   fit_reasons: string[];
   scored_by: ScoredBy | null;
+  // ISO-8601 timestamp set every time the row gets (re)scored — by
+  // claude_batch_score, _apply_regex_fallback, OR the title-filter
+  // pre-filter. Lets the UI tell stale rows from fresh ones (e.g.
+  // "scored 7 days ago") and gives a future "auto-rescore anything
+  // older than N days" feature a hook. Optional for back-compat with
+  // rows persisted before this field existed.
+  scored_at?: string | null;
   scraped_at?: string;
   source?: Source | null;
   // 1–5 user rating, set via the row-actions popover. Persisted in

@@ -2050,6 +2050,7 @@ def _apply_regex_fallback(job: dict, desc: str):
     job["msc_required"] = check_msc(desc)
     job["fit"], job["fit_reasons"] = check_fit(desc)
     job["scored_by"] = "regex"
+    job["scored_at"] = datetime.now().isoformat()
 
 
 def _apply_claude_scoring(job: dict, scored: dict):
@@ -2061,6 +2062,7 @@ def _apply_claude_scoring(job: dict, scored: dict):
         reasons.append(f"flag: {flag}")
     job["fit_reasons"] = reasons
     job["scored_by"] = "claude"
+    job["scored_at"] = datetime.now().isoformat()
 
 
 def score_jobs_in_batches(jobs: list[dict], cv_text: str):
@@ -2180,6 +2182,7 @@ def process_one_job(
         job["score"] = 1
         job["fit_reasons"] = [f"title: matches /{reason}/"]
         job["scored_by"] = "title-filter"
+        job["scored_at"] = datetime.now().isoformat()
         if persist:
             save_results_merge([job])
             save_seen({job["id"]})
@@ -2274,6 +2277,7 @@ def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts,
             job["score"] = 1
             job["fit_reasons"] = [f"title: matches /{reason}/"]
             job["scored_by"] = "title-filter"
+            job["scored_at"] = datetime.now().isoformat()
             prefilter_skipped += 1
         else:
             to_fetch.append(job)

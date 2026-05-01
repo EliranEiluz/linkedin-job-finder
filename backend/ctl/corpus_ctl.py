@@ -787,6 +787,7 @@ def cmd_rescore(_args) -> None:
             job["score"] = 1
             job["fit_reasons"] = [f"title: matches /{reason}/"]
             job["scored_by"] = "title-filter"
+            job["scored_at"] = datetime.now().isoformat()
             title_filtered.append(job)
             continue
         # Stage 2: description fetch.
