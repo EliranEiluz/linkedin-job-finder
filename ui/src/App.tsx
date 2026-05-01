@@ -20,7 +20,7 @@ const TABS: { id: Tab; label: string; short: string }[] = [
   { id: 'setup', label: 'Setup', short: 'Setup' },
 ];
 
-const readTabFromUrl = (): Tab => {
+const readTabFromUrl = (): Tab | null => {
   const t = new URLSearchParams(window.location.search).get('tab');
   if (
     t === 'config' ||
@@ -31,11 +31,35 @@ const readTabFromUrl = (): Tab => {
   ) {
     return t;
   }
-  return 'corpus';
+  return null;
 };
 
 export const App = () => {
-  const [tab, setTab] = useState<Tab>(readTabFromUrl);
+  // First paint: if URL pinned a tab, honor it. Otherwise leave null and let
+  // the profile-presence check pick — wizard for first-runs, corpus otherwise.
+  const [tab, setTab] = useState<Tab>(() => readTabFromUrl() ?? 'corpus');
+  // One-shot landing gate: if /api/profiles returns zero profiles AND the URL
+  // didn't already pin a tab, force the wizard. Skips after the first run so
+  // the user can navigate freely. Failures (network down, etc) are silent —
+  // we don't want to block the UI behind a flaky check.
+  useEffect(() => {
+    if (readTabFromUrl() !== null) return; // URL wins
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/profiles');
+        if (!res.ok || cancelled) return;
+        const j = (await res.json()) as { profiles?: string[] };
+        const profiles = Array.isArray(j.profiles) ? j.profiles : [];
+        if (profiles.length === 0) {
+          setTab('setup');
+        }
+      } catch {
+        /* fall through to corpus default */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   // Per-tab refs so we can scroll the active tab into view on mobile when
   // the user navigates via URL change / popstate / first paint. Keeps the
   // active tab visible inside the horizontal-scroll strip.
@@ -61,7 +85,10 @@ export const App = () => {
 
   // Listen for back/forward.
   useEffect(() => {
-    const onPop = () => setTab(readTabFromUrl());
+    const onPop = () => {
+      const t = readTabFromUrl();
+      if (t !== null) setTab(t);
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
