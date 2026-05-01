@@ -1201,6 +1201,12 @@ export const JobsTable = ({
                                 <span className="font-semibold text-slate-500">Found at: </span>
                                 {j.found_at}
                               </div>
+                              {j.scored_at && (
+                                <div>
+                                  <span className="font-semibold text-slate-500">Scored at: </span>
+                                  {j.scored_at}
+                                </div>
+                              )}
                               {j.scraped_at && (
                                 <div>
                                   <span className="font-semibold text-slate-500">Scraped at: </span>
