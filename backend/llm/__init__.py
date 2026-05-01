@@ -8,6 +8,7 @@ from .base import LLMProvider
 from .claude_cli import ClaudeCLIProvider
 from .claude_sdk import ClaudeSDKProvider
 from .gemini import GeminiProvider
+from .openai import OpenAIProvider
 from .openrouter import OpenRouterProvider
 from .ollama import OllamaProvider
 
@@ -15,12 +16,13 @@ PROVIDERS = {
     "claude_cli": ClaudeCLIProvider,
     "claude_sdk": ClaudeSDKProvider,
     "gemini": GeminiProvider,
+    "openai": OpenAIProvider,
     "openrouter": OpenRouterProvider,
     "ollama": OllamaProvider,
 }
 
 # Order tried in `auto` mode. Cheap-or-already-installed first.
-AUTO_ORDER = ["claude_cli", "claude_sdk", "gemini", "openrouter", "ollama"]
+AUTO_ORDER = ["claude_cli", "claude_sdk", "gemini", "openai", "openrouter", "ollama"]
 
 _cached: LLMProvider | None = None
 
@@ -54,6 +56,8 @@ def _quick_available(p: LLMProvider) -> bool:
         return bool(os.environ.get("ANTHROPIC_API_KEY"))
     if n == "gemini":
         return bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    if n == "openai":
+        return bool(os.environ.get("OPENAI_API_KEY"))
     if n == "openrouter":
         return bool(os.environ.get("OPENROUTER_API_KEY"))
     if n == "ollama":
@@ -118,7 +122,7 @@ def test_provider(name: str | None = None) -> tuple[bool, str]:
     if not name or name == "auto":
         p = get_provider(force=True)
         if p is None:
-            return False, "no provider available — set ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENROUTER_API_KEY, install `claude` CLI, or run `ollama serve`"
+            return False, "no provider available — set ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY, install `claude` CLI, or run `ollama serve`"
         ok, msg = p.test()
         return ok, f"[auto -> {p.name}] {msg}"
     if name not in PROVIDERS:

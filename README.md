@@ -102,16 +102,19 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # Option C — Gemini (free tier, 1500 RPM): https://aistudio.google.com/apikey
 export GEMINI_API_KEY=...
 
-# Option D — OpenRouter (catalog of free models): https://openrouter.ai/keys
+# Option D — OpenAI / ChatGPT (paid; ~$0.15/M input, $0.60/M output for gpt-4o-mini)
+export OPENAI_API_KEY=sk-...
+
+# Option E — OpenRouter (catalog of free models): https://openrouter.ai/keys
 export OPENROUTER_API_KEY=sk-or-...
 
-# Option E — Ollama (fully local, no key, no network)
+# Option F — Ollama (fully local, no key, no network)
 ollama serve && ollama pull qwen2.5:32b
 ```
 
 Resolution order on a fresh run is: `claude_cli → claude_sdk → gemini →
-openrouter → ollama`. The first one configured wins. Pin a specific
-provider by editing `config.json`:
+openai → openrouter → ollama`. The first one configured wins. Pin a
+specific provider by editing `config.json`:
 
 ```json
 { "llm_provider": { "name": "gemini" } }

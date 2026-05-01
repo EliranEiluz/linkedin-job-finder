@@ -30,6 +30,7 @@ const VALID_PROVIDER_NAMES: ReadonlySet<LLMProviderName> = new Set([
   'claude_cli',
   'claude_sdk',
   'gemini',
+  'openai',
   'openrouter',
   'ollama',
 ]);

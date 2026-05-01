@@ -13,6 +13,7 @@ export type LLMProviderName =
   | 'claude_cli'
   | 'claude_sdk'
   | 'gemini'
+  | 'openai'
   | 'openrouter'
   | 'ollama';
 
