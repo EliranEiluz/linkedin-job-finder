@@ -374,12 +374,25 @@ def _send_email(html: str, jobs: list[dict]) -> int:
     except Exception:
         ctx = ssl.create_default_context()
 
+    # Implicit-SSL (port 465, SMTPS) vs. STARTTLS (port 587). iCloud, Fastmail,
+    # Yahoo and many corporate hosts only accept SMTPS — silently fail with the
+    # STARTTLS-only path. Explicit opt-in via SMTP_USE_SSL=1, OR auto-enable
+    # when port == 465 (the IANA SMTPS port).
+    use_ssl = (
+        os.environ.get("SMTP_USE_SSL", "").strip().lower() in ("1", "true", "yes")
+        or port == 465
+    )
     try:
-        with smtplib.SMTP(host, port, timeout=30) as smtp:
-            smtp.ehlo()
-            smtp.starttls(context=ctx)
-            smtp.login(user, password)
-            smtp.send_message(msg)
+        if use_ssl:
+            with smtplib.SMTP_SSL(host, port, timeout=30, context=ctx) as smtp:
+                smtp.login(user, password)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=30) as smtp:
+                smtp.ehlo()
+                smtp.starttls(context=ctx)
+                smtp.login(user, password)
+                smtp.send_message(msg)
     except Exception as e:
         print(f"SMTP error: {e}", file=sys.stderr)
         return 3

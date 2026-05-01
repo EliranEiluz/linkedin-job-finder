@@ -71,3 +71,37 @@ class GeminiProvider(LLMProvider):
         if isinstance(arr, list) and arr:
             return True, f"gemini ok (model={self.model})"
         return False, "gemini returned no parseable result"
+
+    def complete(self, prompt: str, *, system: str | None = None,
+                 max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+        key = self._api_key()
+        if not key:
+            return None
+        try:
+            import requests
+        except Exception:
+            print("    gemini: requests not installed")
+            return None
+        url = ENDPOINT.format(model=self.model)
+        gen_cfg: dict = {"temperature": 0.2, "maxOutputTokens": max_tokens}
+        if json_mode:
+            gen_cfg["response_mime_type"] = "application/json"
+        body: dict = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": gen_cfg,
+        }
+        if system:
+            # Gemini's v1beta supports system_instruction at the top level.
+            body["system_instruction"] = {"parts": [{"text": system}]}
+        try:
+            r = requests.post(url, params={"key": key}, json=body, timeout=240)
+            if r.status_code != 200:
+                print(f"    gemini http {r.status_code}: {r.text[:200]}")
+                return None
+            data = r.json()
+            cand = (data.get("candidates") or [{}])[0]
+            parts = (cand.get("content") or {}).get("parts") or []
+            return "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+        except Exception as e:
+            print(f"    gemini error: {str(e)[:200]}")
+            return None

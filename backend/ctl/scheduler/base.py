@@ -48,8 +48,8 @@ class Scheduler(abc.ABC):
     def install(self, interval_seconds: int, mode: str, run_command: list[str]) -> None:
         """Idempotent register. Replaces any prior registration under LABEL.
         `run_command` is what the scheduler actually invokes — typically
-        `["/path/to/run.sh"]` (Stage 1-3) or `[python, "/path/to/run.py"]`
-        (Stage 4+). Backends are agnostic to the command structure."""
+        `[python, "/path/to/run.py"]`. Backends are agnostic to the command
+        structure."""
 
     @abc.abstractmethod
     def uninstall(self) -> None:

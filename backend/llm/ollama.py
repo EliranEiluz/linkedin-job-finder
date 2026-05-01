@@ -80,3 +80,34 @@ class OllamaProvider(LLMProvider):
         if isinstance(arr, list) and arr:
             return True, f"ollama ok (model={self.model})"
         return False, "ollama returned no parseable result"
+
+    def complete(self, prompt: str, *, system: str | None = None,
+                 max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+        try:
+            import requests
+        except Exception:
+            print("    ollama: requests not installed")
+            return None
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        body: dict = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            # num_predict is Ollama's max-tokens analogue.
+            "options": {"temperature": 0.2, "num_predict": max_tokens},
+        }
+        if json_mode:
+            body["format"] = "json"
+        try:
+            r = requests.post(f"{HOST}/api/chat", json=body, timeout=600)
+            if r.status_code != 200:
+                print(f"    ollama http {r.status_code}: {r.text[:200]}")
+                return None
+            data = r.json()
+            return (data.get("message") or {}).get("content") or ""
+        except Exception as e:
+            print(f"    ollama error: {str(e)[:200]}")
+            return None

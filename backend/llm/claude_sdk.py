@@ -65,3 +65,22 @@ class ClaudeSDKProvider(LLMProvider):
         if isinstance(arr, list) and arr:
             return True, f"Anthropic SDK ok (model={self.model})"
         return False, "Anthropic SDK returned no parseable result"
+
+    def complete(self, prompt: str, *, system: str | None = None,
+                 max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+        client = self._ensure_client()
+        if client is None:
+            return None
+        try:
+            kwargs = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            if system:
+                kwargs["system"] = system
+            msg = client.messages.create(**kwargs)
+            return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        except Exception as e:
+            print(f"    SDK error: {str(e)[:150]}")
+            return None

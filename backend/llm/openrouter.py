@@ -83,3 +83,46 @@ class OpenRouterProvider(LLMProvider):
         if isinstance(arr, list) and arr:
             return True, f"openrouter ok (model={self.model})"
         return False, "openrouter returned no parseable result"
+
+    def complete(self, prompt: str, *, system: str | None = None,
+                 max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+        key = self._api_key()
+        if not key:
+            return None
+        try:
+            import requests
+        except Exception:
+            print("    openrouter: requests not installed")
+            return None
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        body: dict = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": max_tokens,
+        }
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/linkedin-jobs",
+            "X-Title": "linkedin-jobs",
+        }
+        try:
+            r = requests.post(ENDPOINT, headers=headers, json=body, timeout=240)
+            if r.status_code != 200:
+                print(f"    openrouter http {r.status_code}: {r.text[:200]}")
+                return None
+            data = r.json()
+            choices = data.get("choices") or []
+            if not choices:
+                print(f"    openrouter: no choices in response: {str(data)[:200]}")
+                return None
+            return (choices[0].get("message") or {}).get("content") or ""
+        except Exception as e:
+            print(f"    openrouter error: {str(e)[:200]}")
+            return None

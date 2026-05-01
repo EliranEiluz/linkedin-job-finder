@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """Cross-platform launcher invoked by the scheduler (launchd / systemd /
-schtasks). Replaces backend/launchd/run.sh with portable Python that
-loads ~/.linkedin-jobs.env, runs search.py, then send_email.py — same
-behavior on macOS, Linux, and Windows.
+schtasks). Loads ~/.linkedin-jobs.env, runs search.py, then send_email.py
+— same behavior on macOS, Linux, and Windows.
 
-Stays side-by-side with run.sh during the migration. The scheduler
-backends pass `[sys.executable, "<root>/backend/run.py"]` as their
-ProgramArguments / ExecStart / TR. Any pre-existing launchd plist that
-still points at run.sh continues to work until the user triggers
-`scheduler reload` from the UI — at which point the regenerated plist
-switches to run.py.
+The scheduler backends pass `[sys.executable, "<root>/backend/run.py"]`
+as their ProgramArguments / ExecStart / TR. Trigger `scheduler reload`
+from the UI after upgrading from a pre-2026-04 install so any old
+plist/unit files get regenerated to point here.
 """
 from __future__ import annotations
 

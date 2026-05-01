@@ -55,3 +55,27 @@ class ClaudeCLIProvider(LLMProvider):
         if isinstance(arr, list) and arr:
             return True, f"claude CLI ok (model={self.model})"
         return False, "claude CLI returned no parseable result"
+
+    def complete(self, prompt: str, *, system: str | None = None,
+                 max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+        # CLI has no separate `--system` flag in the -p path; we just prepend
+        # the system message to the user prompt. json_mode is irrelevant here
+        # — the CLI emits whatever Claude writes; callers parse the result.
+        if not shutil.which("claude"):
+            return None
+        full_prompt = f"{system}\n\n{prompt}" if system else prompt
+        try:
+            proc = subprocess.run(
+                ["claude", "-p", full_prompt,
+                 "--output-format", "text",
+                 "--model", self.model],
+                capture_output=True, text=True, timeout=240,
+            )
+            if proc.returncode != 0:
+                print(f"    claude CLI rc={proc.returncode}: {proc.stderr.strip()[:300]}")
+                return None
+            return proc.stdout
+        except Exception as e:
+            msg = str(e)
+            print(f"    claude CLI error ({type(e).__name__}): …{msg[-300:]}")
+            return None

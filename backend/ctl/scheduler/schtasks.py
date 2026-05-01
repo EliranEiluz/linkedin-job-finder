@@ -3,10 +3,8 @@
 with every Windows since XP, has no execution-policy concerns, and avoids
 nested-quoting hell when invoked from Python.
 
-Stage 3 caveat: this backend's `install()` succeeds on Windows, but the
-scheduled task itself will fail until Stage 4 lands `run.py` (the current
-`run.sh` can't execute on Windows). The architecture is in place; Stage 4
-provides the cross-platform run wrapper."""
+The scheduled task invokes the cross-platform `backend/run.py` wrapper —
+no shell required."""
 from __future__ import annotations
 
 import re

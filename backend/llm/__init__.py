@@ -100,6 +100,19 @@ def score_batch(cv_text: str, batch: list[dict]) -> list | None:
     return p.score_batch(cv_text, batch)
 
 
+def complete(prompt: str, *, system: str | None = None,
+             max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+    """Single-shot completion via the resolved provider. Returns raw text or
+    None if no provider is configured / the call fails. Used by the wizard
+    (onboarding_ctl) and the suggester (config_suggest_ctl) — both of which
+    pass json_mode=True since they expect a structured JSON object back."""
+    provider = get_provider()
+    if not provider:
+        return None
+    return provider.complete(prompt, system=system,
+                             max_tokens=max_tokens, json_mode=json_mode)
+
+
 def test_provider(name: str | None = None) -> tuple[bool, str]:
     """If name is None or 'auto', resolve via get_provider() and test that."""
     if not name or name == "auto":
@@ -121,5 +134,6 @@ __all__ = [
     "AUTO_ORDER",
     "get_provider",
     "score_batch",
+    "complete",
     "test_provider",
 ]

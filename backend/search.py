@@ -733,12 +733,78 @@ def is_obviously_offtopic(title: str) -> str | None:
 
 # JS injected into every page to hide automation fingerprints.
 # The critical fix: navigator.webdriver leaks were the main detection signal.
-STEALTH_JS = """
-Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-window.chrome = {runtime: {}};
+# navigator.languages is parameterized so the injected value matches the
+# detected/configured locale (LinkedIn fingerprints language vs. timezone vs.
+# session geo for consistency).
+STEALTH_JS_TEMPLATE = """
+Object.defineProperty(navigator, 'webdriver', {{get: () => undefined}});
+Object.defineProperty(navigator, 'plugins', {{get: () => [1,2,3,4,5]}});
+Object.defineProperty(navigator, 'languages', {{get: () => {languages_json}}});
+window.chrome = {{runtime: {{}}}};
 """
+
+
+def _detect_system_timezone() -> str:
+    """Best-effort system timezone detection. stdlib only — no tzlocal dep.
+    Falls back to UTC on weird/headless systems where nothing resolves."""
+    try:
+        # Python 3.6+: datetime carries the local zone via astimezone().tzinfo.
+        # On most platforms this returns an IANA name (e.g. 'America/Los_Angeles').
+        from datetime import datetime
+        tz = datetime.now().astimezone().tzinfo
+        name = getattr(tz, "key", None) or str(tz) if tz else None
+        if name and "/" in name:
+            return name
+    except Exception:
+        pass
+    try:
+        # Last resort — POSIX abbreviation like 'PST'/'IST'. LinkedIn accepts
+        # IANA names, so this is a fallback we'd rather avoid hitting.
+        from time import tzname
+        if tzname and tzname[0]:
+            return tzname[0]
+    except Exception:
+        pass
+    return "UTC"
+
+
+def _detect_system_locale() -> str:
+    """Read locale from LANG / LC_ALL env. Returns BCP-47ish (e.g. 'en-US')
+    Playwright accepts. Falls back to en-US if nothing parseable."""
+    raw = os.environ.get("LC_ALL") or os.environ.get("LANG") or ""
+    # Strip codeset / modifier (e.g. 'en_US.UTF-8' -> 'en_US').
+    head = raw.split(".")[0].split("@")[0].strip()
+    if head and head not in ("C", "POSIX"):
+        return head.replace("_", "-")
+    return "en-US"
+
+
+def _resolved_browser_locale_tz() -> tuple[str, str]:
+    """Return (locale, timezone_id) for the Playwright context.
+    Config overrides (playwright_locale / playwright_timezone) win; otherwise
+    we auto-detect from the system. Centralized so first-run loggedin and
+    every later session use the same values."""
+    cfg = _ACTIVE_CONFIG if isinstance(_ACTIVE_CONFIG, dict) else {}
+    loc = cfg.get("playwright_locale")
+    tz = cfg.get("playwright_timezone")
+    if not (isinstance(loc, str) and loc.strip()):
+        loc = _detect_system_locale()
+    if not (isinstance(tz, str) and tz.strip()):
+        tz = _detect_system_timezone()
+    return loc.strip(), tz.strip()
+
+
+def _build_stealth_js(locale: str) -> str:
+    """Render STEALTH_JS_TEMPLATE with the languages array derived from locale.
+    e.g. 'en-US' -> ['en-US','en']; 'fr-FR' -> ['fr-FR','fr','en']."""
+    primary = (locale or "en-US").strip() or "en-US"
+    base = primary.split("-")[0]
+    langs = [primary]
+    if base and base != primary:
+        langs.append(base)
+    if "en" not in langs:
+        langs.append("en")
+    return STEALTH_JS_TEMPLATE.format(languages_json=json.dumps(langs))
 
 # ---------- END CONFIG ----------
 
@@ -1110,7 +1176,12 @@ GUEST_SEARCH_URL = (
 GUEST_DETAIL_URL = (
     "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
 )
-GUEST_GEO_DEFAULT = "101620260"  # Israel — overridable via config GEO_ID
+# Empty = no &geoId= param sent → LinkedIn returns its worldwide default.
+# Strongly recommended to set an explicit geo_id in config (Israel=101620260,
+# US=103644278, Worldwide=92000000, etc) — the worldwide feed is noisier and
+# may not match the user's locale. Was hardcoded to Israel pre-2026-04;
+# changed to empty so a fresh clone doesn't silently get only Israeli jobs.
+GUEST_GEO_DEFAULT = ""
 
 GUEST_HEADERS = {
     "User-Agent": (
@@ -1227,7 +1298,12 @@ def scrape_query_guest(session, query: str, category: str = "crypto",
 
     for page_idx in range(max_pages):
         start = page_idx * 25
-        params = {"keywords": query, "geoId": geo, "start": str(start)}
+        params = {"keywords": query, "start": str(start)}
+        if geo:
+            # Omit geoId entirely when empty — LinkedIn falls back to its
+            # worldwide default, which is what we want for an unconfigured
+            # install (was hardcoded to Israel pre-2026-04).
+            params["geoId"] = geo
         if tpr:
             params["f_TPR"] = tpr
 
@@ -2093,10 +2169,16 @@ def print_job(job: dict, label: str = ""):
         print(f"   signals: {', '.join(job['fit_reasons'][:6])}")
 
 
-def new_page_with_stealth(ctx):
-    """Create a new page and inject the stealth init script on every navigation."""
+def new_page_with_stealth(ctx, stealth_js: str | None = None):
+    """Create a new page and inject the stealth init script on every navigation.
+    `stealth_js` should be the locale-resolved STEALTH_JS_TEMPLATE rendering
+    (use _build_stealth_js); if omitted we fall back to detecting from the
+    active config / system at call time."""
     page = ctx.new_page()
-    page.add_init_script(STEALTH_JS)
+    if stealth_js is None:
+        loc, _ = _resolved_browser_locale_tz()
+        stealth_js = _build_stealth_js(loc)
+    page.add_init_script(stealth_js)
     return page
 
 
@@ -2333,10 +2415,18 @@ def _run_loggedin_pipeline(args, all_queries, seen, new_jobs, max_pages,
             ],
             ignore_default_args=["--enable-automation"],
         )
+        # Auto-detect locale + timezone from the system so the browser
+        # fingerprint matches the user's actual machine. LinkedIn correlates
+        # navigator.language / navigator.languages / Intl tz vs. session geo;
+        # mismatches can trigger soft-blocks. Was hardcoded to en-US +
+        # Asia/Jerusalem pre-2026-04. Override via config keys
+        # `playwright_locale` / `playwright_timezone`.
+        resolved_locale, resolved_tz = _resolved_browser_locale_tz()
+        stealth_js = _build_stealth_js(resolved_locale)
         context_kwargs = dict(
             viewport={"width": 1280, "height": 800},
-            locale="en-US",
-            timezone_id="Asia/Jerusalem",
+            locale=resolved_locale,
+            timezone_id=resolved_tz,
             user_agent=(
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -2346,7 +2436,7 @@ def _run_loggedin_pipeline(args, all_queries, seen, new_jobs, max_pages,
 
         if SESSION_FILE.exists():
             ctx = browser.new_context(storage_state=str(SESSION_FILE), **context_kwargs)
-            page = new_page_with_stealth(ctx)
+            page = new_page_with_stealth(ctx, stealth_js=stealth_js)
             print("Loaded saved session. Verifying login...")
             try:
                 page.goto("https://www.linkedin.com/feed/",
@@ -2365,8 +2455,24 @@ def _run_loggedin_pipeline(args, all_queries, seen, new_jobs, max_pages,
                 print("Re-run the script to log in fresh.")
                 sys.exit(1)
         else:
+            # First-run logged-in flow needs a real terminal: we open a browser
+            # for the user to sign in, then block on input() until they press
+            # Enter. When the UI spawns this script via Vite middleware there's
+            # no TTY → input() blocks forever and the UI shows a stuck "running"
+            # spinner. Detect that case BEFORE opening a browser and bail with
+            # an actionable message.
+            if not sys.stdin.isatty():
+                browser.close()
+                print(
+                    "Logged-in mode's first run needs a terminal — run from "
+                    "your shell with: cd " + str(ROOT) + " && python3 "
+                    "backend/search.py --mode=loggedin. After the session is "
+                    "saved you can use the UI normally.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
             ctx = browser.new_context(**context_kwargs)
-            page = new_page_with_stealth(ctx)
+            page = new_page_with_stealth(ctx, stealth_js=stealth_js)
             print("No saved session found. Browser will open — please log in to LinkedIn.")
             print("Once you see your feed, come back here and press Enter to continue...")
             try:
@@ -2426,7 +2532,7 @@ def _run_guest_pipeline(args, all_queries, seen, new_jobs, max_pages,
     geo_id = (args.geo_id or _ACTIVE_CONFIG.get("geo_id") or "").strip() or None
 
     session = _guest_session()
-    print(f"Guest mode: geoId={geo_id or GUEST_GEO_DEFAULT}")
+    print(f"Guest mode: geoId={geo_id or '(worldwide — set geo_id in config to scope)'}")
 
     for query, category, category_type in all_queries:
         print(f"Searching [{category}/{category_type}]: {query!r} ...")

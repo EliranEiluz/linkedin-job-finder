@@ -93,7 +93,7 @@ def _write_sched_state(state: dict) -> None:
 def _last_run_iso() -> str | None:
     """Best-effort 'last run' timestamp. Prefers launchd.out.log mtime
     (reliable on macOS — launchd touches it on every fire). Falls back to
-    run.log on any OS (run.sh / run.py append on every fire)."""
+    run.log on any OS (run.py appends on every fire)."""
     for p in (LAUNCHD_OUT_LOG, RUN_LOG):
         if p.exists():
             try:

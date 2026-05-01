@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Onboarding CLI for the LinkedIn jobs scraper. Wraps Claude CLI to bootstrap a
-personalized config.json from a CV + a free-text intent paragraph. Same stable
-JSON CLI style as scheduler_ctl.py — the Vite middleware shells to it.
+Onboarding CLI for the LinkedIn jobs scraper. Wraps the LLM provider
+abstraction (backend.llm) to bootstrap a personalized config.json from a CV
++ a free-text intent paragraph. Works with any provider the user has
+configured (claude_cli / claude_sdk / gemini / openrouter / ollama). Same
+stable JSON CLI style as scheduler_ctl.py — the Vite middleware shells to it.
 
 Commands (each reads JSON from stdin, emits a single JSON object on stdout):
 
@@ -36,7 +38,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -47,6 +48,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent  # backend/ctl/
 ROOT = HERE.parent.parent               # project root (two levels up from backend/ctl/)
 sys.path.insert(0, str(HERE.parent))    # → backend/
+sys.path.insert(0, str(ROOT))           # → project root, so `from backend.llm` resolves
 
 # We only need these three helpers; don't trigger the full load_config() pass
 # at import time beyond what search.py already does (it loads the currently-
@@ -56,6 +58,10 @@ from search import (  # noqa: E402 — path juggling above
     _normalize_categories,
     _hardcoded_defaults,
 )
+
+# Route LLM calls through the provider abstraction so users on Gemini /
+# OpenRouter / Ollama can run the wizard without a Claude account.
+from backend.llm import complete as llm_complete, get_provider  # noqa: E402
 
 CV_PATH = ROOT / "cv.txt"
 CONFIG_PATH = ROOT / "config.json"
@@ -69,11 +75,9 @@ ACTIVE_FILE = ROOT / "active_profile.txt"
 # accept the same set of names.
 _PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,39}$")
 
-CLAUDE_BIN = shutil.which("claude")  # None if not on PATH
-CLAUDE_MODEL = "claude-sonnet-4-5"
-CLAUDE_TIMEOUT_S = 180
+LLM_MAX_TOKENS = 8192
 
-# Cap the CV text we send to Claude so a huge paste doesn't push the prompt
+# Cap the CV text we send to the LLM so a huge paste doesn't push the prompt
 # over the model's context window. 30k chars ~= 7.5k tokens, plenty for any
 # real CV.
 CV_MAX_CHARS = 30_000
@@ -189,86 +193,27 @@ def _build_meta_prompt(cv: str, intent: str) -> str:
     return META_PROMPT_TEMPLATE.format(cv=cv, intent=intent)
 
 
-def _call_claude_cli(prompt: str) -> tuple[int, str, str]:
-    """Try the local `claude` CLI. rc=127 + empty stdout signals 'not installed'
-    so the caller can fall through to the SDK path."""
-    if CLAUDE_BIN is None:
-        return 127, "", (
-            "`claude` CLI not found on PATH — install from claude.ai/download "
-            "or set ANTHROPIC_API_KEY to use the SDK instead"
+def _call_llm(prompt: str) -> tuple[int, str, str]:
+    """Single-shot LLM completion via the provider abstraction. Returns the
+    same (rc, stdout, stderr) shape the CLI/SDK helpers used to so callers
+    don't change. rc=0 on success, rc=1 on any failure. The provider is
+    auto-resolved from config.json's `llm_provider` block (defaults to auto:
+    claude_cli -> claude_sdk -> gemini -> openrouter -> ollama)."""
+    provider = get_provider()
+    if provider is None:
+        return 1, "", (
+            "No LLM provider available. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, "
+            "or OPENROUTER_API_KEY (in ~/.linkedin-jobs.env), install the "
+            "`claude` CLI (npm i -g @anthropic-ai/claude-code), or run "
+            "`ollama serve` locally with a model pulled."
         )
     try:
-        proc = subprocess.run(
-            [CLAUDE_BIN, "-p", prompt,
-             "--output-format", "text",
-             "--model", CLAUDE_MODEL],
-            capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
-        )
-        return proc.returncode, proc.stdout, proc.stderr
-    except subprocess.TimeoutExpired as e:
-        return 124, e.stdout or "", f"claude CLI timeout after {CLAUDE_TIMEOUT_S}s"
-    except Exception as e:  # noqa: BLE001 — surface anything as a JSON error
-        return 1, "", f"{type(e).__name__}: {e}"
-
-
-def _call_claude_sdk(prompt: str) -> tuple[int, str, str]:
-    """Anthropic SDK fallback — same model, requires ANTHROPIC_API_KEY env var.
-    Mirrors search.py:_score_batch_via_sdk(). Returns the same (rc, stdout,
-    stderr) shape as the CLI path so the caller treats them symmetrically."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return 127, "", "ANTHROPIC_API_KEY not set"
-    try:
-        from anthropic import Anthropic  # type: ignore
+        text = llm_complete(prompt, max_tokens=LLM_MAX_TOKENS, json_mode=True)
     except Exception as e:  # noqa: BLE001
-        return 127, "", f"anthropic SDK not installed: {e}"
-    try:
-        client = Anthropic()
-        msg = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=8192,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(
-            b.text for b in msg.content if getattr(b, "type", "") == "text"
-        )
-        return 0, text, ""
-    except Exception as e:  # noqa: BLE001
-        return 1, "", f"{type(e).__name__}: {e}"
-
-
-def _call_claude(prompt: str) -> tuple[int, str, str]:
-    """CLI first, then SDK. If both fail, surface a helpful install hint.
-
-    A CLI exit of 127 (or our synthetic 127 for 'binary missing') means
-    "not installed" — fall through to the SDK. A CLI rc != 0 due to a
-    real error (auth, network) also falls through, since the SDK might
-    succeed via a different auth path."""
-    rc, stdout, stderr = _call_claude_cli(prompt)
-    if rc == 0 and stdout.strip():
-        return rc, stdout, stderr
-
-    sdk_rc, sdk_stdout, sdk_stderr = _call_claude_sdk(prompt)
-    if sdk_rc == 0 and sdk_stdout.strip():
-        return sdk_rc, sdk_stdout, sdk_stderr
-
-    # Both failed — pick the most actionable error message.
-    cli_missing = (rc == 127)
-    sdk_missing = (sdk_rc == 127)
-    if cli_missing and sdk_missing:
-        hint = (
-            "Neither the `claude` CLI nor the Anthropic SDK is usable. "
-            "Install one of:\n"
-            "  - npm i -g @anthropic-ai/claude-code  (then run `claude /login`)\n"
-            "  - pip install anthropic  (then export ANTHROPIC_API_KEY=sk-ant-…)"
-        )
-        return 1, "", hint
-    # Otherwise surface whichever path actually ran but failed.
-    parts = []
-    if not cli_missing:
-        parts.append(f"CLI rc={rc}: {(stderr or '').strip()[:300]}")
-    if not sdk_missing:
-        parts.append(f"SDK: {(sdk_stderr or '').strip()[:300]}")
-    return 1, "", " | ".join(parts) or "claude unavailable"
+        return 1, "", f"[{provider.name}] {type(e).__name__}: {e}"
+    if not text or not text.strip():
+        return 1, "", f"[{provider.name}] empty response"
+    return 0, text, ""
 
 
 # ---------- config validation / shape-up ---------------------------------
@@ -383,13 +328,13 @@ def cmd_generate(_args) -> None:
         _emit({"ok": False, "error": "intent must be >= 20 chars"}, 1)
 
     prompt = _build_meta_prompt(cv, intent)
-    rc, stdout, stderr = _call_claude(prompt)
+    rc, stdout, stderr = _call_llm(prompt)
     raw = (stdout or "").strip()
 
     if rc != 0:
         _emit({
             "ok": False,
-            "error": f"claude exit {rc}: {(stderr or '').strip()[:400]}",
+            "error": f"llm error: {(stderr or '').strip()[:400]}",
             "raw": raw,
         }, 1)
 
