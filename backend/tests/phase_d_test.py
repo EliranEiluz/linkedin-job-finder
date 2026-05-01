@@ -105,6 +105,13 @@ for fn, label in [(i_search, "search.py"), (i_scheduler, "scheduler_ctl.py"),
 section("2. Schema + config migration")
 
 def t_defaults_shape():
+    """--print-defaults emits the *current effective* defaults — i.e. the
+    in-file constants as potentially mutated by load_config() if a config.json
+    is present. On a fresh clone with no config.json the values are the true
+    hardcoded defaults (now domain-neutral: empty categories / priority /
+    scoring prompt / fit lists). We can only assert shape + key presence
+    here, not specific content, since the user's own config.json may have
+    populated the in-memory copies."""
     rc, out, err = _run("python3", str(SEARCH_PY), "--print-defaults")
     assert rc == 0, err
     d = json.loads(out)
@@ -113,10 +120,13 @@ def t_defaults_shape():
                 "priority_companies", "max_pages", "geo_id", "date_filter", "location"}
     missing = required - set(d)
     assert not missing, f"missing keys: {missing}"
-    assert isinstance(d["categories"], list) and len(d["categories"]) >= 1
+    assert isinstance(d["categories"], list)
+    assert isinstance(d["priority_companies"], list)
+    assert isinstance(d["claude_scoring_prompt"], str)
+    assert isinstance(d["offtopic_title_patterns"], list)
     legacy = {"search_queries", "security_researcher_queries", "company_queries"} & set(d)
     assert not legacy, f"legacy keys still present: {legacy}"
-    return f"{len(d['categories'])} cats, {len(d['priority_companies'])} priority co's"
+    return f"{len(d['categories'])} cats, {len(d['offtopic_title_patterns'])} offtopic patterns"
 
 def t_migrate_legacy():
     import importlib, search
@@ -446,6 +456,444 @@ def t_backup_present():
     return f"{file_count} files, manifest size {manifest.stat().st_size}"
 
 check("backup", "backup directory + manifest present", t_backup_present)
+
+# ------- 11. Corpus field coverage (post-feature-wave) -------
+# These exercise the corpus mutation commands (corpus_ctl.py) plus the
+# feature-wave fields they touch: pushed_to_end, comment, app_status,
+# app_status_history, app_notes, rated_at, category_name. We import the
+# command functions directly and point search.RESULTS_FILE/SEEN_FILE at a
+# tmp file so nothing in the real corpus is touched. The commands call
+# sys.exit via _emit, so we catch SystemExit and capture the JSON they
+# print on stdout.
+section("11. Corpus field coverage (post-feature-wave)")
+
+import contextlib
+import io
+import tempfile
+import importlib
+
+def _corpus_call(cmd_fn, body):
+    """Invoke a corpus_ctl command function with a stdin JSON body, capture
+    its stdout JSON envelope, and return (envelope, exit_code). Mirrors how
+    the command is invoked in production via the Vite middleware."""
+    import corpus_ctl  # noqa: F401 — ensures module loaded
+    buf = io.StringIO()
+    code = 0
+    with contextlib.redirect_stdout(buf), \
+         contextlib.redirect_stderr(io.StringIO()):
+        # The cmd_* helpers read from sys.stdin, so swap it out.
+        old_stdin = sys.stdin
+        sys.stdin = io.StringIO(json.dumps(body))
+        try:
+            cmd_fn(None)
+        except SystemExit as e:
+            code = int(e.code or 0)
+        finally:
+            sys.stdin = old_stdin
+    out = buf.getvalue()
+    try:
+        env = json.loads(out)
+    except json.JSONDecodeError:
+        env = {"_raw": out}
+    return env, code
+
+def _with_tmp_corpus(rows):
+    """Context-manager-ish helper: returns (cleanup, results_path). Points
+    search.RESULTS_FILE and SEEN_FILE at fresh temp files seeded with rows.
+    Caller MUST invoke cleanup() afterwards (in a finally)."""
+    import search as _s
+    tmpdir = Path(tempfile.mkdtemp(prefix="phase-d-corpus-"))
+    rpath = tmpdir / "results.json"
+    spath = tmpdir / "seen_jobs.json"
+    rpath.write_text(json.dumps(rows, indent=2))
+    spath.write_text("[]")
+    orig_results, orig_seen = _s.RESULTS_FILE, _s.SEEN_FILE
+    _s.RESULTS_FILE = rpath
+    _s.SEEN_FILE = spath
+    def _cleanup():
+        _s.RESULTS_FILE = orig_results
+        _s.SEEN_FILE = orig_seen
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    return _cleanup, rpath
+
+def t_pushed_to_end_set_clear_idempotent():
+    import corpus_ctl
+    cleanup, rpath = _with_tmp_corpus([
+        {"id": "j1", "title": "A"},
+        {"id": "j2", "title": "B"},
+        {"id": "j3", "title": "C"},
+    ])
+    try:
+        # Set on j1 + j2.
+        env, code = _corpus_call(
+            corpus_ctl.cmd_push_to_end, {"ids": ["j1", "j2"], "pushed": True})
+        assert code == 0 and env["ok"] is True, env
+        assert env["updated"] == 2 and env["missing"] == [], env
+        rows = json.loads(rpath.read_text())
+        by_id = {r["id"]: r for r in rows}
+        assert by_id["j1"].get("pushed_to_end") is True
+        assert by_id["j2"].get("pushed_to_end") is True
+        assert "pushed_to_end" not in by_id["j3"] \
+            or by_id["j3"]["pushed_to_end"] is not True
+
+        # Re-asserting the same value is idempotent — updated count is 0.
+        env, _ = _corpus_call(
+            corpus_ctl.cmd_push_to_end, {"ids": ["j1"], "pushed": True})
+        assert env["updated"] == 0, env
+
+        # Clear j1; j2 stays.
+        env, _ = _corpus_call(
+            corpus_ctl.cmd_push_to_end, {"ids": ["j1"], "pushed": False})
+        assert env["updated"] == 1
+        rows = json.loads(rpath.read_text())
+        by_id = {r["id"]: r for r in rows}
+        assert by_id["j1"].get("pushed_to_end") in (None, False)
+        assert by_id["j2"].get("pushed_to_end") is True
+
+        # Missing ids surface in the missing list.
+        env, _ = _corpus_call(
+            corpus_ctl.cmd_push_to_end,
+            {"ids": ["nope-xyz"], "pushed": True})
+        assert env["updated"] == 0 and env["missing"] == ["nope-xyz"], env
+        return "set / clear / idempotent / missing all behave"
+    finally:
+        cleanup()
+
+def t_comment_round_trip():
+    import corpus_ctl
+    cleanup, rpath = _with_tmp_corpus([{"id": "j1", "title": "A"}])
+    try:
+        # Set comment + rating together.
+        env, code = _corpus_call(corpus_ctl.cmd_rate, {
+            "id": "j1", "rating": 4, "comment": "  cool stack, IL-based  "})
+        assert code == 0 and env["ok"] is True, env
+        rows = json.loads(rpath.read_text())
+        r = rows[0]
+        assert r["rating"] == 4
+        assert r["comment"] == "cool stack, IL-based"  # stripped
+        assert r.get("rated_at"), "rated_at missing"
+        first_rated_at = r["rated_at"]
+
+        # Clearing only comment leaves rating intact and bumps rated_at.
+        time.sleep(1.05)  # ISO seconds resolution — must observe a tick
+        env, _ = _corpus_call(corpus_ctl.cmd_rate, {
+            "id": "j1", "rating": 4, "comment": ""})
+        rows = json.loads(rpath.read_text())
+        r = rows[0]
+        assert "comment" not in r, f"comment should have been cleared: {r}"
+        assert r["rating"] == 4
+        assert r["rated_at"] >= first_rated_at  # monotonic
+        return "set + strip + clear + rated_at refresh"
+    finally:
+        cleanup()
+
+def t_rated_at_updates_on_rating_change():
+    import corpus_ctl
+    cleanup, rpath = _with_tmp_corpus([{"id": "j1", "title": "A"}])
+    try:
+        env, _ = _corpus_call(
+            corpus_ctl.cmd_rate, {"id": "j1", "rating": 3})
+        first = json.loads(rpath.read_text())[0]["rated_at"]
+        time.sleep(1.05)
+        env, _ = _corpus_call(
+            corpus_ctl.cmd_rate, {"id": "j1", "rating": 5})
+        second = json.loads(rpath.read_text())[0]["rated_at"]
+        assert second > first, f"rated_at didn't advance: {first} -> {second}"
+        return "rated_at advances on rating change"
+    finally:
+        cleanup()
+
+def t_app_status_transition_appends_history():
+    import corpus_ctl
+    cleanup, rpath = _with_tmp_corpus([{"id": "j1", "title": "A"}])
+    try:
+        # First transition: new (implicit) -> applied. History grows by 1.
+        env, code = _corpus_call(corpus_ctl.cmd_app_status, {
+            "id": "j1", "status": "applied", "note": "submitted via referral"})
+        assert code == 0 and env["ok"], env
+        assert env["history_len"] == 1
+        assert env["app_notes"] == "submitted via referral"
+        rows = json.loads(rpath.read_text())
+        r = rows[0]
+        assert r["app_status"] == "applied"
+        assert len(r["app_status_history"]) == 1
+        assert r["app_status_history"][0]["status"] == "applied"
+        assert r.get("app_status_at"), "app_status_at not stamped"
+
+        # Second call asserting the SAME status: no double-log.
+        env, _ = _corpus_call(corpus_ctl.cmd_app_status, {
+            "id": "j1", "status": "applied"})
+        assert env["history_len"] == 1, env
+        rows = json.loads(rpath.read_text())
+        assert len(rows[0]["app_status_history"]) == 1
+
+        # Real transition appends.
+        env, _ = _corpus_call(corpus_ctl.cmd_app_status, {
+            "id": "j1", "status": "interview"})
+        assert env["history_len"] == 2, env
+        rows = json.loads(rpath.read_text())
+        hist = rows[0]["app_status_history"]
+        assert [h["status"] for h in hist] == ["applied", "interview"]
+
+        # Clearing app_notes via empty string.
+        env, _ = _corpus_call(corpus_ctl.cmd_app_status, {
+            "id": "j1", "status": "interview", "note": ""})
+        rows = json.loads(rpath.read_text())
+        assert "app_notes" not in rows[0]
+
+        # Long app_notes get truncated to 4000 chars.
+        env, _ = _corpus_call(corpus_ctl.cmd_app_status, {
+            "id": "j1", "status": "interview", "note": "x" * 5000})
+        rows = json.loads(rpath.read_text())
+        assert len(rows[0]["app_notes"]) == 4000
+        return "no-op / transition / app_notes set+clear+truncate"
+    finally:
+        cleanup()
+
+def t_category_name_backfill():
+    """tools/backfill_category_name resolves legacy ids and live config ids,
+    skips rows already populated, leaves untouched the rows missing a
+    category entirely. Pure-pure: no network, no Claude."""
+    import importlib.util
+    backfill_path = BACKEND / "tools" / "backfill_category_name.py"
+    spec = importlib.util.spec_from_file_location("_backfill_t", backfill_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    # _name_for_id is the pure helper — exercise without disk I/O.
+    live = {"cat-live-1": "LiveOne"}
+    assert mod._name_for_id("cat-live-1", live) == "LiveOne"
+    assert mod._name_for_id("crypto", live) == "Crypto"  # legacy map hit
+    assert mod._name_for_id("cat-mobyb81c-5", live) == "Security"  # legacy
+    assert mod._name_for_id("unknown-id", live) == "unknown-id"  # passthrough
+    return "live + legacy + passthrough"
+
+check("corpus", "pushed_to_end set / clear / idempotent",
+      t_pushed_to_end_set_clear_idempotent)
+check("corpus", "comment round-trip via cmd_rate",
+      t_comment_round_trip)
+check("corpus", "rated_at advances on rating change",
+      t_rated_at_updates_on_rating_change)
+check("corpus", "app_status: history append, no-op, app_notes",
+      t_app_status_transition_appends_history)
+check("corpus", "category_name backfill helper purity",
+      t_category_name_backfill)
+
+# ------- 12. CLI command coverage -------
+section("12. CLI command coverage")
+
+def t_extract_job_id_url_variants():
+    """extract_job_id parses every URL family LinkedIn surfaces, plus bare
+    ids. Pure parser — no network."""
+    import corpus_ctl
+    f = corpus_ctl.extract_job_id
+    # Bare numeric id.
+    assert f("4395123456") == "4395123456"
+    # /jobs/view/<id>/ (no slug).
+    assert f("https://www.linkedin.com/jobs/view/4395123456/") == "4395123456"
+    # /jobs/view/<slug>-<id>/ (real LinkedIn URL).
+    assert f("https://www.linkedin.com/jobs/view/staff-eng-foo-at-bar-4395123456?refId=abc") \
+        == "4395123456"
+    # /jobs/search/?currentJobId=...
+    assert f("https://www.linkedin.com/jobs/search/?currentJobId=4395123456&keywords=x") \
+        == "4395123456"
+    # /jobs/search-results/?currentJobId=...
+    assert f("https://www.linkedin.com/jobs/search-results/?currentJobId=4395123456") \
+        == "4395123456"
+    # No scheme — synthesised.
+    assert f("www.linkedin.com/jobs/view/4395123456/") == "4395123456"
+    # Garbage rejected.
+    assert f("") is None
+    assert f("   ") is None
+    assert f("not a url") is None
+    assert f("https://example.com/jobs/view/4395123456/") is None  # wrong host
+    assert f("12345") is None  # too short
+    assert f("1234567890123") is None  # too long
+    return "bare + 4 URL families + scheme-less + reject paths"
+
+def t_add_manual_dedupes_against_existing_id():
+    """cmd_add_manual short-circuits on a duplicate id without touching the
+    network or Claude. We seed an existing job id in the tmp corpus and
+    verify the dedupe returns the canonical 'already in corpus' envelope."""
+    import corpus_ctl
+    cleanup, _rpath = _with_tmp_corpus([
+        {"id": "4395123456", "title": "Dup", "company": "X"},
+    ])
+    try:
+        env, code = _corpus_call(corpus_ctl.cmd_add_manual, {
+            "url_or_id": "https://www.linkedin.com/jobs/view/4395123456/"})
+        assert code == 1, code
+        assert env["ok"] is False
+        assert env["error"] == "already in corpus"
+        assert env["existing_id"] == "4395123456"
+        return "dedupe trips before any network call"
+    finally:
+        cleanup()
+
+def t_add_manual_rejects_unparseable_input():
+    import corpus_ctl
+    cleanup, _ = _with_tmp_corpus([])
+    try:
+        env, code = _corpus_call(corpus_ctl.cmd_add_manual, {
+            "url_or_id": "not a job url"})
+        assert code == 1
+        assert env["ok"] is False
+        assert "could not extract job ID" in env["error"], env
+        return "parse-fail returns canonical envelope"
+    finally:
+        cleanup()
+
+def t_rescore_resets_score_fields_before_rerun():
+    """cmd_rescore wipes fit/score/fit_reasons/scored_by/msc_required on each
+    target before delegating to process_one_job. We stub process_one_job to
+    capture the row state at call time and assert the reset happened, plus
+    that user-edited fields (rating / comment / app_status) are preserved."""
+    import corpus_ctl
+    import search as _s
+
+    cleanup, rpath = _with_tmp_corpus([
+        {"id": "j1", "title": "Old", "company": "X",
+         "fit": "good", "score": 9, "scored_by": "claude",
+         "fit_reasons": ["a", "b"], "msc_required": False,
+         "rating": 5, "comment": "love it",
+         "app_status": "applied",
+         "app_status_history": [{"status": "applied", "at": "2026-04-01T00:00:00+00:00"}]},
+        {"id": "j2", "title": "Other", "company": "Y",
+         "fit": "skip", "score": 3, "scored_by": "regex",
+         "fit_reasons": ["nope"], "msc_required": None},
+    ])
+    captured = []
+    def _stub_process_one_job(job, *, cv_text, fetch_one, persist, already_scored):
+        # Snapshot the fields rescore is supposed to have reset.
+        captured.append({
+            "id": job.get("id"),
+            "fit": job.get("fit"),
+            "score": job.get("score"),
+            "scored_by": job.get("scored_by"),
+            "fit_reasons": job.get("fit_reasons"),
+            "msc_required": job.get("msc_required"),
+            "rating": job.get("rating"),
+            "comment": job.get("comment"),
+            "app_status": job.get("app_status"),
+            "history_len": len(job.get("app_status_history") or []),
+        })
+        return job
+
+    orig_process = _s.process_one_job
+    orig_fetch = _s.fetch_description_guest
+    orig_session = _s._guest_session
+    orig_cv = _s._load_cv_text
+    _s.process_one_job = _stub_process_one_job
+    _s.fetch_description_guest = lambda *a, **kw: ("", "stub")
+    _s._guest_session = lambda: object()
+    _s._load_cv_text = lambda: ""
+    try:
+        env, code = _corpus_call(corpus_ctl.cmd_rescore, {"ids": ["j1", "j2", "missing-x"]})
+        assert code == 0 and env["ok"] is True, env
+        assert env["rescored"] == 2, env
+        assert env["failed"] == 0, env
+        assert env["missing"] == ["missing-x"], env
+        assert len(captured) == 2
+        for snap in captured:
+            assert snap["fit"] is None, snap
+            assert snap["score"] is None, snap
+            assert snap["scored_by"] is None, snap
+            assert snap["msc_required"] is None, snap
+            assert snap["fit_reasons"] == [], snap
+        # User-edited fields preserved on j1.
+        j1_snap = next(s for s in captured if s["id"] == "j1")
+        assert j1_snap["rating"] == 5
+        assert j1_snap["comment"] == "love it"
+        assert j1_snap["app_status"] == "applied"
+        assert j1_snap["history_len"] == 1
+        return "score fields reset, user fields preserved"
+    finally:
+        _s.process_one_job = orig_process
+        _s.fetch_description_guest = orig_fetch
+        _s._guest_session = orig_session
+        _s._load_cv_text = orig_cv
+        cleanup()
+
+check("cli", "extract_job_id URL variants", t_extract_job_id_url_variants)
+check("cli", "add-manual dedupes against existing id",
+      t_add_manual_dedupes_against_existing_id)
+check("cli", "add-manual rejects unparseable input",
+      t_add_manual_rejects_unparseable_input)
+check("cli", "rescore resets score fields, preserves user fields",
+      t_rescore_resets_score_fields_before_rerun)
+
+# ------- 13. Helper purity -------
+section("13. Helper purity")
+
+def t_compute_hot_truth_table():
+    import search
+    h = search._compute_hot
+    # fit != good → never hot.
+    assert h({"fit": "skip", "score": 10, "priority": True}) is False
+    assert h({"fit": None, "score": 10}) is False
+    # good + score >= threshold → hot.
+    assert h({"fit": "good", "score": search.HOT_SCORE_MIN}) is True
+    assert h({"fit": "good", "score": search.HOT_SCORE_MIN + 1}) is True
+    # good + below threshold + non-priority → not hot.
+    assert h({"fit": "good", "score": search.HOT_SCORE_MIN - 1, "priority": False}) is False
+    # good + below threshold + priority → hot.
+    assert h({"fit": "good", "score": search.HOT_SCORE_MIN - 1, "priority": True}) is True
+    # good with no score but priority → hot.
+    assert h({"fit": "good", "priority": True}) is True
+    # good with no score and not priority → not hot.
+    assert h({"fit": "good"}) is False
+    return f"truth table green @ HOT_SCORE_MIN={search.HOT_SCORE_MIN}"
+
+def t_classify_feedback_row_routing():
+    import search
+    f = search._classify_feedback_row
+    # Ratings 4-5 → pos.
+    s, _ = f({"rating": 5}); assert s == "pos"
+    s, _ = f({"rating": 4}); assert s == "pos"
+    # Rating 3 → still pos (weak — user bothered to rate it).
+    s, _ = f({"rating": 3}); assert s == "pos"
+    # Ratings 1-2 → neg.
+    s, _ = f({"rating": 2}); assert s == "neg"
+    s, _ = f({"rating": 1}); assert s == "neg"
+    # Comment surfaces in summary.
+    s, summ = f({"rating": 4, "comment": "loved the team"})
+    assert s == "pos"
+    assert "loved the team" in summ
+    # Pipeline statuses.
+    s, summ = f({"app_status": "interview"})
+    assert s == "pos" and "interview" in summ
+    s, summ = f({"app_status": "take-home"})
+    assert s == "pos"
+    s, summ = f({"app_status": "rejected"})
+    assert s == "neg" and "rejected" in summ
+    s, summ = f({"app_status": "withdrew"})
+    assert s == "neg"
+    # Manual source treated as positive signal.
+    s, summ = f({"source": "manual"})
+    assert s == "pos" and "manual" in summ.lower()
+    # No signal at all → (None, "").
+    s, summ = f({"id": "x", "title": "y"})
+    assert s is None and summ == ""
+    # Rating wins over status.
+    s, _ = f({"rating": 1, "app_status": "interview"})
+    assert s == "neg"
+    return "rating + status + manual + null routing all correct"
+
+def t_compute_hot_used_in_process_one_job():
+    """Sanity-check that _compute_hot is the single source of truth — i.e.
+    process_one_job actually writes job['hot'] from it. Cheap unit-level
+    smoke that the hot-derivation didn't accidentally drift from the
+    helper. Done via static text scan to avoid running the full pipeline."""
+    text = (BACKEND / "search.py").read_text()
+    assert 'job["hot"] = _compute_hot(job)' in text \
+        or "job['hot'] = _compute_hot(job)" in text, \
+        "process_one_job no longer derives hot from _compute_hot"
+    return "process_one_job still uses _compute_hot"
+
+check("helper", "_compute_hot truth table", t_compute_hot_truth_table)
+check("helper", "_classify_feedback_row routing", t_classify_feedback_row_routing)
+check("helper", "process_one_job derives hot from _compute_hot",
+      t_compute_hot_used_in_process_one_job)
 
 # ------- SUMMARY -------
 print()

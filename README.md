@@ -139,11 +139,21 @@ Skip if you only want the UI.
 
 ## First run
 
+A fresh clone ships domain-neutral — no hardcoded queries, no target
+companies, no scoring rules. The **Setup wizard is the only onboarding
+path**; until you finish it the UI hides everything except the Setup tab.
+
 1. **Start the UI**: `cd ui && npm run dev` → open <http://localhost:5173>.
-2. **Setup tab.** Paste your CV, write one paragraph about the roles you
-   want (seniority, stack, geo, hard no-gos). Click Generate. Claude
-   returns a starter config; review, name, save. This writes
-   `configs/<name>.json` and switches you to the Crawler Config tab.
+   On a fresh install you'll land on the Setup tab automatically; the
+   Corpus / Tracker / Crawler Config / Run History tabs only appear once
+   onboarding has produced a configured profile + a saved CV.
+2. **Setup tab — wizard.** Walks you through preflight checks, LLM
+   provider pick, geo scope, scrape mode, then asks for your CV and a
+   one-paragraph intent (seniority, stack, geo, hard no-gos). Claude (or
+   whichever provider you picked) generates a starter config — categories,
+   priority companies, the scoring prompt, regex hints. Review, name,
+   save. This writes `configs/<name>.json` and the rest of the tabs
+   unlock.
 3. **Crawler Config → Run scraper.** Pick `guest`. First run takes
    5–15 min. Watch the live log in the panel.
 4. **Refresh the Corpus tab.** Sort by Score, mark applied, drag the
@@ -151,6 +161,10 @@ Skip if you only want the UI.
 5. **(Optional) Schedule it.** Crawler Config → Scheduler → Install.
    Default interval 12h, mode `guest`. Works on macOS, Linux, or Windows
    without changing anything else.
+
+Power users can hand-edit `configs/<name>.json` directly instead of
+running the wizard, but the wizard is the supported path and the only
+one the UI surfaces.
 
 ## Daily use
 

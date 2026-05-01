@@ -83,45 +83,16 @@ except Exception:
 
 # ---------- CONFIG ----------
 
-# Trimmed from 30 → 6. Stemming overlap collapsed (recruiters hit the same
-# postings across "cryptography engineer" vs "applied cryptography engineer"
-# vs "cryptography research engineer"). LinkedIn's keyword match is already
-# fuzzy.
-SEARCH_QUERIES = [
-    "cryptography engineer",
-    "applied cryptography",
-    "zero knowledge engineer",
-    "MPC engineer",
-    "confidential computing",
-    "protocol engineer cryptography",
-]
-
-# Security researcher track — trimmed from 10 → 3.
-SECURITY_RESEARCHER_QUERIES = [
-    "security researcher",
-    "vulnerability researcher",
-    "detection engineer",
-]
-
-# Top target companies — hit these directly instead of relying on keyword search.
-COMPANY_QUERIES = [
-    # — Existing targets —
-    "Fireblocks",
-    "StarkWare",
-    "Ingonyama",
-    "Fortanix",
-    "Zama",
-    # — Added 2026-04 — Israeli crypto R&D (top signal) —
-    "Fhenix",
-    "Chain Reaction",
-    "Sodot",
-    "Lattica",
-    "Soda Labs",
-    # — Added 2026-04 — Global crypto-first w/ active hiring —
-    "Irreducible",
-    "Mysten Labs",
-    "Arcium",
-]
+# Domain-specific defaults intentionally empty — the project ships
+# domain-neutral and the onboarding wizard (Setup tab) is the sole path
+# that turns a fresh clone into a working scraper. Past versions of this
+# file shipped opinionated crypto/security defaults; they were a
+# shareability blocker. The legacy SEARCH_QUERIES / SECURITY_RESEARCHER_QUERIES
+# / COMPANY_QUERIES names are kept as empty lists for backward-compat with
+# any external code path that still imports them.
+SEARCH_QUERIES: list[str] = []
+SECURITY_RESEARCHER_QUERIES: list[str] = []
+COMPANY_QUERIES: list[str] = []
 
 # Generic category schema (introduced 2026-04-22 in Phase A of the genericisation
 # refactor). Each category groups related queries and tags them with a TYPE that
@@ -130,18 +101,9 @@ COMPANY_QUERIES = [
 #                filtering against title+company.
 #   - "company": runs the term as a company-name search; requires the company
 #                name to literally appear in the result's company field.
-# Module-level CATEGORIES is the single source of truth at runtime. The legacy
-# SEARCH_QUERIES / SECURITY_RESEARCHER_QUERIES / COMPANY_QUERIES lists above
-# seed the defaults so existing config.json files (and old behavior) keep
-# working through migration.
-CATEGORIES: list[dict] = [
-    {"id": "crypto", "name": "Crypto", "type": "keyword",
-     "queries": list(SEARCH_QUERIES)},
-    {"id": "security_researcher", "name": "Security Researcher",
-     "type": "keyword", "queries": list(SECURITY_RESEARCHER_QUERIES)},
-    {"id": "company", "name": "Companies", "type": "company",
-     "queries": list(COMPANY_QUERIES)},
-]
+# Module-level CATEGORIES is the single source of truth at runtime. Empty by
+# default — the wizard generates the user's categories from their CV+intent.
+CATEGORIES: list[dict] = []
 
 LOCATION = ""  # empty = worldwide/no filter, "Israel" or "Tel Aviv" to narrow
 DATE_FILTER = "r604800"  # r86400=1d, r604800=7d, r2592000=30d
@@ -164,69 +126,10 @@ EXPERIENCE_FILTER = ""   # e.g. "3,4"
 JOB_TYPE_FILTER = ""     # e.g. "F"
 WORKPLACE_FILTER = ""    # e.g. "2,3"
 
-# Jobs at these companies are always highlighted
-PRIORITY_COMPANIES = {
-    # Existing
-    "fireblocks", "starkware", "ingonyama", "fortanix", "opaque",
-    "aztec", "scroll", "consensys", "zama", "a16z", "paradigm",
-    # ZK proving systems
-    "risc zero", "risc0", "succinct", "succinct labs",
-    "polygon", "polygon zero", "polygon labs",
-    "matter labs", "zksync", "taiko", "espresso systems",
-    "nil foundation", "lagrange", "lagrange labs",
-    "o1 labs", "mina", "aleo", "aleph zero",
-    # MPC / threshold / wallet infra
-    "coinbase", "anchorage", "copper", "silence laboratories",
-    "partisia", "nillion",
-    # FHE / confidential computing
-    "duality technologies", "enveil", "anjuna", "edgeless systems",
-    # Israeli ecosystem
-    "qedit", "qed-it", "coti", "zengo", "kzen",
-    "wiz", "pillar security", "prompt security",
-    "aim security", "noma security",
-    # AI security
-    "protect ai", "lakera", "hiddenlayer",
-
-    # ==== Added 2026-04 from targeted crypto-company research ====
-    # Criteria: crypto-first product OR published cryptographer on staff OR
-    # IACR paper output. Big-co generalists (MS/NVIDIA/Google) intentionally
-    # NOT added — too noisy; their crypto jobs will be caught by keyword
-    # queries like "cryptography engineer" on their own.
-
-    # — Israeli crypto R&D shops —
-    "fhenix", "chain reaction", "chain-reaction",
-    "sodot", "lattica", "lattica ai",
-    "soda labs", "sodalabs",
-    "gk8", "hub security", "hub cyber security",
-    "pentera", "cyberark", "dfns",
-
-    # — ZK proving systems / zkVMs / ZK coprocessors (global) —
-    "inco network", "inco",
-    "sunscreen", "cysic",
-    "irreducible", "ulvetanna",
-    "nexus", "nexus xyz",
-    "mysten labs", "mysten", "sui",
-    "brevis network", "brevis",
-    "axiom", "herodotus", "pragma",
-    "geometry research", "geometry",
-    "modulus labs", "ezkl", "zkonduit",
-
-    # — MPC / threshold / wallet infra (global) —
-    "arcium", "elusiv",
-    "turnkey", "blyss",
-
-    # — Audit / research shops with strong cryptographers —
-    "trail of bits", "zksecurity", "veridise",
-
-    # — Crypto-first L2s / decentralized inference / niche —
-    "ritual", "manta network",
-    "chainway labs", "chainway", "citrea",
-    "zircuit", "gevulot",
-    "ten protocol", "obscuro",
-
-    # — Foundations / research orgs —
-    "ethereum foundation", "pse",
-}
+# Jobs at companies in this set get a `priority` flag bumping them up one
+# fit notch in the scoring prompt. Empty by default — populated per-user by
+# the onboarding wizard from their CV + intent.
+PRIORITY_COMPANIES: set[str] = set()
 
 # MSc requirement signals in job descriptions
 MSC_PATTERNS = [
@@ -234,38 +137,12 @@ MSC_PATTERNS = [
     r"\bgraduate degree\b", r"\bpostgraduate\b", r"\bm\.?s\. in\b",
 ]
 
-# Security researcher fit keywords
-FIT_POSITIVE = [
-    "cryptograph", "zero.knowledge", r"\bzk\b", r"\bmpc\b", "protocol",
-    "vulnerability research", r"\bcve\b", "reverse engineer", "malware",
-    "network security", "intrusion detection", r"\bids\b", r"\bips\b",
-    "exploit", "binary analysis", "threat research", "snort", "pcap",
-    "oblivious", "secure computation", "privacy.preserving",
-    # Added from CV analysis
-    r"\bfhe\b", "homomorphic", "threshold", r"\btss\b",
-    r"\bzkp\b", "snark", "stark", r"\bplonk\b",
-    "privacy preserving", "applied cryptography",
-    "detection engineering", "signature",
-    r"\bllm\b", "generative ai", "fastapi", "celery",
-    "peer.reviewed", "publication", "published", r"\bccs\b", "eurocrypt",
-]
-
-FIT_NEGATIVE = [
-    "devSecOps", "compliance", "soc analyst", "incident response",
-    "siem", "cloud security posture", "grc", "governance", "audit",
-    "application security", "sast", "dast", "penetration test",
-    "red team", "bug bounty",
-    # Added from CV analysis
-    "solidity", "smart contract developer", "defi", "nft", "tokenomics",
-    "node operator", "validator operations",
-    "sales engineer", "solutions architect", "pre-sales",
-    "community manager", "developer relations", "devrel", "evangelist",
-    r"\bintern\b", "internship", "entry level", "entry-level",
-    r"\bjunior\b", "graduate program",
-    r"\bdirector\b", r"\bvp \b", "head of", "chief",
-    "penetration tester", "red team operator",
-    "ruby on rails", r"\bphp\b", "wordpress", "salesforce",
-]
+# Regex-fallback fit signal lists. Empty by default — the wizard fills them
+# from the user's CV + intent. The regex fallback only fires when no LLM
+# provider is reachable; with empty lists every job comes back fit="ok"
+# score=5 (neutral), which is the right behavior for an unconfigured profile.
+FIT_POSITIVE: list[str] = []
+FIT_NEGATIVE: list[str] = []
 
 # ---------- CLAUDE-BASED FIT SCORING ----------
 #
@@ -293,45 +170,37 @@ FEEDBACK_POSITIVE_STATUSES = {"interview", "take-home", "screening", "offer"}
 # app_status values that count as negative signal (currently rare; forward-compat).
 FEEDBACK_NEGATIVE_STATUSES = {"rejected", "withdrew"}
 
-CLAUDE_BATCH_SCORING_PROMPT = """You rank LinkedIn jobs for fit against the candidate's CV.
+# Empty by default — the wizard generates a CV-tailored scoring prompt and
+# writes it into the user's profile. _build_batch_prompt() falls back to
+# `_GENERIC_FALLBACK_SCORING_PROMPT` (below) only if a profile somehow
+# reaches the scorer with this still empty (sanity net; the wizard always
+# fills it).
+CLAUDE_BATCH_SCORING_PROMPT = ""
+
+# Minimal generic stub used when the active profile's scoring prompt is
+# empty. Domain-neutral: no crypto/security/etc references. Lets the
+# scraper produce *something* useful even on a half-configured install.
+_GENERIC_FALLBACK_SCORING_PROMPT = """You rank LinkedIn jobs for fit against the candidate's CV.
 
 <cv>
 {cv}
 </cv>
 {feedback_block}
-You will receive a JSON array of jobs under <jobs>. For each job, return one
-scoring object. Keep your response tight — no prose outside JSON.
-
-Scoring:
-- "good"  = clear match against target roles (crypto / ZK / MPC / FHE /
-            confidential computing research engineer, protocol engineer,
-            or detection/vuln research with LLM-driven tooling). Score 7-10.
-- "ok"    = adjacent or partial match (e.g. generic backend at a crypto
-            company, AI security role without crypto depth). Score 4-6.
-- "skip"  = off-profile OR hits a hard filter (intern, junior, entry-level,
-            director+, VP, Head of, sales / SDR / pre-sales, DevRel,
-            evangelist, pure Solidity / smart-contract dev, DeFi product,
-            GRC / audit / compliance, SOC analyst, SIEM ops, CSPM, red team,
-            penetration tester, bug bounty, PHP / Rails / WordPress / Salesforce).
-            Score 1-3.
-
-Rules:
-- One object per input job, in the same order, same "id" field.
-- Each reason under 8 words. At most 4 reasons per job.
-- "msc_required" = true if the posting requires or strongly prefers a master's.
-- The candidate HAS an M.Sc. — never treat it as a blocker.
-- "red_flags" surface hard-filter hits in plain language.
-- "priority": true means the company is on the user's high-interest list.
-  Bump the fit one notch up (skip→ok, ok→good) and bump the score by 1
-  UNLESS the role hits a hard red flag (intern/junior/sales/director+/etc).
+You will receive a JSON array of jobs under <jobs>. For each job return one
+scoring object. Keep responses tight — no prose outside JSON.
 
 Return ONLY a JSON array with this exact shape (no markdown fences, no prose):
 [
   {{"id": "<job id>", "fit": "good"|"ok"|"skip", "score": <int 1-10>,
-    "reasons": ["short reason", ...], "msc_required": true|false,
-    "red_flags": ["..."]}},
+    "reasons": ["short reason", ...], "red_flags": ["..."]}},
   ...
 ]
+
+Rules:
+- One object per input job, in the same order, same "id" field.
+- Each reason under 8 words. At most 4 reasons per job.
+- "priority": true means the company is on the user's high-interest list —
+  bump the fit one notch up unless a hard red flag fires.
 
 <jobs>
 {jobs_json}
@@ -623,18 +492,22 @@ def _build_batch_prompt(cv_text: str, batch: list[dict]) -> str:
         for j in batch
     ]
     feedback_block = _build_user_feedback_examples()
+    # Empty active prompt = profile not yet configured by the wizard. Fall
+    # back to a minimal generic stub so the scorer still produces useful
+    # JSON instead of an empty `.format()` result.
+    template = CLAUDE_BATCH_SCORING_PROMPT or _GENERIC_FALLBACK_SCORING_PROMPT
     # Defensive: a user-edited prompt template might have dropped the
     # {feedback_block} placeholder. Tolerate that — ship the prompt without
     # the few-shot block rather than crashing.
     try:
-        return CLAUDE_BATCH_SCORING_PROMPT.format(
+        return template.format(
             cv=cv_text,
             feedback_block=feedback_block,
             jobs_json=json.dumps(items, ensure_ascii=False),
         )
     except KeyError:
         # Old/custom template missing {feedback_block} — try without it.
-        return CLAUDE_BATCH_SCORING_PROMPT.format(
+        return template.format(
             cv=cv_text,
             jobs_json=json.dumps(items, ensure_ascii=False),
         )
@@ -661,42 +534,21 @@ def claude_batch_score(cv_text: str, batch: list[dict]) -> dict | None:
 
 # Fast title-based pre-filter. Runs before we spend browser time fetching
 # descriptions — LinkedIn search results include a lot of garbage and this
-# cuts the enrichment queue by ~60-80% cheaply and reliably.
+# cuts the enrichment queue cheaply. Kept to a small universal set covering
+# seniority extremes (intern/junior/director+) and obvious non-IC tracks
+# (sales / marketing / PM / community / QA). Domain-specific stack/role
+# negatives are added by the wizard from the user's CV + intent.
 OFFTOPIC_TITLE_PATTERNS = [
-    r"\bintern\b", r"\binternship\b",
-    r"\bjunior\b", r"\bentry[\s-]?level\b", r"\bgraduate program\b",
-    r"\bdirector\b", r"\bvp\b", r"\bvice[\s-]president\b",
-    r"\bhead of\b", r"\bchief\b",
-    r"\bsales\b", r"\bsdr\b", r"\baccount executive\b", r"\baccount manager\b",
-    r"\bpre[\s-]?sales\b", r"\bsolutions architect\b", r"\bsolution architect\b",
-    r"\bdevrel\b", r"\bdeveloper relations\b", r"\bevangelist\b",
-    r"\bcommunity manager\b",
-    r"\bmarketing\b", r"\brecruit(er|ing)\b", r"\btalent\b",
-    r"\bproduct manager\b", r"\bpm\b",
-    r"\bfinance\b", r"\baccountant\b", r"\bclerk\b", r"\bpayable\b",
-    r"\blegal\b", r"\bparalegal\b", r"\bcompliance officer\b", r"\baudit\b",
-    r"\bhr\b", r"\bhuman resources\b", r"\bpeople partner\b",
-    r"\bcustomer support\b", r"\btech support\b", r"\bhelp desk\b",
-    r"\bnoc\b", r"\bsoc analyst\b", r"\bsiem\b",
-    r"\bpenetration tester\b", r"\bpentest\b", r"\bred team\b",
-    r"\bbug bounty\b",
-    r"\bwordpress\b", r"\bphp\b", r"\bruby on rails\b", r"\bsalesforce\b",
-    r"\bsolidity\b", r"\bsmart contract developer\b", r"\bdefi\b",
-    r"\bnode operator\b", r"\bvalidator operations\b",
-    r"\bunity developer\b", r"\bgame developer\b", r"\bunreal engine\b",
-    r"\bfront[\s-]?end\b", r"\bfrontend developer\b",
-    r"\bmobile developer\b", r"\bios developer\b", r"\bandroid developer\b",
-    r"\bmechanical engineer\b", r"\bavionic", r"\boptic\b", r"\btechnician\b",
-    r"\bbuyer\b", r"\bprocurement\b", r"\blogistics\b", r"\bsupply chain\b",
-    r"\bdata analyst\b", r"\bbusiness analyst\b", r"\bbi analyst\b",
-    r"\bscrum master\b", r"\bproject manager\b", r"\bprogram manager\b",
-]
-
-# Hebrew patterns — a lot of LI's Israel results are Hebrew-titled.
-OFFTOPIC_HEBREW = [
-    "מהנדס מערכת", "מהנדס אוויוניקה", "הנדסאי", "טכנאי",
-    "רכז", "מנהל מוצר", "מנהלת מוצר", "אנליסט",
-    "רכש", "חשב", "משאבי אנוש", "תמיכה", "שירות לקוחות",
+    r"\bintern(ship)?\b",
+    r"\bjunior\b",
+    r"\bentry[- ]?level\b",
+    r"\bgraduate( program)?\b",
+    r"\b(VP|vice president|director|head of|chief)\b",
+    r"\b(sales|pre[- ]?sales|sdr|account executive)\b",
+    r"\b(product|project|program) manager\b",
+    r"\bmarketing\b",
+    r"\b(community|customer success|developer relations|devrel|evangelist)\b",
+    r"\b(QA|quality assurance) (engineer|tester|analyst)\b",
 ]
 
 
@@ -718,14 +570,12 @@ def _clean_title(title: str) -> str:
 
 
 def is_obviously_offtopic(title: str) -> str | None:
-    """Return the pattern that matched, or None if the title looks plausibly on-topic."""
+    """Return the pattern that matched, or None if the title looks plausibly
+    on-topic. Patterns are case-insensitive."""
     t = (title or "").lower()
     for pat in OFFTOPIC_TITLE_PATTERNS:
-        if re.search(pat, t):
+        if re.search(pat, t, re.IGNORECASE):
             return pat
-    for hb in OFFTOPIC_HEBREW:
-        if hb in title:
-            return hb
     return None
 
 

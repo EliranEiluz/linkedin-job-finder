@@ -224,7 +224,48 @@ def cmd_list(_args) -> None:
         active = profiles[0]
         _write_active(active)
         _repoint_symlink(active)
-    _emit({"ok": True, "active": active, "profiles": profiles}, 0)
+    # `cv_present` is one signal that the user has completed onboarding — a
+    # default profile gets auto-created on first ctl call (see
+    # _migrate_if_needed), so profiles.length always returns ≥1 even on a
+    # fresh clone. The wizard's gate uses cv_present (OR a populated active
+    # profile) to decide whether to hide the non-Setup tabs and force-show
+    # the wizard.
+    cv_path = ROOT / "cv.txt"
+    try:
+        cv_present = cv_path.exists() and cv_path.stat().st_size > 0
+    except Exception:
+        cv_present = False
+    # Second signal: the active profile's `categories` has at least one
+    # entry with a non-empty `queries` list. Domain-specific defaults were
+    # stripped from search.py — an auto-init profile now has categories: [],
+    # so a populated categories list is a real "user (or wizard) configured
+    # this profile" signal. Cheap JSON read; falls open on any error so a
+    # bad profile file never traps the user out of the rest of the UI.
+    profile_configured = False
+    if active:
+        try:
+            cfg_path = _profile_path(active)
+            if cfg_path.exists():
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                if isinstance(cfg, dict):
+                    cats = cfg.get("categories") or []
+                    if isinstance(cats, list):
+                        for c in cats:
+                            if isinstance(c, dict):
+                                qs = c.get("queries") or []
+                                if isinstance(qs, list) and any(
+                                    isinstance(q, str) and q.strip() for q in qs
+                                ):
+                                    profile_configured = True
+                                    break
+        except Exception:
+            profile_configured = False
+    _emit({
+        "ok": True,
+        "active": active,
+        "profiles": profiles,
+        "cv_present": bool(cv_present or profile_configured),
+    }, 0)
 
 
 def cmd_activate(args) -> None:

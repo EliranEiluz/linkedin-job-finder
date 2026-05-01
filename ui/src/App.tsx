@@ -36,30 +36,43 @@ const readTabFromUrl = (): Tab | null => {
 
 export const App = () => {
   // First paint: if URL pinned a tab, honor it. Otherwise leave null and let
-  // the profile-presence check pick — wizard for first-runs, corpus otherwise.
+  // the cv_present check pick — wizard for first-runs, corpus otherwise.
   const [tab, setTab] = useState<Tab>(() => readTabFromUrl() ?? 'corpus');
-  // One-shot landing gate: if /api/profiles returns zero profiles AND the URL
-  // didn't already pin a tab, force the wizard. Skips after the first run so
-  // the user can navigate freely. Failures (network down, etc) are silent —
-  // we don't want to block the UI behind a flaky check.
+  // `null` until /api/profiles answers; then true (user finished onboarding,
+  // show all tabs) or false (fresh install, show ONLY Setup + force-route).
+  // Profile-count alone isn't enough — `_migrate_if_needed` auto-creates a
+  // 'default' profile on first ctl call, so a fresh clone always reports
+  // ≥1 profile. cv.txt is the real "user has uploaded their CV via the
+  // wizard" signal.
+  const [onboarded, setOnboarded] = useState<boolean | null>(null);
   useEffect(() => {
-    if (readTabFromUrl() !== null) return; // URL wins
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch('/api/profiles');
         if (!res.ok || cancelled) return;
-        const j = (await res.json()) as { profiles?: string[] };
-        const profiles = Array.isArray(j.profiles) ? j.profiles : [];
-        if (profiles.length === 0) {
+        const j = (await res.json()) as {
+          profiles?: string[]; cv_present?: boolean;
+        };
+        const isOnboarded = j.cv_present === true;
+        setOnboarded(isOnboarded);
+        // Force-route to Setup ONLY if the URL didn't pin a tab AND the user
+        // hasn't onboarded yet. Otherwise honor existing state.
+        if (!isOnboarded && readTabFromUrl() === null) {
           setTab('setup');
         }
       } catch {
-        /* fall through to corpus default */
+        // Network blip — assume onboarded so we don't trap the user in Setup.
+        setOnboarded(true);
       }
     })();
     return () => { cancelled = true; };
   }, []);
+  // Visible tabs: while not onboarded, hide everything except Setup so the
+  // user can't bounce into broken Corpus / Tracker / History pages with no
+  // data. After onboarding, show all 5.
+  const visibleTabs =
+    onboarded === false ? TABS.filter((t) => t.id === 'setup') : TABS;
   // Per-tab refs so we can scroll the active tab into view on mobile when
   // the user navigates via URL change / popstate / first paint. Keeps the
   // active tab visible inside the horizontal-scroll strip.
@@ -116,7 +129,7 @@ export const App = () => {
           <span className="ml-1.5 hidden md:inline">Jobs Browser</span>
         </h1>
         <div className="no-scrollbar flex flex-1 items-stretch overflow-x-auto">
-          {TABS.map((t) => (
+          {visibleTabs.map((t) => (
             <button
               key={t.id}
               ref={(el) => {
@@ -140,16 +153,24 @@ export const App = () => {
         </div>
       </nav>
 
-      {/* Active page */}
+      {/* Active page. While not onboarded we force-render the OnboardingPage
+          regardless of the `tab` state, so a URL-pinned ?tab=corpus on a
+          fresh install can't bypass the wizard. */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {tab === 'corpus' && <CorpusPage />}
-        {tab === 'tracker' && <ApplicationsPage />}
-        {tab === 'config' && <ConfigPage />}
-        {tab === 'history' && <RunHistoryPage />}
-        {tab === 'setup' && (
-          <OnboardingPage
-            onSwitchTab={(t) => switchTab(t)}
-          />
+        {onboarded === false ? (
+          <OnboardingPage onSwitchTab={(t) => switchTab(t)} />
+        ) : (
+          <>
+            {tab === 'corpus' && <CorpusPage />}
+            {tab === 'tracker' && <ApplicationsPage />}
+            {tab === 'config' && <ConfigPage />}
+            {tab === 'history' && <RunHistoryPage />}
+            {tab === 'setup' && (
+              <OnboardingPage
+                onSwitchTab={(t) => switchTab(t)}
+              />
+            )}
+          </>
         )}
       </div>
     </div>
