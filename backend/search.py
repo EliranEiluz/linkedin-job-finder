@@ -746,7 +746,10 @@ window.chrome = {{runtime: {{}}}};
 
 def _detect_system_timezone() -> str:
     """Best-effort system timezone detection. stdlib only — no tzlocal dep.
-    Falls back to UTC on weird/headless systems where nothing resolves."""
+    Returns an IANA name when possible, else 'UTC'. We deliberately skip
+    POSIX abbreviations (`PST`/`IST` etc.) — Playwright accepts them but
+    LinkedIn's fingerprint check prefers IANA, and a wrong abbrev looks
+    more suspicious than a generic UTC."""
     try:
         # Python 3.6+: datetime carries the local zone via astimezone().tzinfo.
         # On most platforms this returns an IANA name (e.g. 'America/Los_Angeles').
@@ -755,14 +758,6 @@ def _detect_system_timezone() -> str:
         name = getattr(tz, "key", None) or str(tz) if tz else None
         if name and "/" in name:
             return name
-    except Exception:
-        pass
-    try:
-        # Last resort — POSIX abbreviation like 'PST'/'IST'. LinkedIn accepts
-        # IANA names, so this is a fallback we'd rather avoid hitting.
-        from time import tzname
-        if tzname and tzname[0]:
-            return tzname[0]
     except Exception:
         pass
     return "UTC"
