@@ -40,6 +40,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 # Reuse the scraper's own parsing + normalization so the generated config goes
 # through the exact same path load_config() would apply on next scrape. After
@@ -53,16 +54,15 @@ sys.path.insert(0, str(ROOT))  # → project root, so `from backend.llm` resolve
 # We only need these three helpers; don't trigger the full load_config() pass
 # at import time beyond what search.py already does (it loads the currently-
 # live config.json as a side effect — harmless here).
+# Route LLM calls through the provider abstraction so users on Gemini /
+# OpenRouter / Ollama can run the wizard without a Claude account.
+from backend.llm import complete as llm_complete  # noqa: E402  (sys.path shim above)
+from backend.llm import get_provider  # noqa: E402  (sys.path shim above)
 from backend.search import (  # noqa: E402  (sys.path shim above)
     _hardcoded_defaults,
     _normalize_categories,
     _parse_claude_json,
 )
-
-# Route LLM calls through the provider abstraction so users on Gemini /
-# OpenRouter / Ollama can run the wizard without a Claude account.
-from backend.llm import complete as llm_complete  # noqa: E402  (sys.path shim above)
-from backend.llm import get_provider  # noqa: E402  (sys.path shim above)
 
 CV_PATH = ROOT / "cv.txt"
 CONFIG_PATH = ROOT / "config.json"
@@ -85,7 +85,7 @@ CV_MAX_CHARS = 30_000
 INTENT_MAX_CHARS = 4_000
 
 
-def _emit(obj: dict, code: int = 0) -> None:
+def _emit(obj: dict, code: int = 0) -> NoReturn:
     print(json.dumps(obj, indent=2, ensure_ascii=False))
     sys.exit(code)
 

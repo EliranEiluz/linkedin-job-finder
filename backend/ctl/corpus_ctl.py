@@ -61,6 +61,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NoReturn
 from urllib.parse import parse_qs, urlparse
 
 # Add backend/ to sys.path so the bare `search` import resolves both when
@@ -79,10 +80,11 @@ def _read_stdin_json() -> dict:
     raw = sys.stdin.read()
     if not raw.strip():
         return {}
-    return json.loads(raw)
+    parsed = json.loads(raw)
+    return parsed if isinstance(parsed, dict) else {}
 
 
-def _emit(obj: dict, code: int = 0):
+def _emit(obj: dict, code: int = 0) -> NoReturn:
     print(json.dumps(obj, indent=2, ensure_ascii=False))
     sys.exit(code)
 
@@ -390,7 +392,7 @@ def cmd_applied_import(_args) -> None:
             if not isinstance(j, dict):
                 continue
             jid = j.get("id")
-            if jid not in id_set:
+            if not isinstance(jid, str) or jid not in id_set:
                 continue
             seen_ids.add(jid)
 
@@ -461,7 +463,8 @@ def extract_job_id(s: str) -> str | None:
         return None
     # ?currentJobId=... wins (search-results pane).
     qs = parse_qs(u.query or "")
-    cur = (qs.get("currentJobId") or [None])[0]
+    cur_list = qs.get("currentJobId") or [""]
+    cur = cur_list[0]
     if cur and cur.isdigit() and 8 <= len(cur) <= 12:
         return cur
     # /jobs/view/<slug>-<id>/ or /jobs/view/<id>/

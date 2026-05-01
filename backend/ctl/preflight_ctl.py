@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
 ROOT = HERE.parent.parent  # project root
@@ -37,7 +38,7 @@ ROOT = HERE.parent.parent  # project root
 ENV_FILE = Path.home() / ".linkedin-jobs.env"
 
 
-def _emit(obj: dict, code: int = 0) -> None:
+def _emit(obj: dict, code: int = 0) -> NoReturn:
     print(json.dumps(obj, indent=2, ensure_ascii=False))
     sys.exit(code)
 

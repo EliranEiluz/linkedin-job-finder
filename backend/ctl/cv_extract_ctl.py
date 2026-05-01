@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import NoReturn
 
 MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 MAX_PAGES = 100
 
 
-def _emit(obj: dict, code: int = 0) -> None:
+def _emit(obj: dict, code: int = 0) -> NoReturn:
     print(json.dumps(obj, ensure_ascii=False))
     sys.exit(code)
 

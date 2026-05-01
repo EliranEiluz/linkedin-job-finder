@@ -34,8 +34,10 @@ import shutil
 import sys
 import time
 import traceback
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote_plus
 
 from filelock import FileLock
@@ -52,11 +54,13 @@ if _REPO_ROOT not in sys.path:
 # `_require_playwright()` materializes the imports on demand and surfaces
 # a clean install command if it's missing.
 
-sync_playwright = None  # type: ignore[assignment]
-PlaywrightTimeout = Exception  # placeholder until we resolve the real one
+# Resolved on demand by `_require_playwright()`. Initialized to None so the
+# type-checker sees `Any | None` and the lazy-import dance below is sound.
+sync_playwright: Any = None
+PlaywrightTimeout: type[BaseException] = Exception  # placeholder until we resolve the real one
 
 
-def _require_playwright():
+def _require_playwright() -> None:
     """Import playwright on demand; cache results in module globals.
     Raises a clean-message ImportError if the package isn't available."""
     global sync_playwright, PlaywrightTimeout
@@ -81,9 +85,10 @@ def _require_playwright():
     PlaywrightTimeout = _PT
 
 
-# Line-buffered stdout so long runs stream progress.
+# Line-buffered stdout so long runs stream progress. `reconfigure` is only
+# present on the real TextIO wrapper (not StringIO/BytesIO), so guard it.
 with contextlib.suppress(Exception):
-    sys.stdout.reconfigure(line_buffering=True)
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
 # ---------- CONFIG ----------
 
@@ -350,9 +355,9 @@ def _build_user_feedback_examples(
     # Resolve cap. Prefer caller's value; else look at the active config;
     # else fall back to the module-level default. Clamp to [0, 20].
     if cap is None:
-        cfg_cap = None
+        cfg_cap: Any = None
         try:
-            cfg_cap = _ACTIVE_CONFIG.get("feedback_examples_max")  # type: ignore[name-defined]
+            cfg_cap = _ACTIVE_CONFIG.get("feedback_examples_max")
         except Exception:
             cfg_cap = None
         cap = cfg_cap if isinstance(cfg_cap, int) else FEEDBACK_EXAMPLES_MAX_DEFAULT
@@ -421,7 +426,7 @@ def _build_user_feedback_examples(
     )
 
 
-def _parse_claude_json(raw: str):
+def _parse_claude_json(raw: str) -> Any:
     """Extract the first balanced JSON object or array from Claude's reply.
     Tries the bracket type that appears FIRST in the stripped text, so an
     array-prefixed response (`[...]` — batch job scoring) and an
@@ -441,6 +446,7 @@ def _parse_claude_json(raw: str):
     object_at = raw.find("{")
     if object_at == -1 and array_at == -1:
         return None
+    order: tuple[tuple[str, str], ...]
     if object_at == -1:
         order = (("[", "]"),)
     elif array_at == -1:
@@ -654,7 +660,7 @@ def _detect_windows_timezone() -> str | None:
     if not sys.platform.startswith("win"):
         return None
     try:
-        import winreg  # type: ignore[import-not-found]
+        import winreg
 
         path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\TimeZoneInformation"
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
@@ -856,7 +862,7 @@ def _migrate_legacy_config(user_cfg: dict) -> dict:
     return user_cfg
 
 
-def _normalize_categories(raw, fallback: list[dict]) -> list[dict]:
+def _normalize_categories(raw: Any, fallback: list[dict]) -> list[dict]:
     """Validate + clean a categories[] payload. Drops malformed entries.
     Falls back wholesale to `fallback` if nothing valid remains."""
     if not isinstance(raw, list):
@@ -891,7 +897,7 @@ _VALID_LLM_PROVIDER_NAMES = {
 }
 
 
-def _normalize_llm_provider(raw, fallback: dict) -> dict:
+def _normalize_llm_provider(raw: Any, fallback: dict) -> dict:
     """Validate the llm_provider config block. Drops malformed payloads back
     to the fallback (defaults to {'name': 'auto'}). Optional `model` is kept
     only if it's a non-empty string."""
@@ -1048,14 +1054,22 @@ def _category_name_for_id(cat_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _atomic_merge_json(path: Path, mutator):
+# Type alias for the read-modify-write callback shape used by
+# `_atomic_merge_json`. The current value loaded from disk is whatever
+# `json.loads` returned (or None when the file doesn't exist yet); the
+# return value is what gets serialized back. Stays Any-typed because the
+# helper handles both list-of-jobs and dict-of-runs payloads.
+JsonMutator = Callable[[Any], Any]
+
+
+def _atomic_merge_json(path: Path, mutator: JsonMutator) -> None:
     """Cross-platform exclusive-locked read-modify-write. `mutator(current)`
     returns the new value to persist. `current` is None if the file doesn't
     exist yet. The temp+rename ensures the write itself is atomic even if the
     lock fails."""
     lock_path = Path(str(path) + ".lock")
     with FileLock(str(lock_path)):
-        current = None
+        current: Any = None
         if path.exists():
             try:
                 current = json.loads(path.read_text())
@@ -1067,16 +1081,16 @@ def _atomic_merge_json(path: Path, mutator):
         tmp.replace(path)
 
 
-def load_seen() -> set:
+def load_seen() -> set[str]:
     if SEEN_FILE.exists():
         return set(json.loads(SEEN_FILE.read_text()))
     return set()
 
 
-def save_seen(seen: set):
+def save_seen(seen: set[str]) -> None:
     """Merge `seen` into the on-disk set under fcntl lock."""
 
-    def _mut(current):
+    def _mut(current: Any) -> list[str]:
         existing = set(current or [])
         existing |= seen
         return sorted(existing)
@@ -1086,16 +1100,17 @@ def save_seen(seen: set):
 
 def load_results() -> list:
     if RESULTS_FILE.exists():
-        return json.loads(RESULTS_FILE.read_text())
+        loaded: Any = json.loads(RESULTS_FILE.read_text())
+        return loaded if isinstance(loaded, list) else []
     return []
 
 
-def save_results_merge(new_jobs: list):
+def save_results_merge(new_jobs: list) -> None:
     """Merge `new_jobs` into results.json under fcntl lock. Dedup by id —
     if a job_id already exists, the existing record wins (we don't re-score
     a job just because the other mode also found it)."""
 
-    def _mut(current):
+    def _mut(current: Any) -> list:
         existing = current if isinstance(current, list) else []
         seen_ids = {j.get("id") for j in existing if isinstance(j, dict)}
         for j in new_jobs:
@@ -1109,7 +1124,7 @@ def save_results_merge(new_jobs: list):
 
 # Backward-compat alias — older code paths may still call save_results(list)
 # expecting a wholesale overwrite. Route them through the safe merge instead.
-def save_results(results: list):
+def save_results(results: list) -> None:
     save_results_merge(results)
 
 
@@ -1118,14 +1133,16 @@ def _append_run_history(entry: dict, cap: int = 100) -> None:
     File format: {"runs": [...]} with newest entries at the END so chronological
     order matches typical log appending. The UI sorts client-side."""
 
-    def _mut(current):
+    def _mut(current: Any) -> dict[str, Any]:
         if not isinstance(current, dict) or not isinstance(current.get("runs"), list):
             current = {"runs": []}
         runs = current["runs"]
         runs.append(entry)
         if len(runs) > cap:
             current["runs"] = runs[-cap:]
-        return current
+        # `current` is typed Any but the isinstance branch above proves it's
+        # a dict[str, Any]; cast for the return type.
+        return dict(current)
 
     try:
         _atomic_merge_json(RUN_HISTORY_FILE, _mut)
@@ -1163,10 +1180,11 @@ GUEST_HEADERS = {
 }
 
 
-def _guest_session():
+def _guest_session() -> Any:
     """Build a single requests.Session for the whole run (connection reuse +
     consistent headers). Imports are local so logged-in mode doesn't pay
-    the startup cost of pulling in requests/bs4 if guest mode isn't used."""
+    the startup cost of pulling in requests/bs4 if guest mode isn't used.
+    Returns Any because `requests` is only imported here on first guest call."""
     import requests
 
     s = requests.Session()
@@ -1185,13 +1203,14 @@ def _parse_guest_cards(html: str, query: str, category: str) -> list[dict]:
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
-    out = []
-    seen_local = set()
+    out: list[dict] = []
+    seen_local: set[str] = set()
     for li in soup.select("li"):
         link = li.select_one("a[href*='/jobs/view/']")
         if not link:
             continue
-        href = link.get("href") or ""
+        href_raw = link.get("href") or ""
+        href = href_raw if isinstance(href_raw, str) else ""
         if "/jobs/view/" not in href:
             continue
         # The guest URL embeds a slug + numeric ID like "/jobs/view/foo-bar-1234567890".
@@ -1239,7 +1258,7 @@ def _parse_guest_cards(html: str, query: str, category: str) -> list[dict]:
 
 
 def scrape_query_guest(
-    session,
+    session: Any,
     query: str,
     category: str = "crypto",
     max_pages: int = 3,
@@ -1265,7 +1284,15 @@ def scrape_query_guest(
 
     all_jobs: list[dict] = []
     seen_ids: set[str] = set()
-    stats = {"real": 0, "jymbii": 0, "unknown": 0, "dropped_jymbii": [], "dropped_offtarget": []}
+    # Mixed-value dict (int counters + list droppedees). Any-typed values keep
+    # the +=/append calls type-clean without exploding into a TypedDict.
+    stats: dict[str, Any] = {
+        "real": 0,
+        "jymbii": 0,
+        "unknown": 0,
+        "dropped_jymbii": [],
+        "dropped_offtarget": [],
+    }
 
     for page_idx in range(max_pages):
         start = page_idx * 25
@@ -1357,7 +1384,7 @@ def _parse_retry_after(header_val: str | None) -> float | None:
 
 
 def fetch_description_guest(
-    session,
+    session: Any,
     job_id: str,
     max_retries: int = 2,
 ) -> tuple[str, str]:
@@ -1426,7 +1453,7 @@ def fetch_description_guest(
 # ---------------------------------------------------------------------------
 
 
-def jiggle_mouse(page):
+def jiggle_mouse(page: Any) -> None:
     """Small random mouse movement to look less robotic."""
     try:
         x = random.randint(100, 1100)
@@ -1436,7 +1463,7 @@ def jiggle_mouse(page):
         pass
 
 
-def scroll_and_load(page, passes=4):
+def scroll_and_load(page: Any, passes: int = 4) -> None:
     for _ in range(passes):
         amount = random.randint(600, 1100)
         page.evaluate(f"window.scrollBy(0, {amount})")
@@ -1444,7 +1471,7 @@ def scroll_and_load(page, passes=4):
     jiggle_mouse(page)
 
 
-def safe_goto(page, url: str, retries=2):
+def safe_goto(page: Any, url: str, retries: int = 2) -> bool:
     for attempt in range(retries + 1):
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=20000)
@@ -1616,7 +1643,7 @@ def _card_matches_tokens(title: str, company: str, tokens: list[str]) -> bool:
     return False
 
 
-def _page_has_no_results_banner(page) -> bool:
+def _page_has_no_results_banner(page: Any) -> bool:
     """LinkedIn shows .jobs-search-no-results-banner (among a few variants) when
     a query truly has zero hits. When present, every card on screen is filler."""
     try:
@@ -1633,7 +1660,7 @@ def _page_has_no_results_banner(page) -> bool:
         return False
 
 
-def _query_cards(page):
+def _query_cards(page: Any) -> tuple[list[Any], str | None]:
     """Return the first non-empty card list across the known selector patterns."""
     for sel in CARD_SELECTORS:
         cards = page.query_selector_all(sel)
@@ -1642,25 +1669,26 @@ def _query_cards(page):
     return [], None
 
 
-def _count_populated_cards(page) -> int:
+def _count_populated_cards(page: Any) -> int:
     """Count cards that have a populated /jobs/view/ anchor — not just empty
     occludable shells. LinkedIn creates <li data-occludable-job-id> nodes in
     bulk during scroll but only hydrates the ones near the viewport. Counting
     raw shells makes `_load_all_cards` think the page is fully loaded when
     most cards are still empty placeholders."""
     try:
-        return page.evaluate(
+        result = page.evaluate(
             """() => document.querySelectorAll(
                  "li.scaffold-layout__list-item a[href*='/jobs/view/'], " +
                  "li.jobs-search-results__list-item a[href*='/jobs/view/'], " +
                  "div.job-card-container a[href*='/jobs/view/']"
                ).length"""
         )
+        return int(result) if isinstance(result, (int, float)) else 0
     except Exception:
         return 0
 
 
-def _wait_for_cards(page, timeout_ms=10000):
+def _wait_for_cards(page: Any, timeout_ms: int = 10000) -> str | None:
     """Wait until at least one job card selector matches."""
     deadline = time.time() + (timeout_ms / 1000.0)
     while time.time() < deadline:
@@ -1675,7 +1703,12 @@ def _wait_for_cards(page, timeout_ms=10000):
     return None
 
 
-def _load_all_cards(page, max_cards=25, max_scrolls=40, stable_needed=3):
+def _load_all_cards(
+    page: Any,
+    max_cards: int = 25,
+    max_scrolls: int = 40,
+    stable_needed: int = 3,
+) -> list[Any]:
     """
     Lazy-load every card on this page by scrolling the INNER results pane
     (not the window). On the logged-in LinkedIn SPA, scrolling the window
@@ -1729,8 +1762,12 @@ def _load_all_cards(page, max_cards=25, max_scrolls=40, stable_needed=3):
 
 
 def _extract_jobs_from_cards(
-    cards, query, category, banner_present=False, category_type: str = "keyword"
-):
+    cards: list[Any],
+    query: str,
+    category: str,
+    banner_present: bool = False,
+    category_type: str = "keyword",
+) -> tuple[list[dict], dict[str, Any]]:
     """
     Extract job dicts, dropping any card classified as JYMBII filler.
     Classification order:
@@ -1749,13 +1786,20 @@ def _extract_jobs_from_cards(
          without firing the banner.
     Returns (jobs, stats).
     """
-    jobs = []
-    stats = {"real": 0, "jymbii": 0, "unknown": 0, "dropped_jymbii": [], "dropped_offtarget": []}
+    jobs: list[dict] = []
+    # See scrape_query_guest's `stats` block — same mixed counters/lists shape.
+    stats: dict[str, Any] = {
+        "real": 0,
+        "jymbii": 0,
+        "unknown": 0,
+        "dropped_jymbii": [],
+        "dropped_offtarget": [],
+    }
     q_lower = (query or "").lower()
     # Behavior is driven by category_type, not the literal `category` string —
     # legacy fall-through keeps "company" id working too.
     is_company_query = (category_type == "company") or (category == "company")
-    query_tokens = [] if is_company_query else _query_tokens(query)
+    query_tokens: list[str] = [] if is_company_query else _query_tokens(query)
 
     for card in cards:
         try:
@@ -1883,7 +1927,7 @@ def _build_search_url(query: str, start: int = 0, date_filter: str | None = None
 
 
 def scrape_query(
-    page,
+    page: Any,
     query: str,
     category: str = "crypto",
     max_pages: int = 3,
@@ -2005,12 +2049,12 @@ DESC_SELECTORS = [
 AUTHWALL_MARKERS = ("authwall", "/login", "/checkpoint", "uas/login")
 
 
-def _page_is_authwall(page) -> bool:
+def _page_is_authwall(page: Any) -> bool:
     url = (page.url or "").lower()
     return any(m in url for m in AUTHWALL_MARKERS)
 
 
-def _click_see_more(page):
+def _click_see_more(page: Any) -> None:
     """Expand truncated description if LinkedIn collapsed it."""
     for sel in [
         "button.jobs-description__footer-button",
@@ -2027,7 +2071,7 @@ def _click_see_more(page):
             continue
 
 
-def fetch_description(page, url: str, job_id: str = "") -> tuple[str, str]:
+def fetch_description(page: Any, url: str, job_id: str = "") -> tuple[str, str]:
     """
     Returns (description_text_lower, diagnosis).
     diagnosis ∈ {'ok', 'empty-dom', 'authwall', 'nav-failed', 'error'}.
@@ -2106,14 +2150,14 @@ def check_fit(desc: str) -> tuple[str, list[str]]:
     return label, reasons
 
 
-def _apply_regex_fallback(job: dict, desc: str):
+def _apply_regex_fallback(job: dict, desc: str) -> None:
     job["msc_required"] = check_msc(desc)
     job["fit"], job["fit_reasons"] = check_fit(desc)
     job["scored_by"] = "regex"
     job["scored_at"] = datetime.now().isoformat()
 
 
-def _apply_claude_scoring(job: dict, scored: dict):
+def _apply_claude_scoring(job: dict, scored: dict) -> None:
     job["fit"] = scored.get("fit")
     job["score"] = scored.get("score")
     job["msc_required"] = scored.get("msc_required")
@@ -2125,7 +2169,7 @@ def _apply_claude_scoring(job: dict, scored: dict):
     job["scored_at"] = datetime.now().isoformat()
 
 
-def score_jobs_in_batches(jobs: list[dict], cv_text: str):
+def score_jobs_in_batches(jobs: list[dict], cv_text: str) -> bool | None:
     """Send jobs to Claude in batches. Mutates each job in-place. Falls back
     to regex for any job Claude didn't score."""
     if not jobs:
@@ -2157,7 +2201,7 @@ def score_jobs_in_batches(jobs: list[dict], cv_text: str):
     return scored_anything
 
 
-def print_job(job: dict, label: str = ""):
+def print_job(job: dict, label: str = "") -> None:
     prefix = "🔥 " if job.get("priority") else "   "
     tag = f" [{label}]" if label else ""
 
@@ -2178,7 +2222,7 @@ def print_job(job: dict, label: str = ""):
         print(f"   signals: {', '.join(job['fit_reasons'][:6])}")
 
 
-def new_page_with_stealth(ctx, stealth_js: str | None = None):
+def new_page_with_stealth(ctx: Any, stealth_js: str | None = None) -> Any:
     """Create a new page and inject the stealth init script on every navigation.
     `stealth_js` should be the locale-resolved STEALTH_JS_TEMPLATE rendering
     (use _build_stealth_js); if omitted we fall back to detecting from the
@@ -2200,11 +2244,14 @@ def new_page_with_stealth(ctx, stealth_js: str | None = None):
 # ---------------------------------------------------------------------------
 
 
+FetchOneFn = Callable[[dict], tuple[str, str]]
+
+
 def process_one_job(
     job: dict,
     *,
     cv_text: str,
-    fetch_one,
+    fetch_one: FetchOneFn,
     persist: bool = True,
     already_scored: bool = False,
 ) -> dict:
@@ -2312,7 +2359,13 @@ def _compute_hot(job: dict) -> bool:
     return bool(job.get("priority"))
 
 
-def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts, fetch_one):
+def _enrich_descriptions(
+    args: argparse.Namespace,
+    new_jobs: list[dict],
+    cv_text: str,
+    diagnosis_counts: dict[str, int],
+    fetch_one: FetchOneFn,
+) -> int:
     """Shared enrichment stage. `fetch_one(job)` returns (text_lower, diag)
     for one job. Returns prefilter_skipped count.
 
@@ -2388,7 +2441,7 @@ def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts, fetch_one):
     # process_one_job(already_scored=True, persist=False) so the helper is
     # the single home for the "scraper batched, now finalize per row" path.
     # _desc is consumed and stripped inside the helper.
-    def _no_fetch(_j):  # never actually called when already_scored=True
+    def _no_fetch(_j: dict) -> tuple[str, str]:  # never actually called when already_scored=True
         return "", "ok"
 
     for job in to_fetch:
@@ -2404,16 +2457,16 @@ def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts, fetch_one):
 
 
 def _run_loggedin_pipeline(
-    args,
-    all_queries,
-    seen,
-    new_jobs,
-    max_pages,
-    date_filter_override,
-    cv_text,
-    per_query_stats,
-    run_errors,
-):
+    args: argparse.Namespace,
+    all_queries: list[tuple[str, str, str]],
+    seen: set[str],
+    new_jobs: list[dict],
+    max_pages: int,
+    date_filter_override: str | None,
+    cv_text: str,
+    per_query_stats: list[dict],
+    run_errors: list[dict],
+) -> tuple[int, dict[str, int]]:
     """Original Playwright-driven path — needs linkedin_session.json."""
     # Defer playwright import so guest mode can run on installs without it.
     # Raises ImportError with install instructions if playwright is missing.
@@ -2503,7 +2556,7 @@ def _run_loggedin_pipeline(
 
         for query, category, category_type in all_queries:
             print(f"Searching [{category}/{category_type}]: {query!r} ...")
-            qstats = {
+            qstats: dict[str, Any] = {
                 "real": 0,
                 "jymbii": 0,
                 "unknown": 0,
@@ -2537,7 +2590,7 @@ def _run_loggedin_pipeline(
             time.sleep(random.uniform(3.0, 6.0))
 
         # Per-job description fetcher closure — uses the page from this scope.
-        def _fetch_one(job):
+        def _fetch_one(job: dict) -> tuple[str, str]:
             return fetch_description(page, job["url"], job["id"])
 
         prefilter_skipped = _enrich_descriptions(
@@ -2551,16 +2604,16 @@ def _run_loggedin_pipeline(
 
 
 def _run_guest_pipeline(
-    args,
-    all_queries,
-    seen,
-    new_jobs,
-    max_pages,
-    date_filter_override,
-    cv_text,
-    per_query_stats,
-    run_errors,
-):
+    args: argparse.Namespace,
+    all_queries: list[tuple[str, str, str]],
+    seen: set[str],
+    new_jobs: list[dict],
+    max_pages: int,
+    date_filter_override: str | None,
+    cv_text: str,
+    per_query_stats: list[dict],
+    run_errors: list[dict],
+) -> tuple[int, dict[str, int]]:
     """Unauthenticated HTTP path — no browser, no session needed."""
     diagnosis_counts = {"ok": 0, "empty": 0, "error": 0}
     geo_id = (args.geo_id or _ACTIVE_CONFIG.get("geo_id") or "").strip() or None
@@ -2570,7 +2623,13 @@ def _run_guest_pipeline(
 
     for query, category, category_type in all_queries:
         print(f"Searching [{category}/{category_type}]: {query!r} ...")
-        qstats = {"real": 0, "jymbii": 0, "unknown": 0, "banner": False, "jobs_kept_after_dedup": 0}
+        qstats: dict[str, Any] = {
+            "real": 0,
+            "jymbii": 0,
+            "unknown": 0,
+            "banner": False,
+            "jobs_kept_after_dedup": 0,
+        }
         try:
             jobs = scrape_query_guest(
                 session,
@@ -2594,14 +2653,14 @@ def _run_guest_pipeline(
         per_query_stats.append({"query": query, "category": category, **qstats})
         time.sleep(random.uniform(1.0, 2.5))
 
-    def _fetch_one(job):
+    def _fetch_one(job: dict) -> tuple[str, str]:
         return fetch_description_guest(session, job["id"])
 
     prefilter_skipped = _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts, _fetch_one)
     return prefilter_skipped, diagnosis_counts
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--all", action="store_true", help="show all results including seen")
     parser.add_argument(
@@ -2694,7 +2753,7 @@ def main():
 
     seen = load_seen()
     all_results = load_results()
-    new_jobs = []
+    new_jobs: list[dict] = []
 
     # Build the query plan from the user-defined CATEGORIES list. Each item
     # is (query, category_id, category_type) — the type drives whether the
@@ -2774,7 +2833,7 @@ def main():
             display_jobs.append(job)
 
     # Sort display jobs by score (highest first), priority companies first.
-    def _sort_key(j):
+    def _sort_key(j: dict) -> tuple[int, int, int]:
         return (
             0 if j.get("priority") else 1,
             -(j.get("score") or 0),
@@ -2812,18 +2871,18 @@ def main():
             for job in priority:
                 print_job(job)
 
-        good = [j for j in normal if j.get("fit") == "good"]
-        ok = [j for j in normal if j.get("fit") == "ok"]
+        good_jobs = [j for j in normal if j.get("fit") == "good"]
+        ok_jobs = [j for j in normal if j.get("fit") == "ok"]
         unscored = [j for j in normal if j.get("fit") not in ("good", "ok", "skip")]
 
-        if good:
+        if good_jobs:
             print("\n--- GOOD FIT ---")
-            for job in good:
+            for job in good_jobs:
                 print_job(job)
 
-        if ok:
+        if ok_jobs:
             print("\n--- OK FIT ---")
-            for job in ok:
+            for job in ok_jobs:
                 print_job(job)
 
         if unscored:

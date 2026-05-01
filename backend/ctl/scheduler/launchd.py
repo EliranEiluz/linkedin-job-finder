@@ -24,7 +24,15 @@ def _run(*argv: str, timeout: int = 8) -> tuple[int, str, str]:
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as e:
-        return 124, e.stdout or "", f"timeout after {timeout}s"
+        # TimeoutExpired.stdout is `bytes | str | None`; coerce to str to
+        # match the declared tuple type. The text=True call above means it's
+        # str when present, but the typeshed stub still allows bytes.
+        out = (
+            e.stdout
+            if isinstance(e.stdout, str)
+            else (e.stdout.decode(errors="replace") if e.stdout else "")
+        )
+        return 124, out, f"timeout after {timeout}s"
     except FileNotFoundError as e:
         return 127, "", f"command not found: {e.filename}"
 

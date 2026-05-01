@@ -54,6 +54,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
 ROOT = HERE.parent.parent  # project root (state lives here)
@@ -67,7 +68,7 @@ DEFAULTS_FILE = ROOT / "defaults.json"
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$")
 
 
-def _emit(obj: dict, code: int = 0) -> None:
+def _emit(obj: dict, code: int = 0) -> NoReturn:
     print(json.dumps(obj, indent=2, ensure_ascii=False))
     sys.exit(code)
 

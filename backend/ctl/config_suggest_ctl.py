@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 # Reuse the scraper's existing feedback-signal classifier + recency sort
 # (search.py owns the canonical definitions of "what counts as feedback").
@@ -43,17 +44,16 @@ ROOT = HERE.parent.parent  # project root (two levels up)
 sys.path.insert(0, str(HERE.parent))  # → backend/
 sys.path.insert(0, str(ROOT))  # → project root, so `from backend.llm` resolves
 
+# Route LLM calls through the provider abstraction so users on Gemini /
+# OpenRouter / Ollama can run the suggester without a Claude account.
+from backend.llm import complete as llm_complete  # noqa: E402  (sys.path shim above)
+from backend.llm import get_provider  # noqa: E402  (sys.path shim above)
 from backend.search import (  # noqa: E402  (sys.path shim above)
     _classify_feedback_row,
     _clean_title,
     _example_recency_key,
     _parse_claude_json,
 )
-
-# Route LLM calls through the provider abstraction so users on Gemini /
-# OpenRouter / Ollama can run the suggester without a Claude account.
-from backend.llm import complete as llm_complete  # noqa: E402  (sys.path shim above)
-from backend.llm import get_provider  # noqa: E402  (sys.path shim above)
 
 RESULTS_PATH = ROOT / "results.json"
 CONFIG_PATH = ROOT / "config.json"
@@ -76,7 +76,7 @@ COMPANY_CAP = 40
 COMMENT_CAP = 120
 
 
-def _emit(obj: dict, code: int = 0) -> None:
+def _emit(obj: dict, code: int = 0) -> NoReturn:
     print(json.dumps(obj, indent=2, ensure_ascii=False))
     sys.exit(code)
 

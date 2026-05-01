@@ -20,6 +20,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
 ROOT = HERE.parent.parent
@@ -92,7 +93,7 @@ PROVIDER_META = [
 ]
 
 
-def _emit(obj: dict, code: int = 0) -> None:
+def _emit(obj: dict, code: int = 0) -> NoReturn:
     print(json.dumps(obj, indent=2, ensure_ascii=False))
     sys.exit(code)
 
@@ -194,12 +195,13 @@ def cmd_save_credential() -> None:
     meta = next((m for m in PROVIDER_META if m["name"] == name), None)
     if meta is None:
         _emit({"ok": False, "error": f"unknown provider: {name}"}, code=1)
-    env_var = meta.get("env_var")
-    if not env_var:
+    env_var_raw = meta.get("env_var")
+    if not isinstance(env_var_raw, str) or not env_var_raw:
         _emit(
             {"ok": False, "error": f"provider '{name}' has no env_var — does not need a key"},
             code=1,
         )
+    env_var: str = env_var_raw  # narrowed above; explicit annotation aids mypy
     try:
         _atomic_write_env(env_var, key_value.strip())
     except Exception as e:

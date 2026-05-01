@@ -22,8 +22,8 @@ from pathlib import Path
 # module object with the test's `import search`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import search  # noqa: E402  (sys.path shim above)
-from search import (  # noqa: E402  (sys.path shim above)
+import search
+from search import (
     BATCH_SIZE,
     RESULTS_FILE,
     _apply_claude_scoring,
