@@ -4,7 +4,37 @@
 
 import type { LLMProviderName } from '../configTypes';
 
-export type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+// 9 steps. Step 6 (Notifications) was inserted between Intent (5) and the
+// LLM-driven Generate (was 6, now 7) so a fresh-clone user discovers the
+// email-digest option without having to hand-edit ~/.linkedin-jobs.env.
+export type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+// Shape returned by GET /api/notifications/status. NEVER includes the
+// password — only smtp_configured signals whether one is on disk.
+export interface NotificationsStatusResponse {
+  ok: boolean;
+  smtp_configured: boolean;
+  host: string;
+  port: number | null;
+  user: string;
+  email_to: string;
+  ssl: boolean;
+  env_file?: string;
+  error?: string;
+}
+
+// Shape of POST /api/notifications/save-smtp + /api/notifications/test-smtp.
+// Both share the success/error envelope — `message` only appears for
+// test-smtp success; save-smtp returns `vars_written`.
+export interface NotificationsActionResponse {
+  ok: boolean;
+  message?: string;
+  error?: string;
+  vars_written?: string[];
+  host?: string;
+  port?: number;
+  ssl?: boolean;
+}
 
 export interface GenerateResponse {
   ok: boolean;

@@ -77,7 +77,9 @@ export const Step7WhatsNext = ({
           <div className="font-semibold text-slate-800">Schedule daily auto-scrape</div>
           <p className="mt-2 text-xs text-slate-600">
             Opens Crawler Config — find the Scheduler card and click Install
-            to enable a daily run.
+            to enable a daily run. Daily scrapes write{' '}
+            <code className="rounded bg-slate-100 px-1 py-0.5">digest.html</code>{' '}
+            (and email it if you set up SMTP).
           </p>
         </button>
         <button
