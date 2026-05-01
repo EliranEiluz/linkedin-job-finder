@@ -1,10 +1,11 @@
 """Ollama provider — local model server at http://localhost:11434."""
+
 from __future__ import annotations
 
 import os
 
+from ._shared import TEST_BATCH, TEST_CV, parse_json_response
 from .base import LLMProvider
-from ._shared import parse_json_response, TEST_BATCH, TEST_CV
 
 # qwen2.5:32b strikes a fit-vs-RAM balance on a 32GB Mac (~20GB resident).
 # Override via config llm_provider.model or OLLAMA_MODEL env.
@@ -20,6 +21,7 @@ class OllamaProvider(LLMProvider):
 
     def _prompt(self, cv_text: str, batch: list[dict]) -> str:
         from backend.search import _build_batch_prompt
+
         return _build_batch_prompt(cv_text, batch)
 
     def score_batch(self, cv_text: str, batch: list[dict]) -> list | None:
@@ -32,8 +34,10 @@ class OllamaProvider(LLMProvider):
         body = {
             "model": self.model,
             "messages": [
-                {"role": "system",
-                 "content": f"You score LinkedIn jobs for fit against this CV:\n\n{cv_text}"},
+                {
+                    "role": "system",
+                    "content": f"You score LinkedIn jobs for fit against this CV:\n\n{cv_text}",
+                },
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
@@ -70,7 +74,10 @@ class OllamaProvider(LLMProvider):
             names = {(m.get("name") or "").split(":")[0] for m in tags}
             wanted = self.model.split(":")[0]
             if wanted not in names:
-                return False, f"ollama up but model '{self.model}' not pulled — `ollama pull {self.model}`"
+                return (
+                    False,
+                    f"ollama up but model '{self.model}' not pulled — `ollama pull {self.model}`",
+                )
         except Exception:
             pass
         try:
@@ -81,8 +88,14 @@ class OllamaProvider(LLMProvider):
             return True, f"ollama ok (model={self.model})"
         return False, "ollama returned no parseable result"
 
-    def complete(self, prompt: str, *, system: str | None = None,
-                 max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+    ) -> str | None:
         try:
             import requests
         except Exception:

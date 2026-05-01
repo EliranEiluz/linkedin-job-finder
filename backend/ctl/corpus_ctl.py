@@ -64,22 +64,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-# Add backend/ to sys.path so we can import sibling `search` module.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Add backend/ctl/ + backend/ to sys.path so:
+#  - `from _common import …` works in this file
+#  - the bare `search` import resolves both when this script is invoked
+#    directly (`python3 backend/ctl/corpus_ctl.py …`) AND when phase_d_test.py
+#    imports both `search` and `corpus_ctl` from the same `backend/` directory:
+#    the test patches `search.RESULTS_FILE` on the bare-name module, so we
+#    MUST also import via the bare name to share the same module object.
+_HERE = Path(__file__).resolve().parent  # backend/ctl/
+sys.path.insert(0, str(_HERE))  # → backend/ctl/  (for _common)
+sys.path.insert(0, str(_HERE.parent))  # → backend/
 
-import search  # noqa: E402 — needs the path shim above
+import search  # noqa: E402  (sys.path shim above)
+from _common import emit as _emit  # noqa: E402  (sys.path shim above)
 
 
 def _read_stdin_json() -> dict:
+    """corpus_ctl is the single ctl that tolerates non-object stdin (some
+    legacy callers send `[]` or just `{}`); coerce any non-object payload
+    to an empty dict rather than raising."""
     raw = sys.stdin.read()
     if not raw.strip():
         return {}
-    return json.loads(raw)
-
-
-def _emit(obj: dict, code: int = 0):
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-    sys.exit(code)
+    parsed = json.loads(raw)
+    return parsed if isinstance(parsed, dict) else {}
 
 
 # search.py prints status / progress to stdout (e.g. "Scoring batch 1/3...",
@@ -94,15 +102,14 @@ def _silence_stdout() -> contextlib.AbstractContextManager[object]:
 
 # ---------- delete ----------
 
+
 def cmd_delete(_args) -> None:
     try:
         body = _read_stdin_json()
     except json.JSONDecodeError as e:
         _emit({"ok": False, "error": f"invalid JSON on stdin: {e}"}, 1)
     ids = body.get("ids") if isinstance(body, dict) else None
-    if (not isinstance(ids, list)
-            or len(ids) == 0
-            or not all(isinstance(i, str) and i for i in ids)):
+    if not isinstance(ids, list) or len(ids) == 0 or not all(isinstance(i, str) and i for i in ids):
         _emit({"ok": False, "error": "ids must be a non-empty array of strings"}, 1)
     id_set = set(ids)
 
@@ -131,12 +138,15 @@ def cmd_delete(_args) -> None:
 
     search._atomic_merge_json(search.SEEN_FILE, _mut_seen)
 
-    _emit({
-        "ok": True,
-        "deleted": deleted["n"],
-        "missing": sorted(missing),
-        "kept_in_seen": len(id_set),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "deleted": deleted["n"],
+            "missing": sorted(missing),
+            "kept_in_seen": len(id_set),
+        },
+        0,
+    )
 
 
 # ---------- rate ----------
@@ -174,10 +184,7 @@ def cmd_rate(_args) -> None:
             comment_value = None
         elif isinstance(comment_in, str):
             stripped = comment_in.strip()
-            if stripped == "":
-                comment_value = None
-            else:
-                comment_value = stripped[:_COMMENT_MAX_CHARS]
+            comment_value = None if stripped == "" else stripped[:_COMMENT_MAX_CHARS]
         else:
             _emit({"ok": False, "error": "comment must be string or null"}, 1)
 
@@ -208,11 +215,16 @@ def cmd_rate(_args) -> None:
 
     if not found["hit"]:
         _emit({"ok": False, "error": f"job id {job_id!r} not found in corpus"}, 1)
-    _emit({
-        "ok": True, "id": job_id, "rating": rating,
-        "comment": comment_value if update_comment else None,
-        "rated_at": rated_at,
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "id": job_id,
+            "rating": rating,
+            "comment": comment_value if update_comment else None,
+            "rated_at": rated_at,
+        },
+        0,
+    )
 
 
 # ---------- app-status ----------
@@ -257,13 +269,13 @@ def cmd_app_status(_args) -> None:
     if not isinstance(job_id, str) or not job_id:
         _emit({"ok": False, "error": "id must be a non-empty string"}, 1)
     if not isinstance(status, str) or status not in _APP_STATUS_SET:
-        _emit({
-            "ok": False,
-            "error": (
-                "status must be one of: "
-                + ", ".join(APP_STATUS_VALUES)
-            ),
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": ("status must be one of: " + ", ".join(APP_STATUS_VALUES)),
+            },
+            1,
+        )
 
     update_note = note_in is not _UNSET
     note_value: str | None = None
@@ -324,14 +336,17 @@ def cmd_app_status(_args) -> None:
     if not found["hit"]:
         _emit({"ok": False, "error": f"job id {job_id!r} not found in corpus"}, 1)
 
-    _emit({
-        "ok": True,
-        "id": job_id,
-        "status": status,
-        "app_status_at": now_iso,
-        "history_len": final_history_len["n"],
-        "app_notes": final_notes["v"],
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "id": job_id,
+            "status": status,
+            "app_status_at": now_iso,
+            "history_len": final_history_len["n"],
+            "app_notes": final_notes["v"],
+        },
+        0,
+    )
 
 
 # ---------- applied-import (one-shot localStorage migration) ----------
@@ -357,19 +372,25 @@ def cmd_applied_import(_args) -> None:
     if not all(isinstance(i, str) and i for i in ids):
         _emit({"ok": False, "error": "applied_ids entries must be non-empty strings"}, 1)
     if len(ids) > _APPLIED_IMPORT_MAX:
-        _emit({
-            "ok": False,
-            "error": f"applied_ids exceeds max of {_APPLIED_IMPORT_MAX}",
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"applied_ids exceeds max of {_APPLIED_IMPORT_MAX}",
+            },
+            1,
+        )
 
     # Empty array is a valid no-op — early-return without touching the file.
     if not ids:
-        _emit({
-            "ok": True,
-            "imported": 0,
-            "skipped_already_set": 0,
-            "skipped_not_in_corpus": 0,
-        }, 0)
+        _emit(
+            {
+                "ok": True,
+                "imported": 0,
+                "skipped_already_set": 0,
+                "skipped_not_in_corpus": 0,
+            },
+            0,
+        )
 
     id_set = set(ids)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -382,7 +403,7 @@ def cmd_applied_import(_args) -> None:
             if not isinstance(j, dict):
                 continue
             jid = j.get("id")
-            if jid not in id_set:
+            if not isinstance(jid, str) or jid not in id_set:
                 continue
             seen_ids.add(jid)
 
@@ -404,12 +425,15 @@ def cmd_applied_import(_args) -> None:
 
     search._atomic_merge_json(search.RESULTS_FILE, _mut)
 
-    _emit({
-        "ok": True,
-        "imported": counts["imported"],
-        "skipped_already_set": counts["skipped_already_set"],
-        "skipped_not_in_corpus": len(id_set - seen_ids),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "imported": counts["imported"],
+            "skipped_already_set": counts["skipped_already_set"],
+            "skipped_not_in_corpus": len(id_set - seen_ids),
+        },
+        0,
+    )
 
 
 # ---------- add-manual (single-URL ingest through process_one_job) ----------
@@ -450,7 +474,8 @@ def extract_job_id(s: str) -> str | None:
         return None
     # ?currentJobId=... wins (search-results pane).
     qs = parse_qs(u.query or "")
-    cur = (qs.get("currentJobId") or [None])[0]
+    cur_list = qs.get("currentJobId") or [""]
+    cur = cur_list[0]
     if cur and cur.isdigit() and 8 <= len(cur) <= 12:
         return cur
     # /jobs/view/<slug>-<id>/ or /jobs/view/<id>/
@@ -490,17 +515,23 @@ def cmd_add_manual(_args) -> None:
     if not raw.strip():
         _emit({"ok": False, "error": "url_or_id must not be empty"}, 1)
     if len(raw) > _URL_OR_ID_MAX_CHARS:
-        _emit({
-            "ok": False,
-            "error": f"url_or_id exceeds max of {_URL_OR_ID_MAX_CHARS} chars",
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"url_or_id exceeds max of {_URL_OR_ID_MAX_CHARS} chars",
+            },
+            1,
+        )
 
     job_id = extract_job_id(raw)
     if not job_id:
-        _emit({
-            "ok": False,
-            "error": "could not extract job ID from input",
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": "could not extract job ID from input",
+            },
+            1,
+        )
 
     # Dedupe against the on-disk corpus first — short-circuits before we
     # spend a network round-trip + Claude call on a job we already have.
@@ -511,11 +542,14 @@ def cmd_add_manual(_args) -> None:
 
     for row in existing:
         if isinstance(row, dict) and row.get("id") == job_id:
-            _emit({
-                "ok": False,
-                "error": "already in corpus",
-                "existing_id": job_id,
-            }, 1)
+            _emit(
+                {
+                    "ok": False,
+                    "error": "already in corpus",
+                    "existing_id": job_id,
+                },
+                1,
+            )
 
     # Build the stub. Title/company/location are filled in by the guest
     # detail endpoint when fetch_description_guest hits LinkedIn — see
@@ -552,6 +586,7 @@ def cmd_add_manual(_args) -> None:
         HTML. Quietly leaves fields blank if LinkedIn changes the markup."""
         try:
             from bs4 import BeautifulSoup  # local import: same as search.py
+
             soup = BeautifulSoup(html, "html.parser")
             if not stub["title"]:
                 t_el = (
@@ -560,9 +595,7 @@ def cmd_add_manual(_args) -> None:
                     or soup.select_one("h1")
                 )
                 if t_el:
-                    stub["title"] = search._clean_title(
-                        t_el.get_text(strip=True) or ""
-                    )
+                    stub["title"] = search._clean_title(t_el.get_text(strip=True) or "")
             if not stub["company"]:
                 c_el = (
                     soup.select_one("a.topcard__org-name-link")
@@ -574,9 +607,7 @@ def cmd_add_manual(_args) -> None:
             if not stub["location"]:
                 l_el = soup.select_one(".topcard__flavor--bullet")
                 if l_el:
-                    stub["location"] = (
-                        l_el.get_text(strip=True) or ""
-                    ).strip()
+                    stub["location"] = (l_el.get_text(strip=True) or "").strip()
         except Exception:
             pass
 
@@ -600,6 +631,7 @@ def cmd_add_manual(_args) -> None:
         _populate_stub_metadata(html)
         try:
             from bs4 import BeautifulSoup
+
             soup = BeautifulSoup(html, "html.parser")
             desc_el = (
                 soup.select_one(".description__text")
@@ -609,7 +641,8 @@ def cmd_add_manual(_args) -> None:
             )
             text = (
                 search._strip_html(desc_el.decode_contents())
-                if desc_el else search._strip_html(html)
+                if desc_el
+                else search._strip_html(html)
             )
         except Exception:
             text = search._strip_html(html)
@@ -628,6 +661,8 @@ def cmd_add_manual(_args) -> None:
         # the row is still persisted with whatever scoring fell out (regex /
         # title-filter / null) — never lost. See
         # backend/search.py:process_one_job docstring.
+        result: dict | None = None
+        err_text: str | None = None
         try:
             result = search.process_one_job(
                 stub,
@@ -637,29 +672,30 @@ def cmd_add_manual(_args) -> None:
                 already_scored=False,
             )
         except Exception as e:
-            # Stash the error and exit the redirect block before _emit.
-            result = None
+            # Stash the error and exit the redirect block before _emit so
+            # the JSON envelope goes to stdout, not the silenced stream.
             err_text = f"pipeline failure: {type(e).__name__}: {e}"
-        else:
-            err_text = None
 
     if err_text is not None:
         _emit({"ok": False, "error": err_text}, 1)
     assert result is not None  # for type-checker — _emit on None path exited
 
-    _emit({
-        "ok": True,
-        "id": result.get("id"),
-        "title": result.get("title"),
-        "company": result.get("company"),
-        "location": result.get("location"),
-        "fit": result.get("fit"),
-        "score": result.get("score"),
-        "scored_by": result.get("scored_by"),
-        "fit_reasons": result.get("fit_reasons", []),
-        "source": result.get("source"),
-        "manual_added_at": result.get("manual_added_at"),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "id": result.get("id"),
+            "title": result.get("title"),
+            "company": result.get("company"),
+            "location": result.get("location"),
+            "fit": result.get("fit"),
+            "score": result.get("score"),
+            "scored_by": result.get("scored_by"),
+            "fit_reasons": result.get("fit_reasons", []),
+            "source": result.get("source"),
+            "manual_added_at": result.get("manual_added_at"),
+        },
+        0,
+    )
 
 
 def cmd_push_to_end(_args) -> None:
@@ -715,11 +751,14 @@ def cmd_push_to_end(_args) -> None:
     except Exception as e:
         _emit({"ok": False, "error": f"failed to update results.json: {e}"}, 1)
 
-    _emit({
-        "ok": True,
-        "updated": updated["n"],
-        "missing": sorted(missing_seen),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "updated": updated["n"],
+            "missing": sorted(missing_seen),
+        },
+        0,
+    )
 
 
 def cmd_rescore(_args) -> None:
@@ -765,9 +804,15 @@ def cmd_rescore(_args) -> None:
             targets.append(row)
 
     if not targets:
-        _emit({
-            "ok": True, "rescored": 0, "failed": 0, "missing": missing,
-        }, 0)
+        _emit(
+            {
+                "ok": True,
+                "rescored": 0,
+                "failed": 0,
+                "missing": missing,
+            },
+            0,
+        )
 
     # search.py status prints would corrupt our JSON envelope on stdout —
     # redirect stdout to stderr for the whole pipeline body.
@@ -838,9 +883,7 @@ def cmd_rescore(_args) -> None:
         # with our own upsert mutator that swaps matching rows by id and
         # preserves order. Sibling rows (not in `targets`) pass through
         # untouched.
-        new_by_id: dict[str, dict] = {
-            str(j["id"]): j for j in targets if j.get("id") is not None
-        }
+        new_by_id: dict[str, dict] = {str(j["id"]): j for j in targets if j.get("id") is not None}
 
         def _upsert(current: object) -> list:
             existing = current if isinstance(current, list) else []
@@ -873,15 +916,18 @@ def cmd_rescore(_args) -> None:
         else:
             failed += 1
 
-    _emit({
-        "ok": True,
-        # Kept for back-compat — UI reads it for the headline number.
-        "rescored": claude_rescored,
-        "claude_rescored": claude_rescored,
-        "regex_fallback": regex_fallback,
-        "failed": failed,
-        "missing": missing,
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            # Kept for back-compat — UI reads it for the headline number.
+            "rescored": claude_rescored,
+            "claude_rescored": claude_rescored,
+            "regex_fallback": regex_fallback,
+            "failed": failed,
+            "missing": missing,
+        },
+        0,
+    )
 
 
 def main():

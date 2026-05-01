@@ -1,11 +1,13 @@
 """Shared helpers reused across provider modules."""
+
 from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 
-def parse_json_response(raw: str):
+def parse_json_response(raw: str) -> Any:
     """Extract the first balanced JSON object or array from a model reply.
     Mirrors search.py:_parse_claude_json — same logic, kept here so providers
     don't have to import the search module."""
@@ -18,6 +20,7 @@ def parse_json_response(raw: str):
     object_at = raw.find("{")
     if object_at == -1 and array_at == -1:
         return None
+    order: tuple[tuple[str, str], ...]
     if object_at == -1:
         order = (("[", "]"),)
     elif array_at == -1:
@@ -51,20 +54,22 @@ def parse_json_response(raw: str):
                 depth -= 1
                 if depth == 0:
                     try:
-                        return json.loads(raw[start:i + 1])
+                        return json.loads(raw[start : i + 1])
                     except Exception:
                         break
     return None
 
 
 # A single trivial job used by every provider's test() method.
-TEST_BATCH = [{
-    "id": "test-1",
-    "title": "Senior Software Engineer",
-    "company": "Acme",
-    "location": "Remote",
-    "priority": False,
-    "description": "Backend engineering role. Python, distributed systems.",
-}]
+TEST_BATCH = [
+    {
+        "id": "test-1",
+        "title": "Senior Software Engineer",
+        "company": "Acme",
+        "location": "Remote",
+        "priority": False,
+        "description": "Backend engineering role. Python, distributed systems.",
+    }
+]
 
 TEST_CV = "Senior software engineer with 8 years Python and distributed systems experience."

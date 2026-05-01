@@ -19,10 +19,10 @@ Commands (no stdin needed, single JSON object on stdout):
              { name, ok, value|null, fix?: "...shell command..." }, ...
            ] }
 """
+
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import subprocess
@@ -30,15 +30,15 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
-ROOT = HERE.parent.parent               # project root
+ROOT = HERE.parent.parent  # project root
+# sys.path shim so the bare `_common` import below resolves when this script
+# is invoked directly (`python3 backend/ctl/preflight_ctl.py …`).
+sys.path.insert(0, str(HERE))
+
+from _common import emit as _emit  # noqa: E402  (sys.path shim above)
 
 # Same env-file path the LLM credential save writes to.
 ENV_FILE = Path.home() / ".linkedin-jobs.env"
-
-
-def _emit(obj: dict, code: int = 0) -> None:
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-    sys.exit(code)
 
 
 def _check_python() -> dict:
@@ -62,12 +62,17 @@ def _check_node() -> dict:
         }
     try:
         proc = subprocess.run(
-            [exe, "--version"], capture_output=True, text=True, timeout=5,
+            [exe, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         ver = (proc.stdout or proc.stderr).strip()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {
-            "name": "node", "ok": False, "value": None,
+            "name": "node",
+            "ok": False,
+            "value": None,
             "fix": f"node found at {exe} but `node --version` failed: {e}",
         }
     return {"name": "node", "ok": True, "value": ver}
@@ -90,6 +95,7 @@ def _check_playwright_chromium() -> dict:
     # Verify chromium is actually installed (not just the python package).
     try:
         from playwright.sync_api import sync_playwright as _sp
+
         with _sp() as p:
             exe_path = p.chromium.executable_path
             if not exe_path or not Path(exe_path).exists():
@@ -101,7 +107,7 @@ def _check_playwright_chromium() -> dict:
                     "advisory": True,
                 }
             return {"name": "playwright_chromium", "ok": True, "value": str(exe_path)}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {
             "name": "playwright_chromium",
             "ok": False,
@@ -123,9 +129,11 @@ def _check_writable(path: Path, name: str) -> dict:
         sentinel.write_text("x")
         sentinel.unlink()
         return {"name": name, "ok": True, "value": str(target_dir)}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {
-            "name": name, "ok": False, "value": str(path),
+            "name": name,
+            "ok": False,
+            "value": str(path),
             "fix": f"chmod the parent directory to be writable by your user: {e}",
         }
 
@@ -159,5 +167,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except SystemExit:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"{type(e).__name__}: {e}"}, code=1)

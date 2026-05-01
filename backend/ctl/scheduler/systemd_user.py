@@ -8,8 +8,10 @@ because it (a) requires no root, (b) gets journald logging via
 `journalctl --user -u linkedinjobs`, (c) provides Persistent=true for
 missed-run catch-up — none of which cron offers out of the box.
 """
+
 from __future__ import annotations
 
+import contextlib
 import shlex
 import subprocess
 from pathlib import Path
@@ -26,11 +28,19 @@ ENV_FILE = Path.home() / ".linkedin-jobs.env"
 def _run(*argv: str, timeout: int = 8) -> tuple[int, str, str]:
     try:
         proc = subprocess.run(
-            list(argv), capture_output=True, text=True, timeout=timeout,
+            list(argv),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as e:
-        return 124, e.stdout or "", f"timeout after {timeout}s"
+        out = (
+            e.stdout
+            if isinstance(e.stdout, str)
+            else (e.stdout.decode(errors="replace") if e.stdout else "")
+        )
+        return 124, out, f"timeout after {timeout}s"
     except FileNotFoundError as e:
         return 127, "", f"command not found: {e.filename}"
 
@@ -68,7 +78,12 @@ WantedBy=timers.target
 class SystemdUserScheduler(Scheduler):
     LABEL = UNIT_NAME
 
-    def __init__(self, working_dir: Path, out_log: Path, err_log: Path):
+    def __init__(
+        self,
+        working_dir: Path,
+        out_log: Path,
+        err_log: Path,  # noqa: ARG002 — systemd writes unified output to out_log
+    ):
         self.working_dir = working_dir
         # systemd writes unified output via a single StandardOutput= path;
         # err_log is unused (errors append to the same file as stdout).
@@ -104,10 +119,8 @@ class SystemdUserScheduler(Scheduler):
         _run("systemctl", "--user", "disable", "--now", f"{UNIT_NAME}.timer")
         _run("systemctl", "--user", "stop", f"{UNIT_NAME}.service")
         for p in (SERVICE_PATH, TIMER_PATH):
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 p.unlink()
-            except FileNotFoundError:
-                pass
         _run("systemctl", "--user", "daemon-reload")
 
     def reload(self, interval_seconds: int, mode: str, run_command: list[str]) -> None:
@@ -122,8 +135,12 @@ class SystemdUserScheduler(Scheduler):
 
     def last_exit_status(self) -> int | None:
         rc, out, _ = _run(
-            "systemctl", "--user", "show", f"{UNIT_NAME}.service",
-            "--property=ExecMainStatus", "--value",
+            "systemctl",
+            "--user",
+            "show",
+            f"{UNIT_NAME}.service",
+            "--property=ExecMainStatus",
+            "--value",
         )
         if rc != 0:
             return None
@@ -142,10 +159,8 @@ class SystemdUserScheduler(Scheduler):
                 val = line.partition("=")[2].strip()
                 if val.endswith("s"):
                     val = val[:-1]
-                try:
+                with contextlib.suppress(ValueError):
                     interval = int(val)
-                except ValueError:
-                    pass
                 break
         mode: str | None = None
         for line in SERVICE_PATH.read_text().splitlines():

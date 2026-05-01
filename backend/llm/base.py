@@ -1,4 +1,5 @@
 """Abstract LLM provider interface for batch job scoring."""
+
 from __future__ import annotations
 
 
@@ -14,8 +15,14 @@ class LLMProvider:
         Returns (ok, human-readable message)."""
         raise NotImplementedError
 
-    def complete(self, prompt: str, *, system: str | None = None,
-                 max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+    ) -> str | None:
         """Single-shot completion. Returns the model's text output (no parsing),
         or None on failure. `json_mode=True` is a hint for providers that
         support a structured-output mode (Gemini, OpenRouter+capable models,

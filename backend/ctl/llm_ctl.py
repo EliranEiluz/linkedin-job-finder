@@ -11,20 +11,25 @@ LLM-provider CLI for the welcome wizard. Three commands:
 NEVER logs the key value (not even on error). Same stable JSON CLI style
 as preflight_ctl.py / scheduler_ctl.py.
 """
+
 from __future__ import annotations
 
 import argparse
-import json
+import contextlib
 import os
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
 ROOT = HERE.parent.parent
-sys.path.insert(0, str(HERE.parent))    # → backend/
-sys.path.insert(0, str(ROOT))           # so `from backend.llm` resolves
+sys.path.insert(0, str(HERE))  # → backend/ctl/  (for _common)
+sys.path.insert(0, str(HERE.parent))  # → backend/
+sys.path.insert(0, str(ROOT))  # so `from backend.llm` resolves
 
-from backend.llm import test_provider, PROVIDERS  # noqa: E402
+from _common import emit as _emit  # noqa: E402  (sys.path shim above)
+from _common import read_stdin_json  # noqa: E402  (sys.path shim above)
+
+from backend.llm import test_provider  # noqa: E402  (sys.path shim above)
 
 ENV_FILE = Path.home() / ".linkedin-jobs.env"
 
@@ -39,7 +44,7 @@ PROVIDER_META = [
         "env_var": None,
         "help_url": "https://docs.claude.com/claude-code",
         "blurb": "Uses the `claude` command-line tool. Best quality. Requires "
-                 "Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`).",
+        "Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`).",
     },
     {
         "name": "claude_sdk",
@@ -85,24 +90,9 @@ PROVIDER_META = [
         "env_var": None,
         "help_url": "https://ollama.com/download",
         "blurb": "Runs a local model. Free, fully offline. "
-                 "Requires `ollama serve` running with a model pulled.",
+        "Requires `ollama serve` running with a model pulled.",
     },
 ]
-
-
-def _emit(obj: dict, code: int = 0) -> None:
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-    sys.exit(code)
-
-
-def _read_stdin_json() -> dict:
-    raw = sys.stdin.read()
-    if not raw.strip():
-        raise ValueError("empty stdin")
-    obj = json.loads(raw)
-    if not isinstance(obj, dict):
-        raise ValueError("stdin must be a JSON object")
-    return obj
 
 
 def cmd_list() -> None:
@@ -111,8 +101,8 @@ def cmd_list() -> None:
 
 def cmd_test() -> None:
     try:
-        body = _read_stdin_json()
-    except Exception as e:  # noqa: BLE001
+        body = read_stdin_json()
+    except Exception as e:
         _emit({"ok": False, "error": f"bad stdin: {e}"}, code=1)
     name = body.get("name") or "auto"
     if not isinstance(name, str):
@@ -170,21 +160,18 @@ def _atomic_write_env(env_var: str, key_value: str) -> None:
     body = "\n".join(out_lines).rstrip("\n") + "\n"
     tmp = ENV_FILE.with_suffix(ENV_FILE.suffix + ".tmp")
     tmp.write_text(body)
-    try:
-        os.chmod(tmp, 0o600)
-    except Exception:
-        pass
-    os.replace(tmp, ENV_FILE)
-    try:
-        os.chmod(ENV_FILE, 0o600)
-    except Exception:
-        pass
+    # chmod is best-effort (Windows / restrictive umasks may reject 0o600).
+    with contextlib.suppress(OSError):
+        tmp.chmod(0o600)
+    tmp.replace(ENV_FILE)
+    with contextlib.suppress(OSError):
+        ENV_FILE.chmod(0o600)
 
 
 def cmd_save_credential() -> None:
     try:
-        body = _read_stdin_json()
-    except Exception as e:  # noqa: BLE001
+        body = read_stdin_json()
+    except Exception as e:
         _emit({"ok": False, "error": f"bad stdin: {e}"}, code=1)
     name = body.get("name")
     key_value = body.get("key")
@@ -195,18 +182,24 @@ def cmd_save_credential() -> None:
     meta = next((m for m in PROVIDER_META if m["name"] == name), None)
     if meta is None:
         _emit({"ok": False, "error": f"unknown provider: {name}"}, code=1)
-    env_var = meta.get("env_var")
-    if not env_var:
-        _emit({"ok": False,
-               "error": f"provider '{name}' has no env_var — does not need a key"},
-              code=1)
+    env_var_raw = meta.get("env_var")
+    if not isinstance(env_var_raw, str) or not env_var_raw:
+        _emit(
+            {"ok": False, "error": f"provider '{name}' has no env_var — does not need a key"},
+            code=1,
+        )
+    env_var: str = env_var_raw  # narrowed above; explicit annotation aids mypy
     try:
         _atomic_write_env(env_var, key_value.strip())
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         # Error message refers to the env_var name, NEVER the key value.
-        _emit({"ok": False,
-               "error": f"failed to write {ENV_FILE} ({env_var}): {type(e).__name__}: {e}"},
-              code=1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"failed to write {ENV_FILE} ({env_var}): {type(e).__name__}: {e}",
+            },
+            code=1,
+        )
     # Make the new key visible to the same-process test() that follows.
     os.environ[env_var] = key_value.strip()
     _emit({"ok": True, "env_var": env_var, "env_file": str(ENV_FILE)})
@@ -234,5 +227,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except SystemExit:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"{type(e).__name__}: {e}"}, code=1)

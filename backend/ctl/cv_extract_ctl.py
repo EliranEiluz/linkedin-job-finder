@@ -18,16 +18,18 @@ Caps:
   - 100 pages — extra pages are dropped (truncated_pages=true). 100p covers
     every plausible CV; the cap is a safety belt against pathological inputs.
 """
+
 from __future__ import annotations
 
 import json
 import sys
+from typing import NoReturn
 
 MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 MAX_PAGES = 100
 
 
-def _emit(obj: dict, code: int = 0) -> None:
+def _emit(obj: dict, code: int = 0) -> NoReturn:
     print(json.dumps(obj, ensure_ascii=False))
     sys.exit(code)
 
@@ -36,7 +38,7 @@ def main() -> int:
     # Read raw bytes (no decoding — stdin.buffer bypasses the text wrapper).
     try:
         data = sys.stdin.buffer.read(MAX_BYTES + 1)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"failed to read stdin: {e}"}, code=1)
         return 1
 
@@ -45,7 +47,7 @@ def main() -> int:
         return 1
     if len(data) > MAX_BYTES:
         _emit(
-            {"ok": False, "error": f"PDF exceeds {MAX_BYTES // (1024*1024)} MB cap"},
+            {"ok": False, "error": f"PDF exceeds {MAX_BYTES // (1024 * 1024)} MB cap"},
             code=1,
         )
         return 1
@@ -69,7 +71,7 @@ def main() -> int:
 
     try:
         reader = PdfReader(io.BytesIO(data))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit(
             {"ok": False, "error": f"not a valid PDF: {type(e).__name__}: {e}"},
             code=1,
@@ -94,7 +96,7 @@ def main() -> int:
                     code=1,
                 )
                 return 1
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             _emit(
                 {
                     "ok": False,
@@ -113,7 +115,7 @@ def main() -> int:
             break
         try:
             parts.append(page.extract_text() or "")
-        except Exception:  # noqa: BLE001
+        except Exception:
             # One bad page shouldn't kill the whole extraction. Skip it.
             parts.append("")
 
@@ -149,5 +151,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except SystemExit:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"{type(e).__name__}: {e}"}, code=1)

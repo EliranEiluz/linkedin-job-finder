@@ -14,22 +14,38 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
+
+# Add backend/ to sys.path so the bare `search` import resolves when this
+# tool is invoked directly (`python3 backend/tools/rescue_unscored.py`).
+# Bare-name import lets the test harness (phase_d_test.py) share the same
+# module object with the test's `import search`.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import search
 from search import (
-    _apply_claude_scoring, _apply_regex_fallback, _atomic_merge_json,
-    _compute_hot, _guest_session, _load_cv_text, BATCH_SIZE,
-    claude_batch_score, fetch_description_guest, RESULTS_FILE,
+    BATCH_SIZE,
+    RESULTS_FILE,
+    _apply_claude_scoring,
+    _apply_regex_fallback,
+    _atomic_merge_json,
+    _compute_hot,
+    _guest_session,
+    _load_cv_text,
+    claude_batch_score,
+    fetch_description_guest,
     is_obviously_offtopic,
 )
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=None,
-                    help="cap the number of jobs processed (default: all)")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="print counts without modifying results.json")
+    ap.add_argument(
+        "--limit", type=int, default=None, help="cap the number of jobs processed (default: all)"
+    )
+    ap.add_argument(
+        "--dry-run", action="store_true", help="print counts without modifying results.json"
+    )
     args = ap.parse_args()
 
     # Load + find unscored jobs. "Unscored" = fit is None.
@@ -72,10 +88,11 @@ def main():
     # fetches + 10s cool-down every 20. fetch_description_guest itself
     # retries 429 with Retry-After honored.
     import random as _random
+
     print(f"\nFetching descriptions for {len(unscored)} jobs…")
     for i, job in enumerate(unscored):
         short = job.get("title", "")[:55]
-        print(f"  [{i+1}/{len(unscored)}] {short} @ {job.get('company', '')[:22]}")
+        print(f"  [{i + 1}/{len(unscored)}] {short} @ {job.get('company', '')[:22]}")
         try:
             desc, diag = fetch_description_guest(session, job["id"])
         except Exception as e:
@@ -86,7 +103,7 @@ def main():
         if i < len(unscored) - 1:
             time.sleep(_random.uniform(1.5, 3.0))
             if (i + 1) % 20 == 0:
-                print(f"    … 20-fetch cool-down (10s)")
+                print("    … 20-fetch cool-down (10s)")
                 time.sleep(10.0)
 
     # Stage 3: Claude batch scoring.
@@ -94,7 +111,7 @@ def main():
     if to_score:
         print(f"\nScoring {len(to_score)} via Claude in batches of {BATCH_SIZE}…")
         for i in range(0, len(to_score), BATCH_SIZE):
-            batch = to_score[i:i + BATCH_SIZE]
+            batch = to_score[i : i + BATCH_SIZE]
             n = i // BATCH_SIZE + 1
             total = (len(to_score) + BATCH_SIZE - 1) // BATCH_SIZE
             print(f"  batch {n}/{total} ({len(batch)} jobs)…")
@@ -154,9 +171,10 @@ def main():
 
     # Summary.
     from collections import Counter
+
     c = Counter(j.get("fit") for j in unscored)
     by_src = Counter(j.get("scored_by") for j in unscored)
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print(f"Rescued {len(unscored)} jobs.")
     print(f"  fit distribution  : {dict(c)}")
     print(f"  scored_by         : {dict(by_src)}")

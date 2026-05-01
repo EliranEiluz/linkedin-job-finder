@@ -39,20 +39,24 @@ from pathlib import Path
 # (search.py owns the canonical definitions of "what counts as feedback").
 # Spec calls this out explicitly: do NOT reimplement signal classification.
 HERE = Path(__file__).resolve().parent  # backend/ctl/
-ROOT = HERE.parent.parent               # project root (two levels up)
-sys.path.insert(0, str(HERE.parent))    # → backend/
-sys.path.insert(0, str(ROOT))           # → project root, so `from backend.llm` resolves
-
-from search import (  # noqa: E402 — path juggling above
-    _classify_feedback_row,
-    _example_recency_key,
-    _parse_claude_json,
-    _clean_title,
-)
+ROOT = HERE.parent.parent  # project root (two levels up)
+sys.path.insert(0, str(HERE))  # → backend/ctl/  (for _common)
+sys.path.insert(0, str(HERE.parent))  # → backend/
+sys.path.insert(0, str(ROOT))  # → project root, so `from backend.llm` resolves
 
 # Route LLM calls through the provider abstraction so users on Gemini /
 # OpenRouter / Ollama can run the suggester without a Claude account.
-from backend.llm import complete as llm_complete, get_provider  # noqa: E402
+from _common import emit as _emit  # noqa: E402  (sys.path shim above)
+from _common import read_stdin_json  # noqa: E402  (sys.path shim above)
+
+from backend.llm import complete as llm_complete  # noqa: E402  (sys.path shim above)
+from backend.llm import get_provider  # noqa: E402  (sys.path shim above)
+from backend.search import (  # noqa: E402  (sys.path shim above)
+    _classify_feedback_row,
+    _clean_title,
+    _example_recency_key,
+    _parse_claude_json,
+)
 
 RESULTS_PATH = ROOT / "results.json"
 CONFIG_PATH = ROOT / "config.json"
@@ -75,19 +79,11 @@ COMPANY_CAP = 40
 COMMENT_CAP = 120
 
 
-def _emit(obj: dict, code: int = 0) -> None:
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-    sys.exit(code)
-
-
 def _read_stdin_json() -> dict:
-    raw = sys.stdin.read()
-    if not raw.strip():
-        return {}  # no params required; empty stdin is valid
-    obj = json.loads(raw)
-    if not isinstance(obj, dict):
-        raise ValueError("stdin must be a JSON object")
-    return obj
+    """No params required for the single command this script exposes; an
+    empty stdin is treated as `{}` rather than the usual ValueError so the
+    UI can shell out without writing anything to stdin."""
+    return read_stdin_json(allow_empty=True)
 
 
 def _truncate(s: str, n: int) -> str:
@@ -167,15 +163,14 @@ def _load_config_summary() -> dict:
         for c in cats:
             if not isinstance(c, dict):
                 continue
-            cats_out.append({
-                "id": str(c.get("id") or ""),
-                "name": str(c.get("name") or ""),
-                "type": str(c.get("type") or ""),
-                "queries": [
-                    str(q) for q in (c.get("queries") or [])
-                    if isinstance(q, str)
-                ],
-            })
+            cats_out.append(
+                {
+                    "id": str(c.get("id") or ""),
+                    "name": str(c.get("name") or ""),
+                    "type": str(c.get("type") or ""),
+                    "queries": [str(q) for q in (c.get("queries") or []) if isinstance(q, str)],
+                }
+            )
     pc = cfg.get("priority_companies") if isinstance(cfg, dict) else None
     pc_out = [str(p) for p in (pc or []) if isinstance(p, str)]
     ot = cfg.get("offtopic_title_patterns") if isinstance(cfg, dict) else None
@@ -280,21 +275,26 @@ def _build_prompt(pos: list[dict], neg: list[dict], cfg_summary: dict) -> str:
 
 # ---------- LLM invocation (via provider abstraction) --------------------
 
+
 def _call_llm(prompt: str) -> tuple[int, str, str]:
     """Route through backend.llm.complete so any configured provider works
     (claude_cli / claude_sdk / gemini / openrouter / ollama). Same (rc, out,
     err) shape callers already expect. rc=0 success, rc=1 any failure."""
     provider = get_provider()
     if provider is None:
-        return 1, "", (
-            "No LLM provider available. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, "
-            "or OPENROUTER_API_KEY (in ~/.linkedin-jobs.env), install the "
-            "`claude` CLI (npm i -g @anthropic-ai/claude-code), or run "
-            "`ollama serve` locally with a model pulled."
+        return (
+            1,
+            "",
+            (
+                "No LLM provider available. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, "
+                "or OPENROUTER_API_KEY (in ~/.linkedin-jobs.env), install the "
+                "`claude` CLI (npm i -g @anthropic-ai/claude-code), or run "
+                "`ollama serve` locally with a model pulled."
+            ),
         )
     try:
         text = llm_complete(prompt, max_tokens=LLM_MAX_TOKENS, json_mode=True)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return 1, "", f"[{provider.name}] {type(e).__name__}: {e}"
     if not text or not text.strip():
         return 1, "", f"[{provider.name}] empty response"
@@ -302,6 +302,7 @@ def _call_llm(prompt: str) -> tuple[int, str, str]:
 
 
 # ---------- shape validation ---------------------------------------------
+
 
 def _shape_suggestions(parsed: dict) -> dict:
     """Coerce Claude's output into the expected shape. Missing/garbage fields
@@ -325,12 +326,17 @@ def _shape_suggestions(parsed: dict) -> dict:
                 continue
             if not all(isinstance(item.get(k), str) and item.get(k) for k in required_keys):
                 continue
-            out.append({k: str(item.get(k) or "").strip() for k in required_keys + ("reason",)
-                        if k in required_keys or k == "reason"})
+            out.append(
+                {
+                    k: str(item.get(k) or "").strip()
+                    for k in (*required_keys, "reason")
+                    if k in required_keys or k == "reason"
+                }
+            )
         return out
 
     add_queries = []
-    for item in (parsed.get("add_queries") or []):
+    for item in parsed.get("add_queries") or []:
         if not isinstance(item, dict):
             continue
         q = (item.get("query") or "").strip()
@@ -341,7 +347,7 @@ def _shape_suggestions(parsed: dict) -> dict:
 
     add_companies = []
     seen_co: set[str] = set()
-    for item in (parsed.get("add_companies") or []):
+    for item in parsed.get("add_companies") or []:
         if not isinstance(item, dict):
             continue
         name = (item.get("name") or "").strip().lower()
@@ -351,18 +357,20 @@ def _shape_suggestions(parsed: dict) -> dict:
             add_companies.append({"name": name, "reason": reason})
 
     regex_tweaks = []
-    for item in (parsed.get("regex_tweaks") or []):
+    for item in parsed.get("regex_tweaks") or []:
         if not isinstance(item, dict):
             continue
         pat = (item.get("pattern") or "").strip()
         action = (item.get("action") or "add_to_off_topic").strip()
         reason = (item.get("reason") or "").strip()
         if pat:
-            regex_tweaks.append({
-                "pattern": pat,
-                "action": action or "add_to_off_topic",
-                "reason": reason,
-            })
+            regex_tweaks.append(
+                {
+                    "pattern": pat,
+                    "action": action or "add_to_off_topic",
+                    "reason": reason,
+                }
+            )
 
     reasoning = parsed.get("reasoning")
     if not isinstance(reasoning, str):
@@ -378,6 +386,7 @@ def _shape_suggestions(parsed: dict) -> dict:
 
 # ---------- main ---------------------------------------------------------
 
+
 def main() -> None:
     try:
         _ = _read_stdin_json()
@@ -387,14 +396,17 @@ def main() -> None:
     pos, neg = _gather_signals()
     signal_count = len(pos) + len(neg)
     if signal_count < MIN_SIGNALS_FOR_SUGGEST:
-        _emit({
-            "ok": False,
-            "error": (
-                f"need at least {MIN_SIGNALS_FOR_SUGGEST} feedback signals "
-                f"(rated/applied/manual-added jobs); have {signal_count}"
-            ),
-            "signal_count": signal_count,
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": (
+                    f"need at least {MIN_SIGNALS_FOR_SUGGEST} feedback signals "
+                    f"(rated/applied/manual-added jobs); have {signal_count}"
+                ),
+                "signal_count": signal_count,
+            },
+            1,
+        )
 
     cfg_summary = _load_config_summary()
     prompt = _build_prompt(pos, neg, cfg_summary)
@@ -403,29 +415,38 @@ def main() -> None:
     raw = (stdout or "").strip()
 
     if rc != 0:
-        _emit({
-            "ok": False,
-            "error": f"llm error: {(stderr or '').strip()[:400]}",
-            "raw": raw,
-            "signal_count": signal_count,
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"llm error: {(stderr or '').strip()[:400]}",
+                "raw": raw,
+                "signal_count": signal_count,
+            },
+            1,
+        )
 
     parsed = _parse_claude_json(raw)
     if not isinstance(parsed, dict):
-        _emit({
-            "ok": False,
-            "error": "could not parse Claude output as a JSON object",
-            "raw": raw,
-            "signal_count": signal_count,
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": "could not parse Claude output as a JSON object",
+                "raw": raw,
+                "signal_count": signal_count,
+            },
+            1,
+        )
 
     suggestions = _shape_suggestions(parsed)
-    _emit({
-        "ok": True,
-        "suggestions": suggestions,
-        "signal_count": signal_count,
-        "raw": raw,
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "suggestions": suggestions,
+            "signal_count": signal_count,
+            "raw": raw,
+        },
+        0,
+    )
 
 
 if __name__ == "__main__":
@@ -433,5 +454,5 @@ if __name__ == "__main__":
         main()
     except SystemExit:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"{type(e).__name__}: {e}"}, 1)

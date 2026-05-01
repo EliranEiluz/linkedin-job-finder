@@ -24,18 +24,23 @@ Pass --all to also show previously seen jobs.
 Pass --no-enrich to skip description fetching (faster).
 """
 
+import argparse
+import contextlib
 import json
 import os
+import random
+import re
+import shutil
 import sys
 import time
-import argparse
-import re
-import random
-import shutil
 import traceback
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote_plus
+
+from filelock import FileLock
 
 # When run as `python3 backend/search.py`, sys.path[0] is backend/ — so
 # `from backend.llm import ...` would 404. Prepend the repo root so the
@@ -49,20 +54,24 @@ if _REPO_ROOT not in sys.path:
 # `_require_playwright()` materializes the imports on demand and surfaces
 # a clean install command if it's missing.
 
-sync_playwright = None  # type: ignore[assignment]
-PlaywrightTimeout = Exception  # placeholder until we resolve the real one
+# Resolved on demand by `_require_playwright()`. Initialized to None so the
+# type-checker sees `Any | None` and the lazy-import dance below is sound.
+sync_playwright: Any = None
+PlaywrightTimeout: type[BaseException] = Exception  # placeholder until we resolve the real one
 
 
-def _require_playwright():
+def _require_playwright() -> None:
     """Import playwright on demand; cache results in module globals.
     Raises a clean-message ImportError if the package isn't available."""
     global sync_playwright, PlaywrightTimeout
     if sync_playwright is not None and PlaywrightTimeout is not Exception:
         return
     try:
+        from playwright.sync_api import (  # noqa: N814 — alias the SDK's CamelCase
+            TimeoutError as _PT,
+        )
         from playwright.sync_api import (
             sync_playwright as _sp,
-            TimeoutError as _PT,
         )
     except ImportError as e:
         raise ImportError(
@@ -75,11 +84,11 @@ def _require_playwright():
     sync_playwright = _sp
     PlaywrightTimeout = _PT
 
-# Line-buffered stdout so long runs stream progress.
-try:
-    sys.stdout.reconfigure(line_buffering=True)
-except Exception:
-    pass
+
+# Line-buffered stdout so long runs stream progress. `reconfigure` is only
+# present on the real TextIO wrapper (not StringIO/BytesIO), so guard it.
+with contextlib.suppress(Exception):
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
 # ---------- CONFIG ----------
 
@@ -122,9 +131,9 @@ GEO_ID = ""
 #   f_WT : workplace (1=on-site, 2=remote, 3=hybrid); combine e.g. "2,3".
 # We leave these off by default so we don't narrow the funnel prematurely —
 # Claude's fit-scoring filters seniority/contract type from the description.
-EXPERIENCE_FILTER = ""   # e.g. "3,4"
-JOB_TYPE_FILTER = ""     # e.g. "F"
-WORKPLACE_FILTER = ""    # e.g. "2,3"
+EXPERIENCE_FILTER = ""  # e.g. "3,4"
+JOB_TYPE_FILTER = ""  # e.g. "F"
+WORKPLACE_FILTER = ""  # e.g. "2,3"
 
 # Jobs at companies in this set get a `priority` flag bumping them up one
 # fit notch in the scoring prompt. Empty by default — populated per-user by
@@ -133,8 +142,12 @@ PRIORITY_COMPANIES: set[str] = set()
 
 # MSc requirement signals in job descriptions
 MSC_PATTERNS = [
-    r"\bm\.?sc\b", r"\bmaster[\'']?s?\b", r"\bmaster of science\b",
-    r"\bgraduate degree\b", r"\bpostgraduate\b", r"\bm\.?s\. in\b",
+    r"\bm\.?sc\b",
+    r"\bmaster[\'']?s?\b",
+    r"\bmaster of science\b",
+    r"\bgraduate degree\b",
+    r"\bpostgraduate\b",
+    r"\bm\.?s\. in\b",
 ]
 
 # Regex-fallback fit signal lists. Empty by default — the wizard fills them
@@ -154,16 +167,16 @@ FIT_NEGATIVE: list[str] = []
 #   3. Regex fallback (check_fit/check_msc below).
 
 CV_FILE = Path(__file__).parent.parent / "cv.txt"  # at project root
-BATCH_SIZE = 8                # jobs per Claude call — big enough to rank, small enough to fit
-DESC_CHAR_LIMIT = 3500        # per-job description truncation inside a batch
+BATCH_SIZE = 8  # jobs per Claude call — big enough to rank, small enough to fit
+DESC_CHAR_LIMIT = 3500  # per-job description truncation inside a batch
 
 # Default cap on user-feedback few-shot examples injected into the scoring
 # prompt. Overridable via config.json["feedback_examples_max"]. See
 # DESIGN_FEW_SHOT.md §2 for the rationale (Anthropic recommends 3-5,
 # over-prompting research caps at ~6, leaves room for stratified pos/neg).
 FEEDBACK_EXAMPLES_MAX_DEFAULT = 6
-FEEDBACK_EXAMPLE_CHAR_CAP = 700            # per-example line max length
-FEEDBACK_COMMENT_CHAR_CAP = 500            # truncate user comments to this
+FEEDBACK_EXAMPLE_CHAR_CAP = 700  # per-example line max length
+FEEDBACK_COMMENT_CHAR_CAP = 500  # truncate user comments to this
 # app_status values that count as STRONG positive signal — the user moved a
 # card past one-click apply, real human-human exchange.
 FEEDBACK_POSITIVE_STATUSES = {"interview", "take-home", "screening", "offer"}
@@ -280,9 +293,7 @@ def _classify_feedback_row(row: dict) -> tuple[str | None, str]:
             # didn't dismiss it). Comment, when present, is the most
             # information-dense signal — surface it.
             if comment:
-                summary = (
-                    f"rated {r}/5 — \"{_truncate(comment, FEEDBACK_COMMENT_CHAR_CAP)}\""
-                )
+                summary = f'rated {r}/5 — "{_truncate(comment, FEEDBACK_COMMENT_CHAR_CAP)}"'
             else:
                 summary = f"rated {r}/5"
             return sentiment, summary
@@ -309,7 +320,7 @@ def _format_feedback_example(row: dict, summary: str) -> str:
     category = _truncate((row.get("category") or "").strip(), 30)
     fit = (row.get("fit") or "").strip()
 
-    parts = [f"- \"{title}\" @ {company}"]
+    parts = [f'- "{title}" @ {company}']
     if category:
         parts.append(f"[{category}]")
     if fit:
@@ -344,9 +355,9 @@ def _build_user_feedback_examples(
     # Resolve cap. Prefer caller's value; else look at the active config;
     # else fall back to the module-level default. Clamp to [0, 20].
     if cap is None:
-        cfg_cap = None
+        cfg_cap: Any = None
         try:
-            cfg_cap = _ACTIVE_CONFIG.get("feedback_examples_max")  # type: ignore[name-defined]
+            cfg_cap = _ACTIVE_CONFIG.get("feedback_examples_max")
         except Exception:
             cfg_cap = None
         cap = cfg_cap if isinstance(cfg_cap, int) else FEEDBACK_EXAMPLES_MAX_DEFAULT
@@ -415,7 +426,7 @@ def _build_user_feedback_examples(
     )
 
 
-def _parse_claude_json(raw: str):
+def _parse_claude_json(raw: str) -> Any:
     """Extract the first balanced JSON object or array from Claude's reply.
     Tries the bracket type that appears FIRST in the stripped text, so an
     array-prefixed response (`[...]` — batch job scoring) and an
@@ -435,6 +446,7 @@ def _parse_claude_json(raw: str):
     object_at = raw.find("{")
     if object_at == -1 and array_at == -1:
         return None
+    order: tuple[tuple[str, str], ...]
     if object_at == -1:
         order = (("[", "]"),)
     elif array_at == -1:
@@ -469,7 +481,7 @@ def _parse_claude_json(raw: str):
                 depth -= 1
                 if depth == 0:
                     try:
-                        return json.loads(raw[start:i + 1])
+                        return json.loads(raw[start : i + 1])
                     except Exception:
                         break
         # Fall through to try the next opener.
@@ -522,6 +534,7 @@ def claude_batch_score(cv_text: str, batch: list[dict]) -> dict | None:
     if not cv_text or not batch:
         return None
     from backend.llm import score_batch as _llm_score_batch
+
     arr = _llm_score_batch(cv_text, batch)
     if not arr:
         return None
@@ -643,10 +656,12 @@ def _detect_windows_timezone() -> str | None:
     """Windows-only: read TimeZoneKeyName from the registry, map via
     _WINDOWS_TO_IANA. Returns None if not on Windows or registry path fails."""
     import sys
+
     if not sys.platform.startswith("win"):
         return None
     try:
-        import winreg  # type: ignore[import-not-found]
+        import winreg
+
         path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\TimeZoneInformation"
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
             value, _ = winreg.QueryValueEx(key, "TimeZoneKeyName")
@@ -674,13 +689,14 @@ def _detect_system_timezone() -> str:
     # 1) /etc/localtime symlink → IANA name
     try:
         from pathlib import Path
+
         link = Path("/etc/localtime")
         if link.exists():
             target = str(link.resolve())
             for marker in ("/zoneinfo/", "/zoneinfo.default/"):
                 idx = target.rfind(marker)
                 if idx >= 0:
-                    iana = target[idx + len(marker):]
+                    iana = target[idx + len(marker) :]
                     if "/" in iana:
                         return iana
     except Exception:
@@ -688,6 +704,7 @@ def _detect_system_timezone() -> str:
     # 2) TZ env var (containers / explicit override)
     try:
         from os import environ
+
         tz_env = (environ.get("TZ") or "").strip()
         if tz_env and "/" in tz_env:
             return tz_env
@@ -700,6 +717,7 @@ def _detect_system_timezone() -> str:
     # 4) Python's local-zone object (rarely IANA, but try anyway)
     try:
         from datetime import datetime
+
         tz = datetime.now().astimezone().tzinfo
         name = getattr(tz, "key", None) or (str(tz) if tz else None)
         if name and "/" in name:
@@ -746,6 +764,7 @@ def _build_stealth_js(locale: str) -> str:
     if "en" not in langs:
         langs.append("en")
     return STEALTH_JS_TEMPLATE.format(languages_json=json.dumps(langs))
+
 
 # ---------- END CONFIG ----------
 
@@ -830,16 +849,20 @@ def _migrate_legacy_config(user_cfg: dict) -> dict:
     for key, cid, cname, ctype in legacy_map:
         v = user_cfg.get(key)
         if isinstance(v, list) and all(isinstance(s, str) for s in v):
-            rebuilt.append({
-                "id": cid, "name": cname, "type": ctype,
-                "queries": [s.strip() for s in v if s.strip()],
-            })
+            rebuilt.append(
+                {
+                    "id": cid,
+                    "name": cname,
+                    "type": ctype,
+                    "queries": [s.strip() for s in v if s.strip()],
+                }
+            )
     if rebuilt:
         user_cfg["categories"] = rebuilt
     return user_cfg
 
 
-def _normalize_categories(raw, fallback: list[dict]) -> list[dict]:
+def _normalize_categories(raw: Any, fallback: list[dict]) -> list[dict]:
     """Validate + clean a categories[] payload. Drops malformed entries.
     Falls back wholesale to `fallback` if nothing valid remains."""
     if not isinstance(raw, list):
@@ -865,11 +888,16 @@ def _normalize_categories(raw, fallback: list[dict]) -> list[dict]:
 
 
 _VALID_LLM_PROVIDER_NAMES = {
-    "auto", "claude_cli", "claude_sdk", "gemini", "openrouter", "ollama",
+    "auto",
+    "claude_cli",
+    "claude_sdk",
+    "gemini",
+    "openrouter",
+    "ollama",
 }
 
 
-def _normalize_llm_provider(raw, fallback: dict) -> dict:
+def _normalize_llm_provider(raw: Any, fallback: dict) -> dict:
     """Validate the llm_provider config block. Drops malformed payloads back
     to the fallback (defaults to {'name': 'auto'}). Optional `model` is kept
     only if it's a non-empty string."""
@@ -909,7 +937,7 @@ def load_config() -> dict:
     try:
         user_cfg = json.loads(CONFIG_FILE.read_text())
         if not isinstance(user_cfg, dict):
-            print(f"⚠ config.json must be a JSON object — using hardcoded defaults")
+            print("⚠ config.json must be a JSON object — using hardcoded defaults")
             return defaults
     except Exception as e:
         print(f"⚠ config.json invalid ({e}) — using hardcoded defaults")
@@ -931,24 +959,17 @@ def load_config() -> dict:
         return v if isinstance(v, str) else fallback
 
     merged = {
-        "categories": _normalize_categories(
-            user_cfg.get("categories"), defaults["categories"]
-        ),
+        "categories": _normalize_categories(user_cfg.get("categories"), defaults["categories"]),
         "location": _str("location", defaults["location"]),
         "date_filter": _str("date_filter", defaults["date_filter"]),
         "geo_id": _str("geo_id", defaults["geo_id"]),
         "max_pages": (
             int(user_cfg["max_pages"])
-            if isinstance(user_cfg.get("max_pages"), int)
-            and 1 <= user_cfg["max_pages"] <= 20
+            if isinstance(user_cfg.get("max_pages"), int) and 1 <= user_cfg["max_pages"] <= 20
             else defaults["max_pages"]
         ),
-        "priority_companies": _str_list(
-            "priority_companies", defaults["priority_companies"]
-        ),
-        "claude_scoring_prompt": _str(
-            "claude_scoring_prompt", defaults["claude_scoring_prompt"]
-        ),
+        "priority_companies": _str_list("priority_companies", defaults["priority_companies"]),
+        "claude_scoring_prompt": _str("claude_scoring_prompt", defaults["claude_scoring_prompt"]),
         "fit_positive_patterns": _str_list(
             "fit_positive_patterns", defaults["fit_positive_patterns"]
         ),
@@ -1031,17 +1052,24 @@ def _category_name_for_id(cat_id: str) -> str:
 # other's state. filelock uses fcntl on POSIX and msvcrt.locking on Windows
 # under the hood — same semantics on all three OSes, no try/except dance.
 # ---------------------------------------------------------------------------
-from filelock import FileLock
 
 
-def _atomic_merge_json(path: Path, mutator):
+# Type alias for the read-modify-write callback shape used by
+# `_atomic_merge_json`. The current value loaded from disk is whatever
+# `json.loads` returned (or None when the file doesn't exist yet); the
+# return value is what gets serialized back. Stays Any-typed because the
+# helper handles both list-of-jobs and dict-of-runs payloads.
+JsonMutator = Callable[[Any], Any]
+
+
+def _atomic_merge_json(path: Path, mutator: JsonMutator) -> None:
     """Cross-platform exclusive-locked read-modify-write. `mutator(current)`
     returns the new value to persist. `current` is None if the file doesn't
     exist yet. The temp+rename ensures the write itself is atomic even if the
     lock fails."""
     lock_path = Path(str(path) + ".lock")
     with FileLock(str(lock_path)):
-        current = None
+        current: Any = None
         if path.exists():
             try:
                 current = json.loads(path.read_text())
@@ -1053,32 +1081,36 @@ def _atomic_merge_json(path: Path, mutator):
         tmp.replace(path)
 
 
-def load_seen() -> set:
+def load_seen() -> set[str]:
     if SEEN_FILE.exists():
         return set(json.loads(SEEN_FILE.read_text()))
     return set()
 
 
-def save_seen(seen: set):
+def save_seen(seen: set[str]) -> None:
     """Merge `seen` into the on-disk set under fcntl lock."""
-    def _mut(current):
+
+    def _mut(current: Any) -> list[str]:
         existing = set(current or [])
         existing |= seen
         return sorted(existing)
+
     _atomic_merge_json(SEEN_FILE, _mut)
 
 
 def load_results() -> list:
     if RESULTS_FILE.exists():
-        return json.loads(RESULTS_FILE.read_text())
+        loaded: Any = json.loads(RESULTS_FILE.read_text())
+        return loaded if isinstance(loaded, list) else []
     return []
 
 
-def save_results_merge(new_jobs: list):
+def save_results_merge(new_jobs: list) -> None:
     """Merge `new_jobs` into results.json under fcntl lock. Dedup by id —
     if a job_id already exists, the existing record wins (we don't re-score
     a job just because the other mode also found it)."""
-    def _mut(current):
+
+    def _mut(current: Any) -> list:
         existing = current if isinstance(current, list) else []
         seen_ids = {j.get("id") for j in existing if isinstance(j, dict)}
         for j in new_jobs:
@@ -1086,12 +1118,13 @@ def save_results_merge(new_jobs: list):
                 existing.append(j)
                 seen_ids.add(j["id"])
         return existing
+
     _atomic_merge_json(RESULTS_FILE, _mut)
 
 
 # Backward-compat alias — older code paths may still call save_results(list)
 # expecting a wholesale overwrite. Route them through the safe merge instead.
-def save_results(results: list):
+def save_results(results: list) -> None:
     save_results_merge(results)
 
 
@@ -1099,14 +1132,18 @@ def _append_run_history(entry: dict, cap: int = 100) -> None:
     """Append a run record to run_history.json (capped at the last `cap`).
     File format: {"runs": [...]} with newest entries at the END so chronological
     order matches typical log appending. The UI sorts client-side."""
-    def _mut(current):
+
+    def _mut(current: Any) -> dict[str, Any]:
         if not isinstance(current, dict) or not isinstance(current.get("runs"), list):
             current = {"runs": []}
         runs = current["runs"]
         runs.append(entry)
         if len(runs) > cap:
             current["runs"] = runs[-cap:]
-        return current
+        # `current` is typed Any but the isinstance branch above proves it's
+        # a dict[str, Any]; cast for the return type.
+        return dict(current)
+
     try:
         _atomic_merge_json(RUN_HISTORY_FILE, _mut)
     except Exception as e:
@@ -1122,12 +1159,8 @@ def _append_run_history(entry: dict, cap: int = 100) -> None:
 # search hides).
 # ---------------------------------------------------------------------------
 
-GUEST_SEARCH_URL = (
-    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-)
-GUEST_DETAIL_URL = (
-    "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
-)
+GUEST_SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+GUEST_DETAIL_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
 # Empty = no &geoId= param sent → LinkedIn returns its worldwide default.
 # Strongly recommended to set an explicit geo_id in config (Israel=101620260,
 # US=103644278, Worldwide=92000000, etc) — the worldwide feed is noisier and
@@ -1147,11 +1180,13 @@ GUEST_HEADERS = {
 }
 
 
-def _guest_session():
+def _guest_session() -> Any:
     """Build a single requests.Session for the whole run (connection reuse +
     consistent headers). Imports are local so logged-in mode doesn't pay
-    the startup cost of pulling in requests/bs4 if guest mode isn't used."""
-    import requests  # noqa: F401  (kept here to defer import)
+    the startup cost of pulling in requests/bs4 if guest mode isn't used.
+    Returns Any because `requests` is only imported here on first guest call."""
+    import requests
+
     s = requests.Session()
     s.headers.update(GUEST_HEADERS)
     return s
@@ -1159,22 +1194,23 @@ def _guest_session():
 
 def _strip_html(s: str) -> str:
     s = re.sub(r"<[^>]+>", " ", s or "")
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _parse_guest_cards(html: str, query: str, category: str) -> list[dict]:
     """Parse the guest search HTML response into job dicts compatible with
     the rest of the pipeline (same shape as _extract_jobs_from_cards)."""
     from bs4 import BeautifulSoup
+
     soup = BeautifulSoup(html, "html.parser")
-    out = []
-    seen_local = set()
+    out: list[dict] = []
+    seen_local: set[str] = set()
     for li in soup.select("li"):
         link = li.select_one("a[href*='/jobs/view/']")
         if not link:
             continue
-        href = (link.get("href") or "")
+        href_raw = link.get("href") or ""
+        href = href_raw if isinstance(href_raw, str) else ""
         if "/jobs/view/" not in href:
             continue
         # The guest URL embeds a slug + numeric ID like "/jobs/view/foo-bar-1234567890".
@@ -1184,13 +1220,9 @@ def _parse_guest_cards(html: str, query: str, category: str) -> list[dict]:
             continue
         seen_local.add(job_id)
 
-        title_el = li.select_one(
-            ".base-search-card__title, h3, .full-link, .sr-only"
-        )
+        title_el = li.select_one(".base-search-card__title, h3, .full-link, .sr-only")
         title = _clean_title(title_el.get_text(strip=True) if title_el else "")
-        co_el = li.select_one(
-            ".base-search-card__subtitle a, .base-search-card__subtitle, h4"
-        )
+        co_el = li.select_one(".base-search-card__subtitle a, .base-search-card__subtitle, h4")
         company = (co_el.get_text(strip=True) if co_el else "").strip()
         loc_el = li.select_one(".job-search-card__location")
         location = (loc_el.get_text(strip=True) if loc_el else "").strip()
@@ -1198,35 +1230,42 @@ def _parse_guest_cards(html: str, query: str, category: str) -> list[dict]:
         # date_posted comes from the public listing — preserve as a hint
         date_posted = (date_el.get("datetime") if date_el else "") or ""
 
-        out.append({
-            "id": job_id,
-            "title": title,
-            "company": company,
-            "location": location,
-            "url": f"https://www.linkedin.com/jobs/view/{job_id}/",
-            "query": query,
-            "category": category,
-            # Human-readable category name resolved at scrape time. Survives
-            # config rewrites (wizard overwrite / AI-generated config / profile
-            # switch) so old rows always display correctly even when their
-            # `category` id is no longer in the active config. Source of truth
-            # for the badge label; the id is retained for back-compat.
-            "category_name": _category_name_for_id(category),
-            "found_at": datetime.now().isoformat(),
-            "date_posted": date_posted,  # extra field; UI ignores if absent
-            "priority": any(p in company.lower() for p in PRIORITY_COMPANIES),
-            "msc_required": None,
-            "fit": None,
-            "fit_reasons": [],
-            "source": "guest",  # tag origin so downstream / UI can distinguish
-        })
+        out.append(
+            {
+                "id": job_id,
+                "title": title,
+                "company": company,
+                "location": location,
+                "url": f"https://www.linkedin.com/jobs/view/{job_id}/",
+                "query": query,
+                "category": category,
+                # Human-readable category name resolved at scrape time. Survives
+                # config rewrites (wizard overwrite / AI-generated config / profile
+                # switch) so old rows always display correctly even when their
+                # `category` id is no longer in the active config. Source of truth
+                # for the badge label; the id is retained for back-compat.
+                "category_name": _category_name_for_id(category),
+                "found_at": datetime.now().isoformat(),
+                "date_posted": date_posted,  # extra field; UI ignores if absent
+                "priority": any(p in company.lower() for p in PRIORITY_COMPANIES),
+                "msc_required": None,
+                "fit": None,
+                "fit_reasons": [],
+                "source": "guest",  # tag origin so downstream / UI can distinguish
+            }
+        )
     return out
 
 
-def scrape_query_guest(session, query: str, category: str = "crypto",
-                       max_pages: int = 3, date_filter: str | None = None,
-                       geo_id: str | None = None,
-                       category_type: str = "keyword") -> list[dict]:
+def scrape_query_guest(
+    session: Any,
+    query: str,
+    category: str = "crypto",
+    max_pages: int = 3,
+    date_filter: str | None = None,
+    geo_id: str | None = None,
+    category_type: str = "keyword",
+) -> list[dict]:
     """Guest-mode equivalent of scrape_query(). Same return contract.
 
     No JYMBII filler from this endpoint (verified 2026-04), so the only
@@ -1245,8 +1284,15 @@ def scrape_query_guest(session, query: str, category: str = "crypto",
 
     all_jobs: list[dict] = []
     seen_ids: set[str] = set()
-    stats = {"real": 0, "jymbii": 0, "unknown": 0,
-             "dropped_jymbii": [], "dropped_offtarget": []}
+    # Mixed-value dict (int counters + list droppedees). Any-typed values keep
+    # the +=/append calls type-clean without exploding into a TypedDict.
+    stats: dict[str, Any] = {
+        "real": 0,
+        "jymbii": 0,
+        "unknown": 0,
+        "dropped_jymbii": [],
+        "dropped_offtarget": [],
+    }
 
     for page_idx in range(max_pages):
         start = page_idx * 25
@@ -1262,15 +1308,15 @@ def scrape_query_guest(session, query: str, category: str = "crypto",
         try:
             r = session.get(GUEST_SEARCH_URL, params=params, timeout=20)
         except Exception as e:
-            print(f"  GET error on page {page_idx+1}: {str(e)[:120]}")
+            print(f"  GET error on page {page_idx + 1}: {str(e)[:120]}")
             break
 
         if r.status_code == 429:
-            print(f"  rate-limited (429) on page {page_idx+1}, cooling 30s...")
+            print(f"  rate-limited (429) on page {page_idx + 1}, cooling 30s...")
             time.sleep(30)
             continue
         if r.status_code != 200:
-            print(f"  HTTP {r.status_code} on page {page_idx+1}, stopping.")
+            print(f"  HTTP {r.status_code} on page {page_idx + 1}, stopping.")
             break
 
         cards = _parse_guest_cards(r.text, query, category)
@@ -1283,18 +1329,15 @@ def scrape_query_guest(session, query: str, category: str = "crypto",
             # Stage A: company-mode relevance.
             if is_company_query and q_lower and q_lower not in job["company"].lower():
                 stats["jymbii"] += 1
-                stats["dropped_offtarget"].append(
-                    f'{job["title"][:40]} @ {job["company"][:24]}'
-                )
+                stats["dropped_offtarget"].append(f"{job['title'][:40]} @ {job['company'][:24]}")
                 continue
 
             # Stage B: keyword-mode token relevance.
             if query_tokens and not _card_matches_tokens(
-                    job["title"], job["company"], query_tokens):
+                job["title"], job["company"], query_tokens
+            ):
                 stats["jymbii"] += 1
-                stats["dropped_offtarget"].append(
-                    f'{job["title"][:40]} @ {job["company"][:24]}'
-                )
+                stats["dropped_offtarget"].append(f"{job['title'][:40]} @ {job['company'][:24]}")
                 continue
 
             stats["real"] += 1
@@ -1312,8 +1355,7 @@ def scrape_query_guest(session, query: str, category: str = "crypto",
         time.sleep(random.uniform(1.0, 2.0))  # be polite
 
     if stats["jymbii"]:
-        print(f"  ↳ guest classification: real={stats['real']} "
-              f"dropped={stats['jymbii']}")
+        print(f"  ↳ guest classification: real={stats['real']} dropped={stats['jymbii']}")
     return all_jobs
 
 
@@ -1330,18 +1372,21 @@ def _parse_retry_after(header_val: str | None) -> float | None:
         pass
     # HTTP-date form — RFC 7231.
     from email.utils import parsedate_to_datetime
+
     try:
         dt = parsedate_to_datetime(header_val)
         if dt is None:
             return None
-        wait = (dt.timestamp() - time.time())
+        wait = dt.timestamp() - time.time()
         return max(0.0, wait)
     except Exception:
         return None
 
 
 def fetch_description_guest(
-    session, job_id: str, max_retries: int = 2,
+    session: Any,
+    job_id: str,
+    max_retries: int = 2,
 ) -> tuple[str, str]:
     """Guest-mode equivalent of fetch_description(). Returns (text_lower, diag).
 
@@ -1372,10 +1417,12 @@ def fetch_description_guest(
         if r.status_code == 429 and attempt < max_retries:
             wait = _parse_retry_after(r.headers.get("Retry-After"))
             if wait is None:
-                wait = 30.0 * (2 ** attempt)  # 30s, 60s
+                wait = 30.0 * (2**attempt)  # 30s, 60s
             wait = min(wait, 120.0)
-            print(f"    ⏸  429 on {job_id}, waiting {wait:.0f}s "
-                  f"(attempt {attempt+1}/{max_retries})…")
+            print(
+                f"    ⏸  429 on {job_id}, waiting {wait:.0f}s "
+                f"(attempt {attempt + 1}/{max_retries})…"
+            )
             time.sleep(wait)
             attempt += 1
             continue
@@ -1387,15 +1434,15 @@ def fetch_description_guest(
         if not r.text.strip():
             return "", "empty"
         from bs4 import BeautifulSoup
+
         soup = BeautifulSoup(r.text, "html.parser")
-        desc_el = (soup.select_one(".description__text") or
-                   soup.select_one(".show-more-less-html__markup") or
-                   soup.select_one("[class*='description__text']") or
-                   soup.select_one("[class*='show-more-less-html']"))
-        if desc_el:
-            text = _strip_html(desc_el.decode_contents())
-        else:
-            text = _strip_html(r.text)
+        desc_el = (
+            soup.select_one(".description__text")
+            or soup.select_one(".show-more-less-html__markup")
+            or soup.select_one("[class*='description__text']")
+            or soup.select_one("[class*='show-more-less-html']")
+        )
+        text = _strip_html(desc_el.decode_contents()) if desc_el else _strip_html(r.text)
         if len(text) < 80:
             return text.lower(), "empty"
         return text.lower(), "ok"
@@ -1406,7 +1453,7 @@ def fetch_description_guest(
 # ---------------------------------------------------------------------------
 
 
-def jiggle_mouse(page):
+def jiggle_mouse(page: Any) -> None:
     """Small random mouse movement to look less robotic."""
     try:
         x = random.randint(100, 1100)
@@ -1416,7 +1463,7 @@ def jiggle_mouse(page):
         pass
 
 
-def scroll_and_load(page, passes=4):
+def scroll_and_load(page: Any, passes: int = 4) -> None:
     for _ in range(passes):
         amount = random.randint(600, 1100)
         page.evaluate(f"window.scrollBy(0, {amount})")
@@ -1424,14 +1471,14 @@ def scroll_and_load(page, passes=4):
     jiggle_mouse(page)
 
 
-def safe_goto(page, url: str, retries=2):
+def safe_goto(page: Any, url: str, retries: int = 2) -> bool:
     for attempt in range(retries + 1):
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=20000)
             return True
         except PlaywrightTimeout:
             if attempt < retries:
-                print(f"  Timeout — retrying...")
+                print("  Timeout — retrying...")
                 time.sleep(random.uniform(3, 5))
                 continue
             return False
@@ -1439,10 +1486,14 @@ def safe_goto(page, url: str, retries=2):
             msg = str(e)
             if "ERR_TOO_MANY_REDIRECTS" in msg or "ERR_ABORTED" in msg:
                 if attempt < retries:
-                    print(f"  Redirect loop — cooling down 8s...")
+                    print("  Redirect loop — cooling down 8s...")
                     time.sleep(8)
                     try:
-                        page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=15000)
+                        page.goto(
+                            "https://www.linkedin.com/feed/",
+                            wait_until="domcontentloaded",
+                            timeout=15000,
+                        )
                         time.sleep(3)
                     except Exception:
                         pass
@@ -1509,7 +1560,8 @@ def _classify_card(ebp: str, banner_present: bool) -> str:
 
 def _href_params(href: str) -> tuple[str, str]:
     """Return (trk, eBP). Either may be ''."""
-    from urllib.parse import urlparse, parse_qs
+    from urllib.parse import parse_qs, urlparse
+
     try:
         q = parse_qs(urlparse(href).query)
         return (q.get("trk") or [""])[0], (q.get("eBP") or [""])[0]
@@ -1524,10 +1576,27 @@ def _href_params(href: str) -> tuple[str, str]:
 # AND-with-relevance match, then cull cards whose title+company don't
 # contain ANY distinctive token from the query.
 KEYWORD_STOPWORDS = {
-    "engineer", "engineering", "developer", "senior", "staff", "principal",
-    "lead", "manager", "director", "analyst", "architect", "specialist",
-    "expert", "professional", "role", "job", "position", "junior", "mid",
-    "level", "applied",
+    "engineer",
+    "engineering",
+    "developer",
+    "senior",
+    "staff",
+    "principal",
+    "lead",
+    "manager",
+    "director",
+    "analyst",
+    "architect",
+    "specialist",
+    "expert",
+    "professional",
+    "role",
+    "job",
+    "position",
+    "junior",
+    "mid",
+    "level",
+    "applied",
 }
 # Short acronyms worth keeping (len<4).
 KEYWORD_KEEP_SHORT = {"mpc", "zk", "fhe", "tss", "hsm", "kms", "pqc", "zkp"}
@@ -1540,10 +1609,11 @@ def _query_tokens(query: str) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
     for t in raw:
-        if t in KEYWORD_KEEP_SHORT or (len(t) >= 4 and t not in KEYWORD_STOPWORDS):
-            if t not in seen:
-                seen.add(t)
-                out.append(t)
+        if t not in seen and (
+            t in KEYWORD_KEEP_SHORT or (len(t) >= 4 and t not in KEYWORD_STOPWORDS)
+        ):
+            seen.add(t)
+            out.append(t)
     return out
 
 
@@ -1573,22 +1643,24 @@ def _card_matches_tokens(title: str, company: str, tokens: list[str]) -> bool:
     return False
 
 
-def _page_has_no_results_banner(page) -> bool:
+def _page_has_no_results_banner(page: Any) -> bool:
     """LinkedIn shows .jobs-search-no-results-banner (among a few variants) when
     a query truly has zero hits. When present, every card on screen is filler."""
     try:
-        return bool(page.evaluate(
-            """() => Boolean(
+        return bool(
+            page.evaluate(
+                """() => Boolean(
               document.querySelector('.jobs-search-no-results-banner') ||
               document.querySelector('.jobs-search-two-pane__no-results-banner') ||
               document.querySelector('[class*="no-results-banner"]')
             )"""
-        ))
+            )
+        )
     except Exception:
         return False
 
 
-def _query_cards(page):
+def _query_cards(page: Any) -> tuple[list[Any], str | None]:
     """Return the first non-empty card list across the known selector patterns."""
     for sel in CARD_SELECTORS:
         cards = page.query_selector_all(sel)
@@ -1597,25 +1669,26 @@ def _query_cards(page):
     return [], None
 
 
-def _count_populated_cards(page) -> int:
+def _count_populated_cards(page: Any) -> int:
     """Count cards that have a populated /jobs/view/ anchor — not just empty
     occludable shells. LinkedIn creates <li data-occludable-job-id> nodes in
     bulk during scroll but only hydrates the ones near the viewport. Counting
     raw shells makes `_load_all_cards` think the page is fully loaded when
     most cards are still empty placeholders."""
     try:
-        return page.evaluate(
+        result = page.evaluate(
             """() => document.querySelectorAll(
                  "li.scaffold-layout__list-item a[href*='/jobs/view/'], " +
                  "li.jobs-search-results__list-item a[href*='/jobs/view/'], " +
                  "div.job-card-container a[href*='/jobs/view/']"
                ).length"""
         )
+        return int(result) if isinstance(result, (int, float)) else 0
     except Exception:
         return 0
 
 
-def _wait_for_cards(page, timeout_ms=10000):
+def _wait_for_cards(page: Any, timeout_ms: int = 10000) -> str | None:
     """Wait until at least one job card selector matches."""
     deadline = time.time() + (timeout_ms / 1000.0)
     while time.time() < deadline:
@@ -1630,7 +1703,12 @@ def _wait_for_cards(page, timeout_ms=10000):
     return None
 
 
-def _load_all_cards(page, max_cards=25, max_scrolls=40, stable_needed=3):
+def _load_all_cards(
+    page: Any,
+    max_cards: int = 25,
+    max_scrolls: int = 40,
+    stable_needed: int = 3,
+) -> list[Any]:
     """
     Lazy-load every card on this page by scrolling the INNER results pane
     (not the window). On the logged-in LinkedIn SPA, scrolling the window
@@ -1658,7 +1736,7 @@ def _load_all_cards(page, max_cards=25, max_scrolls=40, stable_needed=3):
             stable_rounds = 0
             last_count = count
 
-        try:
+        with contextlib.suppress(Exception):
             page.evaluate(
                 f"""() => {{
                   const sels = {pane_selectors_json};
@@ -1675,8 +1753,6 @@ def _load_all_cards(page, max_cards=25, max_scrolls=40, stable_needed=3):
                   return false;
                 }}"""
             )
-        except Exception:
-            pass
         # Slightly longer sleep — content hydration takes ~400-700ms per batch.
         time.sleep(random.uniform(0.8, 1.3))
 
@@ -1685,8 +1761,13 @@ def _load_all_cards(page, max_cards=25, max_scrolls=40, stable_needed=3):
     return cards
 
 
-def _extract_jobs_from_cards(cards, query, category, banner_present=False,
-                             category_type: str = "keyword"):
+def _extract_jobs_from_cards(
+    cards: list[Any],
+    query: str,
+    category: str,
+    banner_present: bool = False,
+    category_type: str = "keyword",
+) -> tuple[list[dict], dict[str, Any]]:
     """
     Extract job dicts, dropping any card classified as JYMBII filler.
     Classification order:
@@ -1705,14 +1786,20 @@ def _extract_jobs_from_cards(cards, query, category, banner_present=False,
          without firing the banner.
     Returns (jobs, stats).
     """
-    jobs = []
-    stats = {"real": 0, "jymbii": 0, "unknown": 0,
-             "dropped_jymbii": [], "dropped_offtarget": []}
+    jobs: list[dict] = []
+    # See scrape_query_guest's `stats` block — same mixed counters/lists shape.
+    stats: dict[str, Any] = {
+        "real": 0,
+        "jymbii": 0,
+        "unknown": 0,
+        "dropped_jymbii": [],
+        "dropped_offtarget": [],
+    }
     q_lower = (query or "").lower()
     # Behavior is driven by category_type, not the literal `category` string —
     # legacy fall-through keeps "company" id working too.
     is_company_query = (category_type == "company") or (category == "company")
-    query_tokens = [] if is_company_query else _query_tokens(query)
+    query_tokens: list[str] = [] if is_company_query else _query_tokens(query)
 
     for card in cards:
         try:
@@ -1725,7 +1812,7 @@ def _extract_jobs_from_cards(cards, query, category, banner_present=False,
             job_id = href.split("/jobs/view/")[1].split("/")[0].split("?")[0]
 
             # Stage 1: eBP / banner classification.
-            trk, ebp = _href_params(href)
+            _trk, ebp = _href_params(href)
             klass = _classify_card(ebp, banner_present)
             if klass == "jymbii":
                 aria = (link_el.get_attribute("aria-label") or "").strip()
@@ -1764,9 +1851,7 @@ def _extract_jobs_from_cards(cards, query, category, banner_present=False,
             # when a company-name keyword has 0 matches.
             if is_company_query and q_lower and q_lower not in company.lower():
                 stats["jymbii"] += 1
-                stats["dropped_offtarget"].append(
-                    f"{title[:40]} @ {company[:24]}"
-                )
+                stats["dropped_offtarget"].append(f"{title[:40]} @ {company[:24]}")
                 continue
 
             # Stage 3b: keyword-mode token relevance. With phrase-quoting
@@ -1775,31 +1860,31 @@ def _extract_jobs_from_cards(cards, query, category, banner_present=False,
             # distinctive query token to appear in title+company.
             if query_tokens and not _card_matches_tokens(title, company, query_tokens):
                 stats["jymbii"] += 1
-                stats["dropped_offtarget"].append(
-                    f"{title[:40]} @ {company[:24]}"
-                )
+                stats["dropped_offtarget"].append(f"{title[:40]} @ {company[:24]}")
                 continue
 
             stats[klass] += 1
-            jobs.append({
-                "id": job_id,
-                "title": title,
-                "company": company,
-                "location": location,
-                "url": f"https://www.linkedin.com/jobs/view/{job_id}/",
-                "query": query,
-                "category": category,
-                # See note in scrape_query_guest's job dict — category_name
-                # is the stable human label, written at scrape time so it
-                # survives any later config rewrites.
-                "category_name": _category_name_for_id(category),
-                "found_at": datetime.now().isoformat(),
-                "priority": any(p in company.lower() for p in PRIORITY_COMPANIES),
-                "msc_required": None,
-                "fit": None,
-                "fit_reasons": [],
-                "source": "loggedin",
-            })
+            jobs.append(
+                {
+                    "id": job_id,
+                    "title": title,
+                    "company": company,
+                    "location": location,
+                    "url": f"https://www.linkedin.com/jobs/view/{job_id}/",
+                    "query": query,
+                    "category": category,
+                    # See note in scrape_query_guest's job dict — category_name
+                    # is the stable human label, written at scrape time so it
+                    # survives any later config rewrites.
+                    "category_name": _category_name_for_id(category),
+                    "found_at": datetime.now().isoformat(),
+                    "priority": any(p in company.lower() for p in PRIORITY_COMPANIES),
+                    "msc_required": None,
+                    "fit": None,
+                    "fit_reasons": [],
+                    "source": "loggedin",
+                }
+            )
         except Exception:
             continue
     return jobs, stats
@@ -1841,10 +1926,15 @@ def _build_search_url(query: str, start: int = 0, date_filter: str | None = None
     return "".join(parts)
 
 
-def scrape_query(page, query: str, category: str = "crypto",
-                 max_pages: int = 3, date_filter: str | None = None,
-                 stats_out: dict | None = None,
-                 category_type: str = "keyword") -> list[dict]:
+def scrape_query(
+    page: Any,
+    query: str,
+    category: str = "crypto",
+    max_pages: int = 3,
+    date_filter: str | None = None,
+    stats_out: dict | None = None,
+    category_type: str = "keyword",
+) -> list[dict]:
     """
     Fetch up to `max_pages` pages (25 jobs each) for a query, paginating via
     &start=. For each page: wait for cards to appear, scroll the INNER
@@ -1882,7 +1972,11 @@ def scrape_query(page, query: str, category: str = "crypto",
 
         cards = _load_all_cards(page, max_cards=25)
         page_jobs, stats = _extract_jobs_from_cards(
-            cards, query, category, banner, category_type=category_type,
+            cards,
+            query,
+            category,
+            banner,
+            category_type=category_type,
         )
         for k in ("real", "jymbii", "unknown"):
             total_stats[k] += stats[k]
@@ -1903,8 +1997,9 @@ def scrape_query(page, query: str, category: str = "crypto",
         # If we're only seeing JYMBII cards on page 1, the keyword has no real
         # hits — LinkedIn is just paging the recommendation carousel. Stop.
         if page_idx == 0 and stats["real"] == 0 and stats["jymbii"] > 0:
-            print(f"  ↳ page 1 is all JYMBII ({stats['jymbii']} filler cards) — "
-                  f"skipping pagination.")
+            print(
+                f"  ↳ page 1 is all JYMBII ({stats['jymbii']} filler cards) — skipping pagination."
+            )
             break
 
         jiggle_mouse(page)
@@ -1912,21 +2007,30 @@ def scrape_query(page, query: str, category: str = "crypto",
 
     if banner_hit:
         if stats_out is not None:
-            stats_out.update({
-                "real": 0, "jymbii": 0, "unknown": 0, "banner": True,
-            })
+            stats_out.update(
+                {
+                    "real": 0,
+                    "jymbii": 0,
+                    "unknown": 0,
+                    "banner": True,
+                }
+            )
         return []
 
     if total_stats["jymbii"] or total_stats["unknown"]:
-        print(f"  ↳ card classification: real={total_stats['real']} "
-              f"jymbii={total_stats['jymbii']} unknown={total_stats['unknown']}")
+        print(
+            f"  ↳ card classification: real={total_stats['real']} "
+            f"jymbii={total_stats['jymbii']} unknown={total_stats['unknown']}"
+        )
     if stats_out is not None:
-        stats_out.update({
-            "real": total_stats["real"],
-            "jymbii": total_stats["jymbii"],
-            "unknown": total_stats["unknown"],
-            "banner": False,
-        })
+        stats_out.update(
+            {
+                "real": total_stats["real"],
+                "jymbii": total_stats["jymbii"],
+                "unknown": total_stats["unknown"],
+                "banner": False,
+            }
+        )
     return all_jobs
 
 
@@ -1934,23 +2038,23 @@ def scrape_query(page, query: str, category: str = "crypto",
 # broad ancestors (.jobs-description, .job-view-layout) and the chained
 # article-prefix selector that's been deprecated in recent LinkedIn rollouts.
 DESC_SELECTORS = [
-    "#job-details",                                # canonical logged-in container
-    ".jobs-description-content__text--stretch",    # current inner-text wrapper
+    "#job-details",  # canonical logged-in container
+    ".jobs-description-content__text--stretch",  # current inner-text wrapper
     ".jobs-description-content__text",
-    ".jobs-box__html-content",                     # legacy A/B variant
-    ".jobs-description__content",                  # older logged-in fallback
-    ".show-more-less-html__markup",                # public/anonymous page
+    ".jobs-box__html-content",  # legacy A/B variant
+    ".jobs-description__content",  # older logged-in fallback
+    ".show-more-less-html__markup",  # public/anonymous page
 ]
 
 AUTHWALL_MARKERS = ("authwall", "/login", "/checkpoint", "uas/login")
 
 
-def _page_is_authwall(page) -> bool:
+def _page_is_authwall(page: Any) -> bool:
     url = (page.url or "").lower()
     return any(m in url for m in AUTHWALL_MARKERS)
 
 
-def _click_see_more(page):
+def _click_see_more(page: Any) -> None:
     """Expand truncated description if LinkedIn collapsed it."""
     for sel in [
         "button.jobs-description__footer-button",
@@ -1967,7 +2071,7 @@ def _click_see_more(page):
             continue
 
 
-def fetch_description(page, url: str, job_id: str = "") -> tuple[str, str]:
+def fetch_description(page: Any, url: str, job_id: str = "") -> tuple[str, str]:
     """
     Returns (description_text_lower, diagnosis).
     diagnosis ∈ {'ok', 'empty-dom', 'authwall', 'nav-failed', 'error'}.
@@ -1985,10 +2089,7 @@ def fetch_description(page, url: str, job_id: str = "") -> tuple[str, str]:
     pages, so the fallback was silently returning "" and masquerading as a
     working code path. CSS selectors are now the sole description source.
     """
-    if job_id:
-        fetch_url = f"https://www.linkedin.com/jobs/search/?currentJobId={job_id}"
-    else:
-        fetch_url = url
+    fetch_url = f"https://www.linkedin.com/jobs/search/?currentJobId={job_id}" if job_id else url
     try:
         if not safe_goto(page, fetch_url):
             return "", "nav-failed"
@@ -2049,14 +2150,14 @@ def check_fit(desc: str) -> tuple[str, list[str]]:
     return label, reasons
 
 
-def _apply_regex_fallback(job: dict, desc: str):
+def _apply_regex_fallback(job: dict, desc: str) -> None:
     job["msc_required"] = check_msc(desc)
     job["fit"], job["fit_reasons"] = check_fit(desc)
     job["scored_by"] = "regex"
     job["scored_at"] = datetime.now().isoformat()
 
 
-def _apply_claude_scoring(job: dict, scored: dict):
+def _apply_claude_scoring(job: dict, scored: dict) -> None:
     job["fit"] = scored.get("fit")
     job["score"] = scored.get("score")
     job["msc_required"] = scored.get("msc_required")
@@ -2068,15 +2169,15 @@ def _apply_claude_scoring(job: dict, scored: dict):
     job["scored_at"] = datetime.now().isoformat()
 
 
-def score_jobs_in_batches(jobs: list[dict], cv_text: str):
+def score_jobs_in_batches(jobs: list[dict], cv_text: str) -> bool | None:
     """Send jobs to Claude in batches. Mutates each job in-place. Falls back
     to regex for any job Claude didn't score."""
     if not jobs:
-        return
+        return None
 
     scored_anything = False
     for i in range(0, len(jobs), BATCH_SIZE):
-        batch = jobs[i:i + BATCH_SIZE]
+        batch = jobs[i : i + BATCH_SIZE]
         batch_num = i // BATCH_SIZE + 1
         total_batches = (len(jobs) + BATCH_SIZE - 1) // BATCH_SIZE
         print(f"  Scoring batch {batch_num}/{total_batches} ({len(batch)} jobs)...")
@@ -2100,7 +2201,7 @@ def score_jobs_in_batches(jobs: list[dict], cv_text: str):
     return scored_anything
 
 
-def print_job(job: dict, label: str = ""):
+def print_job(job: dict, label: str = "") -> None:
     prefix = "🔥 " if job.get("priority") else "   "
     tag = f" [{label}]" if label else ""
 
@@ -2121,7 +2222,7 @@ def print_job(job: dict, label: str = ""):
         print(f"   signals: {', '.join(job['fit_reasons'][:6])}")
 
 
-def new_page_with_stealth(ctx, stealth_js: str | None = None):
+def new_page_with_stealth(ctx: Any, stealth_js: str | None = None) -> Any:
     """Create a new page and inject the stealth init script on every navigation.
     `stealth_js` should be the locale-resolved STEALTH_JS_TEMPLATE rendering
     (use _build_stealth_js); if omitted we fall back to detecting from the
@@ -2143,11 +2244,14 @@ def new_page_with_stealth(ctx, stealth_js: str | None = None):
 # ---------------------------------------------------------------------------
 
 
+FetchOneFn = Callable[[dict], tuple[str, str]]
+
+
 def process_one_job(
     job: dict,
     *,
     cv_text: str,
-    fetch_one,
+    fetch_one: FetchOneFn,
     persist: bool = True,
     already_scored: bool = False,
 ) -> dict:
@@ -2207,10 +2311,7 @@ def process_one_job(
         job["_diag"] = diag
 
         # Stage 3 — Claude single-item batch.
-        scored_map = (
-            claude_batch_score(cv_text, [job])
-            if (cv_text and desc) else None
-        )
+        scored_map = claude_batch_score(cv_text, [job]) if (cv_text and desc) else None
         if scored_map and str(job["id"]) in scored_map:
             _apply_claude_scoring(job, scored_map[str(job["id"])])
         else:
@@ -2248,19 +2349,23 @@ def process_one_job(
 # later if tuning becomes useful.
 HOT_SCORE_MIN = 8
 
+
 def _compute_hot(job: dict) -> bool:
     if job.get("fit") != "good":
         return False
     score = job.get("score")
     if isinstance(score, (int, float)) and score >= HOT_SCORE_MIN:
         return True
-    if job.get("priority"):
-        return True
-    return False
+    return bool(job.get("priority"))
 
 
-def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts,
-                         fetch_one):
+def _enrich_descriptions(
+    args: argparse.Namespace,
+    new_jobs: list[dict],
+    cv_text: str,
+    diagnosis_counts: dict[str, int],
+    fetch_one: FetchOneFn,
+) -> int:
     """Shared enrichment stage. `fetch_one(job)` returns (text_lower, diag)
     for one job. Returns prefilter_skipped count.
 
@@ -2290,8 +2395,10 @@ def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts,
             prefilter_skipped += 1
         else:
             to_fetch.append(job)
-    print(f"\nPre-filter: skipped {prefilter_skipped} off-topic titles; "
-          f"fetching descriptions for {len(to_fetch)} jobs.")
+    print(
+        f"\nPre-filter: skipped {prefilter_skipped} off-topic titles; "
+        f"fetching descriptions for {len(to_fetch)} jobs."
+    )
 
     # Stage 2: fetch descriptions one-by-one. Backend supplies fetch_one.
     # Inter-request throttling — baseline 1.5–3.0 s between fetches; every
@@ -2301,7 +2408,7 @@ def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts,
     # but the sleep costs little there too.
     for i, job in enumerate(to_fetch):
         short_title = (job["title"] or "")[:60]
-        print(f"  [{i+1}/{len(to_fetch)}] {short_title} @ {job['company']}")
+        print(f"  [{i + 1}/{len(to_fetch)}] {short_title} @ {job['company']}")
         try:
             desc, diag = fetch_one(job)
         except Exception as e:
@@ -2317,11 +2424,12 @@ def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts,
             # Every 20 fetches, an extra cool-down to avoid sustained-rate
             # ratelimiting on bigger batches.
             if (i + 1) % 20 == 0:
-                print(f"    … 20-fetch cool-down (10s)")
+                print("    … 20-fetch cool-down (10s)")
                 time.sleep(10.0)
 
-    print("  Description fetch summary: " +
-          ", ".join(f"{k}={v}" for k, v in diagnosis_counts.items()))
+    print(
+        "  Description fetch summary: " + ", ".join(f"{k}={v}" for k, v in diagnosis_counts.items())
+    )
 
     # Stage 3: Claude batch scoring (preserved at the run level for throughput).
     to_score = [j for j in to_fetch if j.get("_desc")]
@@ -2333,8 +2441,9 @@ def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts,
     # process_one_job(already_scored=True, persist=False) so the helper is
     # the single home for the "scraper batched, now finalize per row" path.
     # _desc is consumed and stripped inside the helper.
-    def _no_fetch(_j):  # never actually called when already_scored=True
+    def _no_fetch(_j: dict) -> tuple[str, str]:  # never actually called when already_scored=True
         return "", "ok"
+
     for job in to_fetch:
         process_one_job(
             job,
@@ -2347,16 +2456,23 @@ def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts,
     return prefilter_skipped
 
 
-def _run_loggedin_pipeline(args, all_queries, seen, new_jobs, max_pages,
-                           date_filter_override, cv_text, per_query_stats,
-                           run_errors):
+def _run_loggedin_pipeline(
+    args: argparse.Namespace,
+    all_queries: list[tuple[str, str, str]],
+    seen: set[str],
+    new_jobs: list[dict],
+    max_pages: int,
+    date_filter_override: str | None,
+    cv_text: str,
+    per_query_stats: list[dict],
+    run_errors: list[dict],
+) -> tuple[int, dict[str, int]]:
     """Original Playwright-driven path — needs linkedin_session.json."""
     # Defer playwright import so guest mode can run on installs without it.
     # Raises ImportError with install instructions if playwright is missing.
     _require_playwright()
 
-    diagnosis_counts = {"ok": 0, "empty-dom": 0, "authwall": 0,
-                        "nav-failed": 0, "error": 0}
+    diagnosis_counts = {"ok": 0, "empty-dom": 0, "authwall": 0, "nav-failed": 0, "error": 0}
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -2375,35 +2491,35 @@ def _run_loggedin_pipeline(args, all_queries, seen, new_jobs, max_pages,
         # `playwright_locale` / `playwright_timezone`.
         resolved_locale, resolved_tz = _resolved_browser_locale_tz()
         stealth_js = _build_stealth_js(resolved_locale)
-        context_kwargs = dict(
-            viewport={"width": 1280, "height": 800},
-            locale=resolved_locale,
-            timezone_id=resolved_tz,
-            user_agent=(
+        context_kwargs = {
+            "viewport": {"width": 1280, "height": 800},
+            "locale": resolved_locale,
+            "timezone_id": resolved_tz,
+            "user_agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
-        )
+        }
 
         if SESSION_FILE.exists():
             ctx = browser.new_context(storage_state=str(SESSION_FILE), **context_kwargs)
             page = new_page_with_stealth(ctx, stealth_js=stealth_js)
             print("Loaded saved session. Verifying login...")
             try:
-                page.goto("https://www.linkedin.com/feed/",
-                          wait_until="domcontentloaded", timeout=20000)
+                page.goto(
+                    "https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=20000
+                )
             except Exception as e:
                 print(f"Failed to reach feed: {str(e)[:120]}")
             time.sleep(random.uniform(2, 3.5))
             current = page.url
             if "login" in current or "authwall" in current or "checkpoint" in current:
                 print("Session expired — please log in again.")
-                try:
+                with contextlib.suppress(Exception):
                     SESSION_FILE.unlink()
-                except Exception:
-                    pass
-                ctx.close(); browser.close()
+                ctx.close()
+                browser.close()
                 print("Re-run the script to log in fresh.")
                 sys.exit(1)
         else:
@@ -2428,8 +2544,9 @@ def _run_loggedin_pipeline(args, all_queries, seen, new_jobs, max_pages,
             print("No saved session found. Browser will open — please log in to LinkedIn.")
             print("Once you see your feed, come back here and press Enter to continue...")
             try:
-                page.goto("https://www.linkedin.com/login",
-                          wait_until="domcontentloaded", timeout=20000)
+                page.goto(
+                    "https://www.linkedin.com/login", wait_until="domcontentloaded", timeout=20000
+                )
             except Exception as e:
                 print(f"Failed to open login page: {str(e)[:120]}")
             input()
@@ -2439,14 +2556,23 @@ def _run_loggedin_pipeline(args, all_queries, seen, new_jobs, max_pages,
 
         for query, category, category_type in all_queries:
             print(f"Searching [{category}/{category_type}]: {query!r} ...")
-            qstats = {"real": 0, "jymbii": 0, "unknown": 0,
-                      "banner": False, "jobs_kept_after_dedup": 0}
+            qstats: dict[str, Any] = {
+                "real": 0,
+                "jymbii": 0,
+                "unknown": 0,
+                "banner": False,
+                "jobs_kept_after_dedup": 0,
+            }
             try:
-                jobs = scrape_query(page, query, category,
-                                    max_pages=max_pages,
-                                    date_filter=date_filter_override,
-                                    stats_out=qstats,
-                                    category_type=category_type)
+                jobs = scrape_query(
+                    page,
+                    query,
+                    category,
+                    max_pages=max_pages,
+                    date_filter=date_filter_override,
+                    stats_out=qstats,
+                    category_type=category_type,
+                )
                 new_in_query = [j for j in jobs if j["id"] not in seen]
                 print(f"  {len(jobs)} results, {len(new_in_query)} new")
                 for job in new_in_query:
@@ -2454,7 +2580,7 @@ def _run_loggedin_pipeline(args, all_queries, seen, new_jobs, max_pages,
                     new_jobs.append(job)
                 qstats["jobs_kept_after_dedup"] = len(new_in_query)
             except PlaywrightTimeout:
-                print(f"  Timeout — skipping")
+                print("  Timeout — skipping")
                 run_errors.append({"query": query, "error": "PlaywrightTimeout"})
             except Exception as e:
                 print(f"  Error on query {query!r}: {str(e)[:120]}")
@@ -2464,21 +2590,30 @@ def _run_loggedin_pipeline(args, all_queries, seen, new_jobs, max_pages,
             time.sleep(random.uniform(3.0, 6.0))
 
         # Per-job description fetcher closure — uses the page from this scope.
-        def _fetch_one(job):
+        def _fetch_one(job: dict) -> tuple[str, str]:
             return fetch_description(page, job["url"], job["id"])
 
         prefilter_skipped = _enrich_descriptions(
             args, new_jobs, cv_text, diagnosis_counts, _fetch_one
         )
 
-        ctx.close(); browser.close()
+        ctx.close()
+        browser.close()
 
     return prefilter_skipped, diagnosis_counts
 
 
-def _run_guest_pipeline(args, all_queries, seen, new_jobs, max_pages,
-                        date_filter_override, cv_text, per_query_stats,
-                        run_errors):
+def _run_guest_pipeline(
+    args: argparse.Namespace,
+    all_queries: list[tuple[str, str, str]],
+    seen: set[str],
+    new_jobs: list[dict],
+    max_pages: int,
+    date_filter_override: str | None,
+    cv_text: str,
+    per_query_stats: list[dict],
+    run_errors: list[dict],
+) -> tuple[int, dict[str, int]]:
     """Unauthenticated HTTP path — no browser, no session needed."""
     diagnosis_counts = {"ok": 0, "empty": 0, "error": 0}
     geo_id = (args.geo_id or _ACTIVE_CONFIG.get("geo_id") or "").strip() or None
@@ -2488,11 +2623,18 @@ def _run_guest_pipeline(args, all_queries, seen, new_jobs, max_pages,
 
     for query, category, category_type in all_queries:
         print(f"Searching [{category}/{category_type}]: {query!r} ...")
-        qstats = {"real": 0, "jymbii": 0, "unknown": 0,
-                  "banner": False, "jobs_kept_after_dedup": 0}
+        qstats: dict[str, Any] = {
+            "real": 0,
+            "jymbii": 0,
+            "unknown": 0,
+            "banner": False,
+            "jobs_kept_after_dedup": 0,
+        }
         try:
             jobs = scrape_query_guest(
-                session, query, category,
+                session,
+                query,
+                category,
                 max_pages=max_pages,
                 date_filter=date_filter_override,
                 geo_id=geo_id,
@@ -2511,201 +2653,147 @@ def _run_guest_pipeline(args, all_queries, seen, new_jobs, max_pages,
         per_query_stats.append({"query": query, "category": category, **qstats})
         time.sleep(random.uniform(1.0, 2.5))
 
-    def _fetch_one(job):
+    def _fetch_one(job: dict) -> tuple[str, str]:
         return fetch_description_guest(session, job["id"])
 
-    prefilter_skipped = _enrich_descriptions(
-        args, new_jobs, cv_text, diagnosis_counts, _fetch_one
-    )
+    prefilter_skipped = _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts, _fetch_one)
     return prefilter_skipped, diagnosis_counts
 
 
-def main():
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """CLI parser for backend/search.py. Kept as a standalone helper so
+    tests + the UI middleware can introspect / re-use the same flags."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--all", action="store_true", help="show all results including seen")
-    parser.add_argument("--no-enrich", action="store_true", help="skip description fetching (faster)")
-    parser.add_argument("--all-time", action="store_true",
-                        help="drop the 7-day date filter (any posting date). "
-                             "Implicitly bumps --pages to 10 unless overridden.")
-    parser.add_argument("--pages", type=int, default=None,
-                        help="max pages per query (default: from config.json or 3, "
-                             "or 10 with --all-time)")
-    parser.add_argument("--print-defaults", action="store_true",
-                        help="emit hardcoded defaults as JSON to stdout and exit "
-                             "(used by the UI's 'Reset to defaults' action)")
-    parser.add_argument("--mode", choices=["loggedin", "guest"], default="loggedin",
-                        help="Scrape backend: 'loggedin' (current Playwright path, "
-                             "needs linkedin_session.json) or 'guest' (unauthenticated "
-                             "HTTP via /jobs-guest endpoints — no browser, no account, "
-                             "more results, surfaces Big Tech postings the personalized "
-                             "search hides). Both modes share results.json + seen_jobs.json "
-                             "via fcntl-locked merges so they can run in parallel.")
-    parser.add_argument("--geo-id", default=None,
-                        help="Override the geoId for guest mode (default: Israel "
-                             "101620260). Ignored in loggedin mode (LinkedIn picks "
-                             "geo from the session).")
-    parser.add_argument("--test-llm", nargs="?", const="auto", default=None,
-                        metavar="PROVIDER",
-                        help="Test the LLM scoring backend and exit. Optional "
-                             "PROVIDER ∈ {auto, claude_cli, claude_sdk, gemini, "
-                             "openrouter, ollama}. Default: auto.")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--no-enrich", action="store_true", help="skip description fetching (faster)"
+    )
+    parser.add_argument(
+        "--all-time",
+        action="store_true",
+        help="drop the 7-day date filter (any posting date). "
+        "Implicitly bumps --pages to 10 unless overridden.",
+    )
+    parser.add_argument(
+        "--pages",
+        type=int,
+        default=None,
+        help="max pages per query (default: from config.json or 3, or 10 with --all-time)",
+    )
+    parser.add_argument(
+        "--print-defaults",
+        action="store_true",
+        help="emit hardcoded defaults as JSON to stdout and exit "
+        "(used by the UI's 'Reset to defaults' action)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["loggedin", "guest"],
+        default="loggedin",
+        help="Scrape backend: 'loggedin' (current Playwright path, "
+        "needs linkedin_session.json) or 'guest' (unauthenticated "
+        "HTTP via /jobs-guest endpoints — no browser, no account, "
+        "more results, surfaces Big Tech postings the personalized "
+        "search hides). Both modes share results.json + seen_jobs.json "
+        "via fcntl-locked merges so they can run in parallel.",
+    )
+    parser.add_argument(
+        "--geo-id",
+        default=None,
+        help="Override the geoId for guest mode (default: Israel "
+        "101620260). Ignored in loggedin mode (LinkedIn picks "
+        "geo from the session).",
+    )
+    parser.add_argument(
+        "--test-llm",
+        nargs="?",
+        const="auto",
+        default=None,
+        metavar="PROVIDER",
+        help="Test the LLM scoring backend and exit. Optional "
+        "PROVIDER ∈ {auto, claude_cli, claude_sdk, gemini, "
+        "openrouter, ollama}. Default: auto.",
+    )
+    return parser
 
-    if args.test_llm is not None:
-        from backend.llm import test_provider
-        ok, msg = test_provider(args.test_llm)
-        prefix = "OK" if ok else "FAIL"
-        print(f"[{prefix}] {msg}")
-        sys.exit(0 if ok else 1)
 
-    if args.print_defaults:
-        # Print the *hardcoded* defaults — not the merged active config —
-        # so the UI's "Reset to defaults" button always lands on the
-        # in-file source-of-truth, regardless of what's currently in
-        # config.json.
-        print(json.dumps(_hardcoded_defaults(), indent=2, ensure_ascii=False))
-        return
-
-    # Track when we started for run history (move now() up here so it's correct
-    # even if early errors abort the run).
-    started_at = datetime.now()
-    started_perf = time.perf_counter()
-
-    # Resolve scrape breadth. Config-file `max_pages` is the new default;
-    # CLI --pages still overrides it; --all-time still bumps to 10 if neither
-    # CLI flag nor config narrows it.
-    config_pages = _ACTIVE_CONFIG.get("max_pages", 3)
+def _resolve_max_pages(args: argparse.Namespace) -> int:
+    """Order of precedence: --pages CLI > --all-time bump > config.max_pages > 3."""
     if args.pages is not None:
-        max_pages = args.pages
-    elif args.all_time:
-        max_pages = 10
-    else:
-        max_pages = config_pages
-    date_filter_override = "" if args.all_time else None  # None = use default DATE_FILTER
-    print(f"Scrape settings: max_pages={max_pages}, "
-          f"date_filter={'ANY' if args.all_time else DATE_FILTER}")
+        return int(args.pages)
+    if args.all_time:
+        return 10
+    return int(_ACTIVE_CONFIG.get("max_pages", 3))
 
-    seen = load_seen()
-    all_results = load_results()
-    new_jobs = []
 
-    # Build the query plan from the user-defined CATEGORIES list. Each item
-    # is (query, category_id, category_type) — the type drives whether the
-    # scraper applies token-relevance (keyword) or company-name relevance
-    # (company) downstream. Falls back to the legacy three-bucket structure
-    # if CATEGORIES is empty for any reason.
-    all_queries: list[tuple[str, str, str]] = []
+def _build_query_plan() -> list[tuple[str, str, str]]:
+    """Flatten CATEGORIES into (query, category_id, category_type) triples.
+    Falls back to the legacy three-bucket structure (SEARCH_QUERIES /
+    SECURITY_RESEARCHER_QUERIES / COMPANY_QUERIES) when CATEGORIES is empty —
+    keeps externally-fed configs that still use the old keys working."""
+    plan: list[tuple[str, str, str]] = []
     for cat in CATEGORIES:
         cid = cat.get("id") or "uncategorized"
         ctype = cat.get("type") or "keyword"
         for q in cat.get("queries", []):
             if q and isinstance(q, str):
-                all_queries.append((q, cid, ctype))
-    if not all_queries:
-        all_queries = (
-            [(q, "crypto", "keyword") for q in SEARCH_QUERIES]
-            + [(q, "security_researcher", "keyword") for q in SECURITY_RESEARCHER_QUERIES]
-            + [(q, "company", "company") for q in COMPANY_QUERIES]
-        )
-
-    cv_text = _load_cv_text()
-    if cv_text:
-        if shutil.which("claude"):
-            print("Fit scoring: Claude Code CLI")
-        elif os.environ.get("ANTHROPIC_API_KEY"):
-            print("Fit scoring: Anthropic SDK (ANTHROPIC_API_KEY)")
-        else:
-            print("Fit scoring: regex fallback (install `claude` CLI or set ANTHROPIC_API_KEY for LLM scoring)")
-    else:
-        print(f"Fit scoring: regex fallback (no CV at {CV_FILE})")
-
-    print(f"Backend mode: {args.mode}")
-
-    # Stats accumulators shared across both modes.
-    per_query_stats: list[dict] = []
-    run_errors: list[dict] = []
-    prefilter_skipped = 0
-    diagnosis_counts = {"ok": 0, "empty-dom": 0, "authwall": 0,
-                        "nav-failed": 0, "error": 0}
-
-    if args.mode == "guest":
-        prefilter_skipped, diagnosis_counts = _run_guest_pipeline(
-            args=args, all_queries=all_queries, seen=seen, new_jobs=new_jobs,
-            max_pages=max_pages, date_filter_override=date_filter_override,
-            cv_text=cv_text, per_query_stats=per_query_stats,
-            run_errors=run_errors,
-        )
-    else:
-        prefilter_skipped, diagnosis_counts = _run_loggedin_pipeline(
-            args=args, all_queries=all_queries, seen=seen, new_jobs=new_jobs,
-            max_pages=max_pages, date_filter_override=date_filter_override,
-            cv_text=cv_text, per_query_stats=per_query_stats,
-            run_errors=run_errors,
-        )
-
-    # ===== POST-PROCESSING (shared by both modes) =====
-    display_jobs = []
-    skipped = []
-    for job in new_jobs:
-        if job.get("fit") == "skip":
-            skipped.append(job)
-        else:
-            display_jobs.append(job)
-
-    # Sort display jobs by score (highest first), priority companies first.
-    def _sort_key(j):
-        return (
-            0 if j.get("priority") else 1,
-            -(j.get("score") or 0),
-            {"good": 0, "ok": 1, None: 2, "skip": 3}.get(j.get("fit"), 2),
-        )
-    display_jobs.sort(key=_sort_key)
-
-    all_results.extend(new_jobs)
-    save_seen(seen)
-    # Pass only new_jobs — save_results_merge dedups against the on-disk corpus
-    # under fcntl lock, which makes parallel --mode=guest + --mode=loggedin runs
-    # safe (otherwise the second writer would overwrite the first's additions).
-    save_results_merge(new_jobs)
-
-    # Record the IDs that were new this run so send_email.py can pick them up.
-    # Path MUST be ROOT — that's where send_email.py:NEW_IDS_FILE reads from,
-    # and it matches the convention for every other persistent state file
-    # (results.json, seen_jobs.json, run_history.json, etc.). Writing to
-    # `HERE / new_ids.json` (which lives under backend/) silently dropped
-    # all post-Apr-24 daily digests on the floor — the scrape produced fresh
-    # IDs, but the email kept reading the stale ROOT file.
-    (ROOT / "new_ids.json").write_text(
-        json.dumps([j["id"] for j in new_jobs], indent=2)
+                plan.append((q, cid, ctype))
+    if plan:
+        return plan
+    return (
+        [(q, "crypto", "keyword") for q in SEARCH_QUERIES]
+        + [(q, "security_researcher", "keyword") for q in SECURITY_RESEARCHER_QUERIES]
+        + [(q, "company", "company") for q in COMPANY_QUERIES]
     )
 
-    print(f"\n{'='*55}")
+
+def _print_scoring_backend(cv_text: str) -> None:
+    """Log which scorer the run will use. Pure UX — no behavior change."""
+    if not cv_text:
+        print(f"Fit scoring: regex fallback (no CV at {CV_FILE})")
+        return
+    if shutil.which("claude"):
+        print("Fit scoring: Claude Code CLI")
+    elif os.environ.get("ANTHROPIC_API_KEY"):
+        print("Fit scoring: Anthropic SDK (ANTHROPIC_API_KEY)")
+    else:
+        print(
+            "Fit scoring: regex fallback "
+            "(install `claude` CLI or set ANTHROPIC_API_KEY for LLM scoring)"
+        )
+
+
+def _print_run_summary(
+    new_jobs: list[dict],
+    skipped: list[dict],
+    display_jobs: list[dict],
+    *,
+    show_seen: bool,
+    all_results: list[dict],
+) -> None:
+    """Stdout summary of the run — priority/good/ok/unscored/skipped buckets,
+    plus optional 'previously seen' tail when invoked with --all."""
+    print(f"\n{'=' * 55}")
     if display_jobs:
         priority = [j for j in display_jobs if j.get("priority")]
         normal = [j for j in display_jobs if not j.get("priority")]
-
         print(f"NEW JOBS: {len(display_jobs)} shown, {len(skipped)} filtered out")
-        print(f"{'='*55}")
-
+        print(f"{'=' * 55}")
         if priority:
             print("\n--- PRIORITY COMPANIES ---")
             for job in priority:
                 print_job(job)
-
-        good = [j for j in normal if j.get("fit") == "good"]
-        ok = [j for j in normal if j.get("fit") == "ok"]
+        good_jobs = [j for j in normal if j.get("fit") == "good"]
+        ok_jobs = [j for j in normal if j.get("fit") == "ok"]
         unscored = [j for j in normal if j.get("fit") not in ("good", "ok", "skip")]
-
-        if good:
+        if good_jobs:
             print("\n--- GOOD FIT ---")
-            for job in good:
+            for job in good_jobs:
                 print_job(job)
-
-        if ok:
+        if ok_jobs:
             print("\n--- OK FIT ---")
-            for job in ok:
+            for job in ok_jobs:
                 print_job(job)
-
         if unscored:
             print("\n--- UNSCORED ---")
             for job in unscored:
@@ -2718,7 +2806,7 @@ def main():
         for job in skipped:
             print_job(job, label="skipped")
 
-    if args.all:
+    if show_seen:
         old = [j for j in all_results if j not in new_jobs]
         if old:
             print(f"\n--- PREVIOUSLY SEEN ({len(old)}) ---")
@@ -2727,17 +2815,23 @@ def main():
 
     print(f"\nAll results saved to: {RESULTS_FILE}")
 
-    # Write the polished HTML digest so the user can `open digest.html` after
-    # a manual run. send_email.py will regenerate it (and optionally email)
-    # when invoked from run.py on a schedule.
-    #
-    # Like every other persistent state file (results.json, seen_jobs.json,
-    # run_history.json), digest.html lives at the project ROOT — NOT under
-    # backend/. send_email.py reads ROOT/digest.html; writing it under HERE
-    # would silently de-sync the manual-run path from the scheduled-run path.
-    # Same convention as the HERE/ROOT block comment near search.py:805.
+
+def _write_digest_html(new_jobs: list[dict]) -> None:
+    """Render and write the polished HTML digest so the user can `open
+    digest.html` after a manual run. Best-effort — never raises.
+
+    Like every other persistent state file (results.json, seen_jobs.json,
+    run_history.json), digest.html lives at the project ROOT — NOT under
+    backend/. send_email.py reads ROOT/digest.html; writing it under HERE
+    would silently de-sync the manual-run path from the scheduled-run path.
+    """
     try:
-        from send_email import build_digest_html
+        # `send_email` is a sibling module in backend/ (not installed); both
+        # the bare-name and `backend.send_email` paths work because we insert
+        # repo root and backend/ at module-load time. Import here is lazy
+        # because the digest is best-effort.
+        from backend.send_email import build_digest_html
+
         digest_jobs = [j for j in new_jobs if j.get("fit") != "skip"]
         html = build_digest_html(digest_jobs)
         digest_path = ROOT / "digest.html"
@@ -2746,21 +2840,27 @@ def main():
     except Exception as e:
         print(f"Digest generation failed: {str(e)[:200]}")
 
-    # Record run-history entry for the UI's Run History page. Best-effort —
-    # never let history-writing failures crash the scraper.
+
+def _record_run_history(
+    args: argparse.Namespace,
+    *,
+    new_jobs: list[dict],
+    diagnosis_counts: dict[str, int],
+    per_query_stats: list[dict],
+    run_errors: list[dict],
+    started_at: datetime,
+    started_perf: float,
+    max_pages: int,
+) -> None:
+    """Append a run record to run_history.json so the UI's Run History page
+    can chart it. Best-effort — failures are logged, never re-raised."""
     try:
         ended_at = datetime.now()
         scored_claude = sum(1 for j in new_jobs if j.get("scored_by") == "claude")
         scored_regex = sum(1 for j in new_jobs if j.get("scored_by") == "regex")
-        title_filtered = sum(
-            1 for j in new_jobs if j.get("scored_by") == "title-filter"
-        )
-        descriptions_fetched = sum(
-            v for k, v in diagnosis_counts.items() if k.startswith("ok")
-        )
-        descriptions_failed = sum(
-            v for k, v in diagnosis_counts.items() if not k.startswith("ok")
-        )
+        title_filtered = sum(1 for j in new_jobs if j.get("scored_by") == "title-filter")
+        descriptions_fetched = sum(v for k, v in diagnosis_counts.items() if k.startswith("ok"))
+        descriptions_failed = sum(v for k, v in diagnosis_counts.items() if not k.startswith("ok"))
         fit_distribution = {"good": 0, "ok": 0, "skip": 0, "unscored": 0}
         for j in new_jobs:
             f = j.get("fit")
@@ -2796,6 +2896,123 @@ def main():
     except Exception as e:
         print(f"⚠ failed to write run history: {e}")
         traceback.print_exc()
+
+
+def main() -> None:
+    args = _build_arg_parser().parse_args()
+
+    if args.test_llm is not None:
+        from backend.llm import test_provider
+
+        ok, msg = test_provider(args.test_llm)
+        prefix = "OK" if ok else "FAIL"
+        print(f"[{prefix}] {msg}")
+        sys.exit(0 if ok else 1)
+
+    if args.print_defaults:
+        # Print the *hardcoded* defaults — not the merged active config —
+        # so the UI's "Reset to defaults" button always lands on the
+        # in-file source-of-truth, regardless of what's currently in
+        # config.json.
+        print(json.dumps(_hardcoded_defaults(), indent=2, ensure_ascii=False))
+        return
+
+    # Track when we started for run history (move now() up here so it's correct
+    # even if early errors abort the run).
+    started_at = datetime.now()
+    started_perf = time.perf_counter()
+
+    max_pages = _resolve_max_pages(args)
+    date_filter_override = "" if args.all_time else None  # None = use default DATE_FILTER
+    print(
+        f"Scrape settings: max_pages={max_pages}, "
+        f"date_filter={'ANY' if args.all_time else DATE_FILTER}"
+    )
+
+    seen = load_seen()
+    all_results = load_results()
+    new_jobs: list[dict] = []
+    all_queries = _build_query_plan()
+
+    cv_text = _load_cv_text()
+    _print_scoring_backend(cv_text)
+    print(f"Backend mode: {args.mode}")
+
+    # Stats accumulators shared across both modes.
+    per_query_stats: list[dict] = []
+    run_errors: list[dict] = []
+    diagnosis_counts = {"ok": 0, "empty-dom": 0, "authwall": 0, "nav-failed": 0, "error": 0}
+
+    # Both pipelines return (prefilter_skipped, diagnosis_counts). Only the
+    # latter is read downstream — the per-row title-filter count is already
+    # baked into each job's `scored_by="title-filter"` so the corpus reflects
+    # it and run_history derives the count via that field at write time.
+    pipeline = _run_guest_pipeline if args.mode == "guest" else _run_loggedin_pipeline
+    _prefilter_skipped, diagnosis_counts = pipeline(
+        args=args,
+        all_queries=all_queries,
+        seen=seen,
+        new_jobs=new_jobs,
+        max_pages=max_pages,
+        date_filter_override=date_filter_override,
+        cv_text=cv_text,
+        per_query_stats=per_query_stats,
+        run_errors=run_errors,
+    )
+
+    # ===== POST-PROCESSING (shared by both modes) =====
+    display_jobs = []
+    skipped = []
+    for job in new_jobs:
+        if job.get("fit") == "skip":
+            skipped.append(job)
+        else:
+            display_jobs.append(job)
+
+    # Sort display jobs by score (highest first), priority companies first.
+    def _sort_key(j: dict) -> tuple[int, int, int]:
+        return (
+            0 if j.get("priority") else 1,
+            -(j.get("score") or 0),
+            {"good": 0, "ok": 1, None: 2, "skip": 3}.get(j.get("fit"), 2),
+        )
+
+    display_jobs.sort(key=_sort_key)
+
+    all_results.extend(new_jobs)
+    save_seen(seen)
+    # Pass only new_jobs — save_results_merge dedups against the on-disk corpus
+    # under fcntl lock, which makes parallel --mode=guest + --mode=loggedin runs
+    # safe (otherwise the second writer would overwrite the first's additions).
+    save_results_merge(new_jobs)
+
+    # Record the IDs that were new this run so send_email.py can pick them up.
+    # Path MUST be ROOT — that's where send_email.py:NEW_IDS_FILE reads from,
+    # and it matches the convention for every other persistent state file
+    # (results.json, seen_jobs.json, run_history.json, etc.). Writing to
+    # `HERE / new_ids.json` (which lives under backend/) silently dropped
+    # all post-Apr-24 daily digests on the floor — the scrape produced fresh
+    # IDs, but the email kept reading the stale ROOT file.
+    (ROOT / "new_ids.json").write_text(json.dumps([j["id"] for j in new_jobs], indent=2))
+
+    _print_run_summary(
+        new_jobs,
+        skipped,
+        display_jobs,
+        show_seen=args.all,
+        all_results=all_results,
+    )
+    _write_digest_html(new_jobs)
+    _record_run_history(
+        args,
+        new_jobs=new_jobs,
+        diagnosis_counts=diagnosis_counts,
+        per_query_stats=per_query_stats,
+        run_errors=run_errors,
+        started_at=started_at,
+        started_perf=started_perf,
+        max_pages=max_pages,
+    )
 
 
 if __name__ == "__main__":

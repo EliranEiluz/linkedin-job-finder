@@ -1,7 +1,9 @@
 """macOS launchd backend. Direct extraction of the launchctl/plist code
 that used to live inline in scheduler_ctl.py — no behavior change."""
+
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
 from pathlib import Path
@@ -15,11 +17,22 @@ INSTALLED_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 def _run(*argv: str, timeout: int = 8) -> tuple[int, str, str]:
     try:
         proc = subprocess.run(
-            list(argv), capture_output=True, text=True, timeout=timeout,
+            list(argv),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as e:
-        return 124, e.stdout or "", f"timeout after {timeout}s"
+        # TimeoutExpired.stdout is `bytes | str | None`; coerce to str to
+        # match the declared tuple type. The text=True call above means it's
+        # str when present, but the typeshed stub still allows bytes.
+        out = (
+            e.stdout
+            if isinstance(e.stdout, str)
+            else (e.stdout.decode(errors="replace") if e.stdout else "")
+        )
+        return 124, out, f"timeout after {timeout}s"
     except FileNotFoundError as e:
         return 127, "", f"command not found: {e.filename}"
 
@@ -107,10 +120,8 @@ class LaunchdScheduler(Scheduler):
     def uninstall(self) -> None:
         if INSTALLED_PLIST.exists():
             self._unload()
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 INSTALLED_PLIST.unlink()
-            except FileNotFoundError:
-                pass
 
     def reload(self, interval_seconds: int, mode: str, run_command: list[str]) -> None:
         if not INSTALLED_PLIST.exists():
@@ -134,7 +145,8 @@ class LaunchdScheduler(Scheduler):
         txt = INSTALLED_PLIST.read_text()
         interval_m = re.search(
             r"<key>\s*StartInterval\s*</key>\s*<integer>\s*(\d+)\s*</integer>",
-            txt, re.IGNORECASE,
+            txt,
+            re.IGNORECASE,
         )
         mode_m = re.search(
             r"<key>\s*LINKEDINJOBS_MODE\s*</key>\s*<string>\s*([a-z]+)\s*</string>",
@@ -150,8 +162,12 @@ class LaunchdScheduler(Scheduler):
     def _write_plist(self, interval_seconds: int, mode: str, run_command: list[str]) -> None:
         INSTALLED_PLIST.parent.mkdir(parents=True, exist_ok=True)
         content = _build_plist(
-            interval_seconds, mode, run_command,
-            self.working_dir, self.out_log, self.err_log,
+            interval_seconds,
+            mode,
+            run_command,
+            self.working_dir,
+            self.out_log,
+            self.err_log,
         )
         tmp = INSTALLED_PLIST.with_suffix(".plist.tmp")
         tmp.write_text(content)
@@ -164,4 +180,3 @@ class LaunchdScheduler(Scheduler):
     def _unload(self) -> tuple[int, str]:
         rc, _, err = _run("launchctl", "unload", str(INSTALLED_PLIST))
         return rc, err.strip()
-

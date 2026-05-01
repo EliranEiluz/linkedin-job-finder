@@ -7,6 +7,7 @@ doesn't already have it. Maps known legacy ids to their original names
 Run with the project root as the cwd:
     python3 backend/tools/backfill_category_name.py
 """
+
 from __future__ import annotations
 
 import json

@@ -1,10 +1,11 @@
 """Google Gemini provider — raw HTTP, free tier via aistudio.google.com/apikey."""
+
 from __future__ import annotations
 
 import os
 
+from ._shared import TEST_BATCH, TEST_CV, parse_json_response
 from .base import LLMProvider
-from ._shared import parse_json_response, TEST_BATCH, TEST_CV
 
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
@@ -17,6 +18,7 @@ class GeminiProvider(LLMProvider):
 
     def _prompt(self, cv_text: str, batch: list[dict]) -> str:
         from backend.search import _build_batch_prompt
+
         return _build_batch_prompt(cv_text, batch)
 
     def _api_key(self) -> str | None:
@@ -72,8 +74,14 @@ class GeminiProvider(LLMProvider):
             return True, f"gemini ok (model={self.model})"
         return False, "gemini returned no parseable result"
 
-    def complete(self, prompt: str, *, system: str | None = None,
-                 max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+    ) -> str | None:
         key = self._api_key()
         if not key:
             return None

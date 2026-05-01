@@ -39,32 +39,30 @@ DIGEST_FILE = ROOT / "digest.html"
 # All inline-styled because every email client (especially Gmail and Outlook)
 # strips or rewrites <style> in unpredictable ways. Keep colors minimal.
 COLOR = {
-    "bg":         "#0f1115",     # page bg (dark) — used for outer wrapper only
-    "card":       "#ffffff",
-    "border":     "#e5e7eb",
-    "muted":      "#6b7280",
-    "text":       "#111827",
-    "subtle":     "#f3f4f6",
-    "brand":      "#4338ca",     # indigo
-    "good":       "#059669",     # emerald
-    "good_bg":    "#ecfdf5",
-    "ok":         "#b45309",     # amber
-    "ok_bg":      "#fffbeb",
-    "skip":       "#6b7280",
-    "skip_bg":    "#f3f4f6",
-    "priority":   "#dc2626",     # red
-    "priority_bg":"#fef2f2",
-    "chip_bg":    "#f3f4f6",
-    "chip_text":  "#374151",
+    "bg": "#0f1115",  # page bg (dark) — used for outer wrapper only
+    "card": "#ffffff",
+    "border": "#e5e7eb",
+    "muted": "#6b7280",
+    "text": "#111827",
+    "subtle": "#f3f4f6",
+    "brand": "#4338ca",  # indigo
+    "good": "#059669",  # emerald
+    "good_bg": "#ecfdf5",
+    "ok": "#b45309",  # amber
+    "ok_bg": "#fffbeb",
+    "skip": "#6b7280",
+    "skip_bg": "#f3f4f6",
+    "priority": "#dc2626",  # red
+    "priority_bg": "#fef2f2",
+    "chip_bg": "#f3f4f6",
+    "chip_text": "#374151",
 }
 
-FONT_STACK = (
-    "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',"
-    "Arial,sans-serif"
-)
+FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
 
 
 # ---------- DATA ----------
+
 
 def _load_json(path: Path, default):
     if not path.exists():
@@ -93,13 +91,14 @@ def _select_jobs(args) -> list[dict]:
 
 # ---------- RENDERING ----------
 
-def _chip(label: str, fg: str = None, bg: str = None) -> str:
+
+def _chip(label: str, fg: str | None = None, bg: str | None = None) -> str:
     fg = fg or COLOR["chip_text"]
     bg = bg or COLOR["chip_bg"]
     return (
         f'<span style="display:inline-block;padding:2px 9px;margin:0 4px 4px 0;'
-        f'border-radius:999px;background:{bg};color:{fg};font-size:11px;'
-        f'font-weight:600;letter-spacing:0.02em;line-height:18px;'
+        f"border-radius:999px;background:{bg};color:{fg};font-size:11px;"
+        f"font-weight:600;letter-spacing:0.02em;line-height:18px;"
         f'white-space:nowrap">{escape(label)}</span>'
     )
 
@@ -114,9 +113,9 @@ def _score_badge(score: int | None, fit: str | None) -> str:
     s = f"{score}/10" if score is not None else fit
     return (
         f'<span style="display:inline-block;padding:6px 12px;border-radius:8px;'
-        f'background:{bg};color:{fg};font-weight:700;font-size:13px;'
+        f"background:{bg};color:{fg};font-weight:700;font-size:13px;"
         f'border:1px solid {fg}33;white-space:nowrap">'
-        f'{icon}&nbsp;{escape(str(s))}</span>'
+        f"{icon}&nbsp;{escape(str(s))}</span>"
     )
 
 
@@ -126,10 +125,10 @@ def _section_header(title: str, count: int, accent: str) -> str:
         f'border-bottom:2px solid {accent}">'
         f'<span style="font-size:14px;font-weight:700;color:{accent};'
         f'text-transform:uppercase;letter-spacing:0.08em">'
-        f'{escape(title)}</span>'
+        f"{escape(title)}</span>"
         f'<span style="margin-left:8px;color:{COLOR["muted"]};'
         f'font-size:13px;font-weight:500">'
-        f'{count}</span></div>'
+        f"{count}</span></div>"
     )
 
 
@@ -166,8 +165,7 @@ def _render_job_card(j: dict) -> str:
             for r in cleaned_reasons[:6]
         )
         reasons_html = (
-            f'<ul style="margin:10px 0 0;padding:0 0 0 18px;'
-            f'color:{COLOR["text"]}">{items}</ul>'
+            f'<ul style="margin:10px 0 0;padding:0 0 0 18px;color:{COLOR["text"]}">{items}</ul>'
         )
 
     # Footer chip showing scoring source
@@ -196,7 +194,7 @@ def _render_job_card(j: dict) -> str:
              font-size:17px;font-weight:700;line-height:1.3">{title}</a>
           <div style="margin-top:4px;color:{COLOR["muted"]};font-size:13px">
             <span style="font-weight:600;color:{COLOR["text"]}">{company}</span>
-            {' · ' + location if location else ''}
+            {" · " + location if location else ""}
           </div>
         </td>
         <td style="vertical-align:top;text-align:right;padding-left:12px;width:90px">
@@ -206,7 +204,7 @@ def _render_job_card(j: dict) -> str:
     </table>
 
     <!-- chips -->
-    {('<div style="margin-top:12px">' + "".join(top_chips) + '</div>') if top_chips else ''}
+    {('<div style="margin-top:12px">' + "".join(top_chips) + "</div>") if top_chips else ""}
 
     <!-- reasons -->
     {reasons_html}
@@ -247,21 +245,28 @@ def build_digest_html(jobs: list[dict], generated_at: datetime | None = None) ->
     # Sort each section by score desc.
     def _by_score(group):
         return sorted(group, key=lambda x: -(x.get("score") or 0))
+
     priority = _by_score(priority)
     good = _by_score(good)
     ok = _by_score(ok)
 
     total = len(jobs)
-    summary_chips = "".join([
-        _chip(f"{len(priority)} 🔥 priority", COLOR["priority"], COLOR["priority_bg"]) if priority else "",
-        _chip(f"{len(good)} ✓ good", COLOR["good"], COLOR["good_bg"]) if good else "",
-        _chip(f"{len(ok)} ~ ok", COLOR["ok"], COLOR["ok_bg"]) if ok else "",
-        _chip(f"{len(other)} unscored") if other else "",
-    ])
+    summary_chips = "".join(
+        [
+            _chip(f"{len(priority)} 🔥 priority", COLOR["priority"], COLOR["priority_bg"])
+            if priority
+            else "",
+            _chip(f"{len(good)} ✓ good", COLOR["good"], COLOR["good_bg"]) if good else "",
+            _chip(f"{len(ok)} ~ ok", COLOR["ok"], COLOR["ok_bg"]) if ok else "",
+            _chip(f"{len(other)} unscored") if other else "",
+        ]
+    )
 
     sections_html = []
     if priority:
-        sections_html.append(_section_header("🔥 Priority companies", len(priority), COLOR["priority"]))
+        sections_html.append(
+            _section_header("🔥 Priority companies", len(priority), COLOR["priority"])
+        )
         sections_html.extend(_render_job_card(j) for j in priority)
     if good:
         sections_html.append(_section_header("✓ Good fit", len(good), COLOR["good"]))
@@ -274,16 +279,16 @@ def build_digest_html(jobs: list[dict], generated_at: datetime | None = None) ->
         sections_html.extend(_render_job_card(j) for j in other)
 
     if not jobs:
-        body_html = f'''
+        body_html = f"""
 <div style="padding:60px 20px;text-align:center;color:{COLOR["muted"]};
             font-size:15px">
   <div style="font-size:48px;margin-bottom:12px">🦗</div>
   No new jobs since the last run.
-</div>'''
+</div>"""
     else:
         body_html = "".join(sections_html)
 
-    return f'''<!doctype html>
+    return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -309,10 +314,10 @@ def build_digest_html(jobs: list[dict], generated_at: datetime | None = None) ->
         </div>
         <h1 style="margin:6px 0 6px;font-size:26px;font-weight:800;
                    color:{COLOR["text"]};line-height:1.2">
-          {total} new {'jobs' if total != 1 else 'job'} worth a look
+          {total} new {"jobs" if total != 1 else "job"} worth a look
         </h1>
         <div style="color:{COLOR["muted"]};font-size:13px">{escape(timestamp)}</div>
-        {('<div style="margin-top:14px">' + summary_chips + '</div>') if summary_chips else ''}
+        {('<div style="margin-top:14px">' + summary_chips + "</div>") if summary_chips else ""}
       </td></tr>
 
       <!-- BODY -->
@@ -332,7 +337,7 @@ def build_digest_html(jobs: list[dict], generated_at: datetime | None = None) ->
 </table>
 
 </body>
-</html>'''
+</html>"""
 
 
 def _send_email(html: str, jobs: list[dict]) -> int:
@@ -340,8 +345,10 @@ def _send_email(html: str, jobs: list[dict]) -> int:
     user = os.environ.get("SMTP_USER")
     password = os.environ.get("SMTP_PASS")
     if not (host and user and password):
-        print("SMTP creds not set — skipping email send "
-              "(set SMTP_HOST / SMTP_USER / SMTP_PASS to enable).")
+        print(
+            "SMTP creds not set — skipping email send "
+            "(set SMTP_HOST / SMTP_USER / SMTP_PASS to enable)."
+        )
         return 0
 
     port = int(os.environ.get("SMTP_PORT", "587"))
@@ -349,18 +356,15 @@ def _send_email(html: str, jobs: list[dict]) -> int:
 
     priority_count = sum(1 for j in jobs if j.get("priority"))
     good_count = sum(1 for j in jobs if j.get("fit") == "good")
-    subject = (
-        f"LinkedIn jobs — {len(jobs)} new"
-        + (f" ({priority_count}🔥 {good_count}✓)" if priority_count or good_count else "")
+    subject = f"LinkedIn jobs — {len(jobs)} new" + (
+        f" ({priority_count}🔥 {good_count}✓)" if priority_count or good_count else ""
     )
 
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = user
     msg["To"] = to_addr
-    msg.set_content(
-        f"{len(jobs)} new jobs. Open in an HTML-capable client to see the digest."
-    )
+    msg.set_content(f"{len(jobs)} new jobs. Open in an HTML-capable client to see the digest.")
     msg.add_alternative(html, subtype="html")
 
     # Build an SSL context that trusts the certifi CA bundle. Python on macOS
@@ -370,6 +374,7 @@ def _send_email(html: str, jobs: list[dict]) -> int:
     # Python install path.
     try:
         import certifi
+
         ctx = ssl.create_default_context(cafile=certifi.where())
     except Exception:
         ctx = ssl.create_default_context()
@@ -379,8 +384,7 @@ def _send_email(html: str, jobs: list[dict]) -> int:
     # STARTTLS-only path. Explicit opt-in via SMTP_USE_SSL=1, OR auto-enable
     # when port == 465 (the IANA SMTPS port).
     use_ssl = (
-        os.environ.get("SMTP_USE_SSL", "").strip().lower() in ("1", "true", "yes")
-        or port == 465
+        os.environ.get("SMTP_USE_SSL", "").strip().lower() in ("1", "true", "yes") or port == 465
     )
     try:
         if use_ssl:
@@ -403,14 +407,18 @@ def _send_email(html: str, jobs: list[dict]) -> int:
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument("--all-today", action="store_true",
-                        help="ignore new_ids.json; include all jobs found today")
-    parser.add_argument("--save-only", action="store_true",
-                        help="write digest.html only; do not send email")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="print HTML to stdout; do not write or send")
-    parser.add_argument("--out", default=str(DIGEST_FILE),
-                        help=f"output path (default: {DIGEST_FILE})")
+    parser.add_argument(
+        "--all-today", action="store_true", help="ignore new_ids.json; include all jobs found today"
+    )
+    parser.add_argument(
+        "--save-only", action="store_true", help="write digest.html only; do not send email"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="print HTML to stdout; do not write or send"
+    )
+    parser.add_argument(
+        "--out", default=str(DIGEST_FILE), help=f"output path (default: {DIGEST_FILE})"
+    )
     args = parser.parse_args()
 
     jobs = _select_jobs(args)

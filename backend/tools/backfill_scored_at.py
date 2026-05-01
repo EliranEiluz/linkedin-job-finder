@@ -13,6 +13,7 @@ Idempotent. Atomic. Touches only rows where `scored_at` is missing or null.
 Usage:
     python3 backend/tools/backfill_scored_at.py
 """
+
 from __future__ import annotations
 
 import sys
