@@ -10,7 +10,7 @@ export default defineConfig([
   // App + Vite middleware sources — type-aware lint backed by both
   // tsconfig.app.json (src/**) and tsconfig.node.json (vite.config.ts).
   {
-    files: ['src/**/*.{ts,tsx}', 'vite.config.ts'],
+    files: ['src/**/*.{ts,tsx}', 'vite.config.ts', 'middleware/**/*.ts'],
     extends: [
       js.configs.recommended,
       tseslint.configs.strictTypeChecked,

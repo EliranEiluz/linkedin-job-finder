@@ -4,7 +4,38 @@ import { promises as fs } from 'node:fs';
 import { existsSync, openSync, closeSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { ServerResponse } from 'node:http';
+import {
+  REPO_ROOT,
+  CONFIG_PATH,
+  CV_PATH,
+  STATUS_PATH,
+  LOG_DIR,
+  SEARCH_SCRIPT,
+  LINKEDIN_SESSION_PATH,
+  SCHEDULER_CTL,
+  ONBOARDING_CTL,
+  CONFIG_SUGGEST_CTL,
+  PROFILE_CTL,
+  CORPUS_CTL,
+  PREFLIGHT_CTL,
+  LLM_CTL,
+  CV_EXTRACT_CTL,
+  SCHEDULER_TIMEOUT_MS,
+  ONBOARDING_GENERATE_TIMEOUT_MS,
+  ONBOARDING_SAVE_TIMEOUT_MS,
+  CONFIG_SUGGEST_TIMEOUT_MS,
+  PROFILE_TIMEOUT_MS,
+  CORPUS_TIMEOUT_MS,
+  PREFLIGHT_TIMEOUT_MS,
+  LLM_LIST_TIMEOUT_MS,
+  LLM_SAVE_TIMEOUT_MS,
+  LLM_TEST_TIMEOUT_MS,
+  CV_EXTRACT_TIMEOUT_MS,
+  CV_EXTRACT_MAX_BYTES,
+} from './middleware/paths';
+import { runCtl, type CtlResult as SchedulerCtlResult } from './middleware/runCtl';
+import { readJsonBody, sendJson } from './middleware/http';
 
 // Personal-tool dev-only middleware. Lets the UI read/write the scraper's
 // config.json on disk during `npm run dev`. NOT compiled into the production
@@ -12,41 +43,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 // After the 2026-04 reorg: Python lives under backend/. State files
 // (config.json, cv.txt, scrape_status.json, scrape_logs/) stay at the
 // project root so the layout stays familiar.
-const REPO_ROOT = path.resolve(__dirname, '..');
-const BACKEND_DIR = path.join(REPO_ROOT, 'backend');
-const CONFIG_PATH = path.join(REPO_ROOT, 'config.json');
-const CV_PATH = path.join(REPO_ROOT, 'cv.txt');
-const STATUS_PATH = path.join(REPO_ROOT, 'scrape_status.json');
-const LOG_DIR = path.join(REPO_ROOT, 'scrape_logs');
-const SEARCH_SCRIPT = path.join(BACKEND_DIR, 'search.py');
-const SCHEDULER_CTL = path.join(BACKEND_DIR, 'ctl', 'scheduler_ctl.py');
-const SCHEDULER_TIMEOUT_MS = 10_000;
-const ONBOARDING_CTL = path.join(BACKEND_DIR, 'ctl', 'onboarding_ctl.py');
-const ONBOARDING_GENERATE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes — Claude call
-const ONBOARDING_SAVE_TIMEOUT_MS = 10_000;
-// Config-suggester is a single Claude call over feedback signals; 60s aligns
-// with the script's own CLAUDE_TIMEOUT_S so a slow CLI response gets killed
-// HTTP-side at the same time the subprocess does.
-const CONFIG_SUGGEST_CTL = path.join(BACKEND_DIR, 'ctl', 'config_suggest_ctl.py');
-const CONFIG_SUGGEST_TIMEOUT_MS = 75_000;
-const PROFILE_CTL = path.join(BACKEND_DIR, 'ctl', 'profile_ctl.py');
-const CORPUS_CTL = path.join(BACKEND_DIR, 'ctl', 'corpus_ctl.py');
-const CORPUS_TIMEOUT_MS = 8_000;
-const PROFILE_TIMEOUT_MS = 10_000;
-// Wizard plumbing — Stage 3 welcome wizard (preflight + LLM picker + linkedin
-// session check). All shell out via runCtl() like the other ctl scripts.
-const PREFLIGHT_CTL = path.join(BACKEND_DIR, 'ctl', 'preflight_ctl.py');
-const PREFLIGHT_TIMEOUT_MS = 30_000;
-const LLM_CTL = path.join(BACKEND_DIR, 'ctl', 'llm_ctl.py');
-const LLM_LIST_TIMEOUT_MS = 10_000;
-const LLM_SAVE_TIMEOUT_MS = 10_000;
-const LLM_TEST_TIMEOUT_MS = 30_000;
-const LINKEDIN_SESSION_PATH = path.join(REPO_ROOT, 'linkedin_session.json');
-// CV PDF extraction — wizard Step 4 pipes uploaded PDFs through this so the
-// user gets real text instead of FileReader.readAsText() gibberish.
-const CV_EXTRACT_CTL = path.join(BACKEND_DIR, 'ctl', 'cv_extract_ctl.py');
-const CV_EXTRACT_TIMEOUT_MS = 30_000;
-const CV_EXTRACT_MAX_BYTES = 10 * 1024 * 1024; // mirrors MAX_BYTES in cv_extract_ctl.py
 
 type ScrapeMode = 'loggedin' | 'guest';
 type RunStatus = 'running' | 'done' | 'error' | 'killed';
@@ -65,20 +61,6 @@ interface ScrapeRun {
 interface ScrapeStatusFile {
   runs: ScrapeRun[];
 }
-
-const readJsonBody = (req: IncomingMessage): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', () => { resolve(Buffer.concat(chunks).toString('utf8')); });
-    req.on('error', reject);
-  });
-
-const sendJson = (res: ServerResponse, status: number, body: unknown) => {
-  res.statusCode = status;
-  res.setHeader('Content-Type', 'application/json');
-  res.end(JSON.stringify(body));
-};
 
 // --- scrape_status.json helpers ---------------------------------------
 
@@ -250,83 +232,9 @@ const spawnScrape = async (mode: ScrapeMode): Promise<ScrapeRun> => {
   }
 };
 
-// --- ctl shell-out helper --------------------------------------------
-
-interface SchedulerCtlResult {
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-  spawnError: string | null;
-}
-
-// Generic spawn-and-pipe for any of the backend/ctl/*.py scripts. Uses
-// spawn (not exec) so args pass verbatim — no shell injection vector even
-// though inputs come from a trusted local UI. Optional stdinPayload is
-// piped in (and EPIPE swallowed if the child already exited). The hard
-// timeout SIGKILLs the child and surfaces a `timedOut` flag.
-//
-// All five callers (scheduler / onboarding / config-suggest / profile /
-// corpus) delegate here; the per-route response shapers downstream still
-// own status-code policy (e.g. corpus's 200/400/409/500/504 vs scheduler's
-// 200/500/504).
-const runCtl = (
-  scriptPath: string,
-  args: string[],
-  stdinPayload: string | null,
-  timeoutMs: number,
-): Promise<SchedulerCtlResult> =>
-  new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    let spawnError: string | null = null;
-    let settled = false;
-
-    const child = spawn('python3', [scriptPath, ...args], {
-      cwd: REPO_ROOT,
-      env: process.env,
-    });
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try { child.kill('SIGKILL'); } catch { /* already dead */ }
-    }, timeoutMs);
-
-    child.stdout.on('data', (c: Buffer) => { stdout += c.toString('utf8'); });
-    child.stderr.on('data', (c: Buffer) => { stderr += c.toString('utf8'); });
-    child.on('error', (err) => {
-      spawnError = (err).message;
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ exitCode: null, stdout, stderr, timedOut, spawnError });
-    });
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ exitCode: code, stdout, stderr, timedOut, spawnError });
-    });
-
-    if (stdinPayload !== null) {
-      child.stdin.on('error', (err) => {
-        // Swallow EPIPE — the child may have already exited; close handler
-        // surfaces the real error.
-        if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
-          console.error(`[${path.basename(scriptPath)}] stdin error:`, err);
-        }
-      });
-      child.stdin.end(stdinPayload);
-    } else {
-      // No stdin payload: just close the stream so the child sees EOF.
-      child.stdin.end();
-    }
-  });
-
-// Backwards-compat thin wrappers. Existing call sites + response shapers
-// reference these by name; keeping them lets the diff stay small and
-// preserves the per-script default-timeout knobs.
+// Backwards-compat thin wrapper. Call sites + response shapers reference
+// it by name; keeping it lets the diff against the original handlers
+// stay small and pins the per-script default-timeout knob in one place.
 const runSchedulerCtl = (args: string[]): Promise<SchedulerCtlResult> =>
   runCtl(SCHEDULER_CTL, args, null, SCHEDULER_TIMEOUT_MS);
 
