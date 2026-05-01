@@ -402,6 +402,26 @@ check("email", "digest HTML renders (no SMTP)", t_email_renders)
 if os.environ.get("PHASE_D_SEND_EMAIL", "1") == "1":
     check("email", "real SMTP send to configured EMAIL_TO", t_email_smtp_live)
 
+
+def t_notifications_ctl_smoke():
+    # Delegates to the standalone smoke runner under backend/tests/. Lives in
+    # its own file so contributors can run JUST the notifications-ctl checks
+    # quickly (`python3 backend/tests/notifications_ctl_test.py`) without
+    # waiting on the full phase-D matrix.
+    smoke = HERE / "notifications_ctl_test.py"
+    p = subprocess.run(
+        ["python3", str(smoke)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=str(ROOT),
+    )
+    assert p.returncode == 0, f"smoke failed: {p.stderr[-300:] or p.stdout[-300:]}"
+    return p.stdout.strip()
+
+
+check("email", "notifications_ctl JSON-CLI smoke", t_notifications_ctl_smoke)
+
 # ------- 7. UI build -------
 section("7. UI build")
 
