@@ -16,16 +16,18 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import json
 import os
 import sys
 from pathlib import Path
-from typing import NoReturn
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
 ROOT = HERE.parent.parent
+sys.path.insert(0, str(HERE))  # → backend/ctl/  (for _common)
 sys.path.insert(0, str(HERE.parent))  # → backend/
 sys.path.insert(0, str(ROOT))  # so `from backend.llm` resolves
+
+from _common import emit as _emit  # noqa: E402  (sys.path shim above)
+from _common import read_stdin_json  # noqa: E402  (sys.path shim above)
 
 from backend.llm import test_provider  # noqa: E402  (sys.path shim above)
 
@@ -93,28 +95,13 @@ PROVIDER_META = [
 ]
 
 
-def _emit(obj: dict, code: int = 0) -> NoReturn:
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-    sys.exit(code)
-
-
-def _read_stdin_json() -> dict:
-    raw = sys.stdin.read()
-    if not raw.strip():
-        raise ValueError("empty stdin")
-    obj = json.loads(raw)
-    if not isinstance(obj, dict):
-        raise TypeError("stdin must be a JSON object")
-    return obj
-
-
 def cmd_list() -> None:
     _emit({"ok": True, "providers": PROVIDER_META})
 
 
 def cmd_test() -> None:
     try:
-        body = _read_stdin_json()
+        body = read_stdin_json()
     except Exception as e:
         _emit({"ok": False, "error": f"bad stdin: {e}"}, code=1)
     name = body.get("name") or "auto"
@@ -183,7 +170,7 @@ def _atomic_write_env(env_var: str, key_value: str) -> None:
 
 def cmd_save_credential() -> None:
     try:
-        body = _read_stdin_json()
+        body = read_stdin_json()
     except Exception as e:
         _emit({"ok": False, "error": f"bad stdin: {e}"}, code=1)
     name = body.get("name")

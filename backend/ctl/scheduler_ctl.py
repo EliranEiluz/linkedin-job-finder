@@ -38,7 +38,6 @@ import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import NoReturn
 
 # --- paths ---------------------------------------------------------------
 HERE = Path(__file__).resolve().parent  # backend/ctl/
@@ -65,13 +64,14 @@ INTERVAL_LABELS = {
 
 # --- scheduler abstraction (OS-dispatched) -------------------------------
 # sys.path shim so this script can be invoked directly (`python3 scheduler_ctl.py …`)
-# without `pip install -e .`. We add backend/ctl/ for the bare-name `scheduler`
-# import path AND the repo root so `backend.ctl.scheduler` resolves cleanly
-# (mypy needs the latter; the bare-name fallback keeps direct CLI invocation
-# working unchanged).
+# without `pip install -e .`. We add backend/ctl/ for the bare-name `_common` /
+# `scheduler` import paths AND the repo root so `backend.ctl.scheduler` resolves
+# cleanly (mypy needs the latter; the bare-name fallback keeps direct CLI
+# invocation working unchanged).
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT))
-from backend.ctl.scheduler import get_scheduler  # noqa: E402  (sys.path shim above)
+from _common import emit as _emit  # noqa: E402  (sys.path shim above)
+from scheduler import get_scheduler  # noqa: E402  (sys.path shim above)
 
 _SCHEDULER = get_scheduler(
     working_dir=ROOT,
@@ -143,11 +143,6 @@ def _log_tail(path: Path, max_lines: int = 40, max_bytes: int = 16 * 1024) -> st
 
 
 # --- helpers ----------------------------------------------------------------
-
-
-def _emit(obj: dict, code: int = 0) -> NoReturn:
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-    sys.exit(code)
 
 
 def _run_command() -> list[str]:

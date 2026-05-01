@@ -23,24 +23,22 @@ Commands (no stdin needed, single JSON object on stdout):
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import NoReturn
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
 ROOT = HERE.parent.parent  # project root
+# sys.path shim so the bare `_common` import below resolves when this script
+# is invoked directly (`python3 backend/ctl/preflight_ctl.py …`).
+sys.path.insert(0, str(HERE))
+
+from _common import emit as _emit  # noqa: E402  (sys.path shim above)
 
 # Same env-file path the LLM credential save writes to.
 ENV_FILE = Path.home() / ".linkedin-jobs.env"
-
-
-def _emit(obj: dict, code: int = 0) -> NoReturn:
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-    sys.exit(code)
 
 
 def _check_python() -> dict:

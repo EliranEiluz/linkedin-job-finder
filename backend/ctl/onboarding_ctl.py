@@ -40,7 +40,6 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import NoReturn
 
 # Reuse the scraper's own parsing + normalization so the generated config goes
 # through the exact same path load_config() would apply on next scrape. After
@@ -48,6 +47,7 @@ from typing import NoReturn
 # so we add THAT directory to sys.path (HERE = backend/ctl).
 HERE = Path(__file__).resolve().parent  # backend/ctl/
 ROOT = HERE.parent.parent  # project root (two levels up from backend/ctl/)
+sys.path.insert(0, str(HERE))  # → backend/ctl/  (for _common)
 sys.path.insert(0, str(HERE.parent))  # → backend/
 sys.path.insert(0, str(ROOT))  # → project root, so `from backend.llm` resolves
 
@@ -56,6 +56,10 @@ sys.path.insert(0, str(ROOT))  # → project root, so `from backend.llm` resolve
 # live config.json as a side effect — harmless here).
 # Route LLM calls through the provider abstraction so users on Gemini /
 # OpenRouter / Ollama can run the wizard without a Claude account.
+from _common import atomic_write_text as _atomic_write  # noqa: E402  (sys.path shim above)
+from _common import emit as _emit  # noqa: E402  (sys.path shim above)
+from _common import read_stdin_json  # noqa: E402  (sys.path shim above)
+
 from backend.llm import complete as llm_complete  # noqa: E402  (sys.path shim above)
 from backend.llm import get_provider  # noqa: E402  (sys.path shim above)
 from backend.search import (  # noqa: E402  (sys.path shim above)
@@ -83,21 +87,6 @@ LLM_MAX_TOKENS = 8192
 # real CV.
 CV_MAX_CHARS = 30_000
 INTENT_MAX_CHARS = 4_000
-
-
-def _emit(obj: dict, code: int = 0) -> NoReturn:
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-    sys.exit(code)
-
-
-def _read_stdin_json() -> dict:
-    raw = sys.stdin.read()
-    if not raw.strip():
-        raise ValueError("empty stdin")
-    obj = json.loads(raw)
-    if not isinstance(obj, dict):
-        raise TypeError("stdin must be a JSON object")
-    return obj
 
 
 # ---------- meta-prompt ---------------------------------------------------
@@ -317,7 +306,7 @@ def _validate_and_shape(raw_cfg: dict) -> dict:
 
 def cmd_generate(_args) -> None:
     try:
-        body = _read_stdin_json()
+        body = read_stdin_json()
     except Exception as e:
         _emit({"ok": False, "error": f"bad stdin: {e}"}, 1)
 
@@ -368,12 +357,6 @@ def cmd_generate(_args) -> None:
     _emit({"ok": True, "config": config, "raw": raw}, 0)
 
 
-def _atomic_write(path: Path, data: str) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(data, encoding="utf-8")
-    tmp.replace(path)
-
-
 def _validate_profile_name(name: str) -> None:
     if not isinstance(name, str) or not _PROFILE_NAME_RE.match(name):
         raise ValueError(f"invalid profile_name {name!r} — must match {_PROFILE_NAME_RE.pattern}")
@@ -401,7 +384,7 @@ def _activate_profile(profile_name: str) -> None:
 
 def cmd_save(_args) -> None:
     try:
-        body = _read_stdin_json()
+        body = read_stdin_json()
     except Exception as e:
         _emit({"ok": False, "error": f"bad stdin: {e}"}, 1)
 
@@ -454,7 +437,7 @@ def cmd_save(_args) -> None:
 
 def cmd_save_as_profile(_args) -> None:
     try:
-        body = _read_stdin_json()
+        body = read_stdin_json()
     except Exception as e:
         _emit({"ok": False, "error": f"bad stdin: {e}"}, 1)
 

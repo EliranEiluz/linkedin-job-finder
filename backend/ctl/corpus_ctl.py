@@ -61,32 +61,32 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NoReturn
 from urllib.parse import parse_qs, urlparse
 
-# Add backend/ to sys.path so the bare `search` import resolves both when
-# this script is invoked directly (`python3 backend/ctl/corpus_ctl.py …`)
-# AND when phase_d_test.py imports both `search` and `corpus_ctl` from the
-# same `backend/` directory: the test patches `search.RESULTS_FILE` on the
-# bare-name module, so we MUST also import via the bare name to share the
-# same module object.
+# Add backend/ctl/ + backend/ to sys.path so:
+#  - `from _common import …` works in this file
+#  - the bare `search` import resolves both when this script is invoked
+#    directly (`python3 backend/ctl/corpus_ctl.py …`) AND when phase_d_test.py
+#    imports both `search` and `corpus_ctl` from the same `backend/` directory:
+#    the test patches `search.RESULTS_FILE` on the bare-name module, so we
+#    MUST also import via the bare name to share the same module object.
 _HERE = Path(__file__).resolve().parent  # backend/ctl/
+sys.path.insert(0, str(_HERE))  # → backend/ctl/  (for _common)
 sys.path.insert(0, str(_HERE.parent))  # → backend/
 
 import search  # noqa: E402  (sys.path shim above)
+from _common import emit as _emit  # noqa: E402  (sys.path shim above)
 
 
 def _read_stdin_json() -> dict:
+    """corpus_ctl is the single ctl that tolerates non-object stdin (some
+    legacy callers send `[]` or just `{}`); coerce any non-object payload
+    to an empty dict rather than raising."""
     raw = sys.stdin.read()
     if not raw.strip():
         return {}
     parsed = json.loads(raw)
     return parsed if isinstance(parsed, dict) else {}
-
-
-def _emit(obj: dict, code: int = 0) -> NoReturn:
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-    sys.exit(code)
 
 
 # ---------- delete ----------

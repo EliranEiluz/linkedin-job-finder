@@ -100,7 +100,10 @@ python_version = "3.10"
 # the repo root as a namespace package source root and silences the
 # "found twice under different module names" duplicate-module error.
 explicit_package_bases = true
-mypy_path = "."
+# Roots where mypy looks for modules. The repo root resolves `backend.*`;
+# `backend/ctl` resolves the bare-name `_common` import the ctl scripts do
+# via sys.path shims.
+mypy_path = ".:backend/ctl"
 disallow_untyped_defs = true
 warn_unused_ignores = true
 warn_return_any = true
@@ -127,6 +130,8 @@ module = [
     # mypy can't follow the runtime path manipulation. The `backend.search`
     # alias still gets full type checking via the strict global config.
     "search",
+    # Same story for the local `scheduler` package (backend/ctl/scheduler/).
+    "scheduler",
 ]
 ignore_missing_imports = true
 
@@ -135,11 +140,25 @@ ignore_missing_imports = true
 # Their public surface is JSON envelopes on stdout, not typed function signatures —
 # argparse-driven cmd_* handlers all return None and don't benefit from explicit
 # annotation. Library code (backend/search.py, backend/llm/*) keeps strict mode.
+#
+# Bare-name aliases below (without the `backend.` prefix) cover the case where
+# mypy resolves a ctl script via its `mypy_path = "backend/ctl"` root rather
+# than via the package path — both spellings refer to the same files.
 module = [
     "backend.ctl.*",
     "backend.tools.*",
     "backend.run",
     "backend.send_email",
+    "scheduler_ctl",
+    "onboarding_ctl",
+    "profile_ctl",
+    "corpus_ctl",
+    "preflight_ctl",
+    "llm_ctl",
+    "config_suggest_ctl",
+    "cv_extract_ctl",
+    "rescue_unscored",
+    "backfill_category_name",
 ]
 disallow_untyped_defs = false
 check_untyped_defs = true

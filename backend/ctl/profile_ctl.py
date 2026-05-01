@@ -54,10 +54,17 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import NoReturn
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
 ROOT = HERE.parent.parent  # project root (state lives here)
+# sys.path shim so the bare `_common` import below resolves when this script
+# is invoked directly (`python3 backend/ctl/profile_ctl.py …`).
+sys.path.insert(0, str(HERE))
+
+from _common import atomic_write_json as _atomic_write_json  # noqa: E402  (sys.path shim above)
+from _common import atomic_write_text  # noqa: E402  (sys.path shim above)
+from _common import emit as _emit  # noqa: E402  (sys.path shim above)
+
 CONFIGS_DIR = ROOT / "configs"
 ACTIVE_FILE = ROOT / "active_profile.txt"
 CONFIG_SYMLINK = ROOT / "config.json"
@@ -66,11 +73,6 @@ DEFAULTS_FILE = ROOT / "defaults.json"
 # Names that could collide with filesystem quirks or break the symlink logic.
 # Keep the regex strict; users can rename later.
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$")
-
-
-def _emit(obj: dict, code: int = 0) -> NoReturn:
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-    sys.exit(code)
 
 
 def _validate_name(name: str) -> None:
@@ -101,9 +103,7 @@ def _read_active() -> str | None:
 
 def _write_active(name: str) -> None:
     _validate_name(name)
-    tmp = ACTIVE_FILE.with_suffix(ACTIVE_FILE.suffix + ".tmp")
-    tmp.write_text(name + "\n", encoding="utf-8")
-    tmp.replace(ACTIVE_FILE)
+    atomic_write_text(ACTIVE_FILE, name + "\n")
 
 
 def _list_profiles() -> list[str]:
@@ -120,14 +120,6 @@ def _list_profiles() -> list[str]:
             continue
         out.append(name)
     return out
-
-
-def _atomic_write_json(path: Path, obj: object) -> None:
-    """Write a JSON object atomically (temp+rename, same dir)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    tmp.replace(path)
 
 
 def _repoint_symlink(target_name: str) -> None:
