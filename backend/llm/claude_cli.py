@@ -5,8 +5,8 @@ from __future__ import annotations
 import shutil
 import subprocess
 
+from ._shared import TEST_BATCH, TEST_CV, parse_json_response
 from .base import LLMProvider
-from ._shared import parse_json_response, TEST_BATCH, TEST_CV
 
 
 class ClaudeCLIProvider(LLMProvider):
@@ -63,8 +63,8 @@ class ClaudeCLIProvider(LLMProvider):
         prompt: str,
         *,
         system: str | None = None,
-        max_tokens: int = 4096,
-        json_mode: bool = False,
+        max_tokens: int = 4096,  # noqa: ARG002 — CLI has no max-tokens flag
+        json_mode: bool = False,  # noqa: ARG002 — CLI has no JSON-mode flag
     ) -> str | None:
         # CLI has no separate `--system` flag in the -p path; we just prepend
         # the system message to the user prompt. json_mode is irrelevant here

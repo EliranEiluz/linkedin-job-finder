@@ -43,16 +43,17 @@ ROOT = HERE.parent.parent  # project root (two levels up)
 sys.path.insert(0, str(HERE.parent))  # → backend/
 sys.path.insert(0, str(ROOT))  # → project root, so `from backend.llm` resolves
 
-from search import (  # noqa: E402 — path juggling above
+from backend.search import (  # noqa: E402  (sys.path shim above)
     _classify_feedback_row,
+    _clean_title,
     _example_recency_key,
     _parse_claude_json,
-    _clean_title,
 )
 
 # Route LLM calls through the provider abstraction so users on Gemini /
 # OpenRouter / Ollama can run the suggester without a Claude account.
-from backend.llm import complete as llm_complete, get_provider  # noqa: E402
+from backend.llm import complete as llm_complete  # noqa: E402  (sys.path shim above)
+from backend.llm import get_provider  # noqa: E402  (sys.path shim above)
 
 RESULTS_PATH = ROOT / "results.json"
 CONFIG_PATH = ROOT / "config.json"
@@ -86,7 +87,7 @@ def _read_stdin_json() -> dict:
         return {}  # no params required; empty stdin is valid
     obj = json.loads(raw)
     if not isinstance(obj, dict):
-        raise ValueError("stdin must be a JSON object")
+        raise TypeError("stdin must be a JSON object")
     return obj
 
 
@@ -298,7 +299,7 @@ def _call_llm(prompt: str) -> tuple[int, str, str]:
         )
     try:
         text = llm_complete(prompt, max_tokens=LLM_MAX_TOKENS, json_mode=True)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return 1, "", f"[{provider.name}] {type(e).__name__}: {e}"
     if not text or not text.strip():
         return 1, "", f"[{provider.name}] empty response"
@@ -333,7 +334,7 @@ def _shape_suggestions(parsed: dict) -> dict:
             out.append(
                 {
                     k: str(item.get(k) or "").strip()
-                    for k in required_keys + ("reason",)
+                    for k in (*required_keys, "reason")
                     if k in required_keys or k == "reason"
                 }
             )
@@ -458,5 +459,5 @@ if __name__ == "__main__":
         main()
     except SystemExit:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"{type(e).__name__}: {e}"}, 1)

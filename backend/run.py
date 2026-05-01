@@ -11,6 +11,7 @@ plist/unit files get regenerated to point here.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -52,16 +53,14 @@ def _ts() -> str:
 
 def _log(msg: str) -> None:
     line = f"[{_ts()}] {msg}\n"
-    with open(LOG, "a", encoding="utf-8") as f:
+    with LOG.open("a", encoding="utf-8") as f:
         f.write(line)
 
 
 def _rotate_log() -> None:
     if LOG.exists() and LOG.stat().st_size > LOG_ROTATE_BYTES:
-        try:
+        with contextlib.suppress(OSError):
             LOG.replace(LOG.with_suffix(".log.1"))
-        except OSError:
-            pass
 
 
 def main() -> int:

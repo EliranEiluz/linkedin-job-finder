@@ -185,7 +185,7 @@ def main():
         "cloudflare",
         "qualcomm",
     ]
-    big_hits = {n: 0 for n in BIGCO_NAMES}
+    big_hits = dict.fromkeys(BIGCO_NAMES, 0)
     for c in all_cards:
         co = (c["company"] or "").lower()
         for n in BIGCO_NAMES:

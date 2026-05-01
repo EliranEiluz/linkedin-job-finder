@@ -9,9 +9,9 @@ from .base import LLMProvider
 from .claude_cli import ClaudeCLIProvider
 from .claude_sdk import ClaudeSDKProvider
 from .gemini import GeminiProvider
+from .ollama import OllamaProvider
 from .openai import OpenAIProvider
 from .openrouter import OpenRouterProvider
-from .ollama import OllamaProvider
 
 PROVIDERS = {
     "claude_cli": ClaudeCLIProvider,
@@ -66,10 +66,11 @@ def _quick_available(p: LLMProvider) -> bool:
     if n == "ollama":
         try:
             import requests
+
             from .ollama import HOST
 
             r = requests.get(f"{HOST}/api/tags", timeout=2)
-            return r.status_code == 200
+            return bool(r.status_code == 200)
         except Exception:
             return False
     return False
@@ -140,11 +141,11 @@ def test_provider(name: str | None = None) -> tuple[bool, str]:
 
 
 __all__ = [
-    "LLMProvider",
-    "PROVIDERS",
     "AUTO_ORDER",
+    "PROVIDERS",
+    "LLMProvider",
+    "complete",
     "get_provider",
     "score_batch",
-    "complete",
     "test_provider",
 ]

@@ -63,10 +63,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-# Add backend/ to sys.path so we can import sibling `search` module.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Add backend/ to sys.path so the bare `search` import resolves both when
+# this script is invoked directly (`python3 backend/ctl/corpus_ctl.py …`)
+# AND when phase_d_test.py imports both `search` and `corpus_ctl` from the
+# same `backend/` directory: the test patches `search.RESULTS_FILE` on the
+# bare-name module, so we MUST also import via the bare name to share the
+# same module object.
+_HERE = Path(__file__).resolve().parent  # backend/ctl/
+sys.path.insert(0, str(_HERE.parent))  # → backend/
 
-import search  # noqa: E402 — needs the path shim above
+import search  # noqa: E402  (sys.path shim above)
 
 
 def _read_stdin_json() -> dict:
@@ -165,10 +171,7 @@ def cmd_rate(_args) -> None:
             comment_value = None
         elif isinstance(comment_in, str):
             stripped = comment_in.strip()
-            if stripped == "":
-                comment_value = None
-            else:
-                comment_value = stripped[:_COMMENT_MAX_CHARS]
+            comment_value = None if stripped == "" else stripped[:_COMMENT_MAX_CHARS]
         else:
             _emit({"ok": False, "error": "comment must be string or null"}, 1)
 

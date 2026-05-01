@@ -177,7 +177,9 @@ def t_defaults_shape():
 
 
 def t_migrate_legacy():
-    import importlib, search
+    import importlib
+
+    import search
 
     importlib.reload(search)
     legacy = {
@@ -190,7 +192,7 @@ def t_migrate_legacy():
     assert "categories" in migrated and len(migrated["categories"]) == 3
     types = [c["type"] for c in migrated["categories"]]
     assert types == ["keyword", "keyword", "company"], types
-    return f"3 cats built from legacy"
+    return "3 cats built from legacy"
 
 
 def t_malformed_config():
@@ -203,7 +205,9 @@ def t_malformed_config():
         backup = orig_cfg.read_text()
         orig_cfg.write_text("{not json")
     try:
-        import importlib, search
+        import importlib
+
+        import search
 
         importlib.reload(search)
         merged = search.load_config()
@@ -505,7 +509,9 @@ def t_atomic_merge():
     # Hammer save_results_merge with three parallel processes and verify the
     # union is correct (no lost writes). Use %-substitution (not .format())
     # so the dict-literal braces in the payload list-comp survive intact.
-    import importlib, search
+    import importlib
+
+    import search
 
     importlib.reload(search)
     tmp_dir = HERE / ".phase-d-merge-test"
@@ -580,9 +586,9 @@ check("backup", "backup directory + manifest present", t_backup_present)
 section("11. Corpus field coverage (post-feature-wave)")
 
 import contextlib
+import importlib
 import io
 import tempfile
-import importlib
 
 
 def _corpus_call(cmd_fn, body):

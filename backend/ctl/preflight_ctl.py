@@ -69,7 +69,7 @@ def _check_node() -> dict:
             timeout=5,
         )
         ver = (proc.stdout or proc.stderr).strip()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {
             "name": "node",
             "ok": False,
@@ -108,7 +108,7 @@ def _check_playwright_chromium() -> dict:
                     "advisory": True,
                 }
             return {"name": "playwright_chromium", "ok": True, "value": str(exe_path)}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {
             "name": "playwright_chromium",
             "ok": False,
@@ -130,7 +130,7 @@ def _check_writable(path: Path, name: str) -> dict:
         sentinel.write_text("x")
         sentinel.unlink()
         return {"name": name, "ok": True, "value": str(target_dir)}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {
             "name": name,
             "ok": False,
@@ -168,5 +168,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except SystemExit:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"{type(e).__name__}: {e}"}, code=1)

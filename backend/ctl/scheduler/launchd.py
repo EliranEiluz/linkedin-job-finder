@@ -3,6 +3,7 @@ that used to live inline in scheduler_ctl.py — no behavior change."""
 
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
 from pathlib import Path
@@ -111,10 +112,8 @@ class LaunchdScheduler(Scheduler):
     def uninstall(self) -> None:
         if INSTALLED_PLIST.exists():
             self._unload()
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 INSTALLED_PLIST.unlink()
-            except FileNotFoundError:
-                pass
 
     def reload(self, interval_seconds: int, mode: str, run_command: list[str]) -> None:
         if not INSTALLED_PLIST.exists():

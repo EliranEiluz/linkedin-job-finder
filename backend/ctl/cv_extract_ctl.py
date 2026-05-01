@@ -37,7 +37,7 @@ def main() -> int:
     # Read raw bytes (no decoding — stdin.buffer bypasses the text wrapper).
     try:
         data = sys.stdin.buffer.read(MAX_BYTES + 1)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"failed to read stdin: {e}"}, code=1)
         return 1
 
@@ -70,7 +70,7 @@ def main() -> int:
 
     try:
         reader = PdfReader(io.BytesIO(data))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit(
             {"ok": False, "error": f"not a valid PDF: {type(e).__name__}: {e}"},
             code=1,
@@ -95,7 +95,7 @@ def main() -> int:
                     code=1,
                 )
                 return 1
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             _emit(
                 {
                     "ok": False,
@@ -114,7 +114,7 @@ def main() -> int:
             break
         try:
             parts.append(page.extract_text() or "")
-        except Exception:  # noqa: BLE001
+        except Exception:
             # One bad page shouldn't kill the whole extraction. Skip it.
             parts.append("")
 
@@ -150,5 +150,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except SystemExit:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"{type(e).__name__}: {e}"}, code=1)

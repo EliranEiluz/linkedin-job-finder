@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 
+from ._shared import TEST_BATCH, TEST_CV, parse_json_response
 from .base import LLMProvider
-from ._shared import parse_json_response, TEST_BATCH, TEST_CV
 
 # qwen2.5:32b strikes a fit-vs-RAM balance on a 32GB Mac (~20GB resident).
 # Override via config llm_provider.model or OLLAMA_MODEL env.

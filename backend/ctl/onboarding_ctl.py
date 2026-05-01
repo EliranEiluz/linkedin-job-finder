@@ -53,15 +53,16 @@ sys.path.insert(0, str(ROOT))  # → project root, so `from backend.llm` resolve
 # We only need these three helpers; don't trigger the full load_config() pass
 # at import time beyond what search.py already does (it loads the currently-
 # live config.json as a side effect — harmless here).
-from search import (  # noqa: E402 — path juggling above
-    _parse_claude_json,
-    _normalize_categories,
+from backend.search import (  # noqa: E402  (sys.path shim above)
     _hardcoded_defaults,
+    _normalize_categories,
+    _parse_claude_json,
 )
 
 # Route LLM calls through the provider abstraction so users on Gemini /
 # OpenRouter / Ollama can run the wizard without a Claude account.
-from backend.llm import complete as llm_complete, get_provider  # noqa: E402
+from backend.llm import complete as llm_complete  # noqa: E402  (sys.path shim above)
+from backend.llm import get_provider  # noqa: E402  (sys.path shim above)
 
 CV_PATH = ROOT / "cv.txt"
 CONFIG_PATH = ROOT / "config.json"
@@ -95,7 +96,7 @@ def _read_stdin_json() -> dict:
         raise ValueError("empty stdin")
     obj = json.loads(raw)
     if not isinstance(obj, dict):
-        raise ValueError("stdin must be a JSON object")
+        raise TypeError("stdin must be a JSON object")
     return obj
 
 
@@ -213,7 +214,7 @@ def _call_llm(prompt: str) -> tuple[int, str, str]:
         )
     try:
         text = llm_complete(prompt, max_tokens=LLM_MAX_TOKENS, json_mode=True)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return 1, "", f"[{provider.name}] {type(e).__name__}: {e}"
     if not text or not text.strip():
         return 1, "", f"[{provider.name}] empty response"
@@ -262,7 +263,7 @@ def _validate_and_shape(raw_cfg: dict) -> dict:
     defaults = _hardcoded_defaults()
 
     if not isinstance(raw_cfg, dict):
-        raise ValueError("config must be a JSON object")
+        raise TypeError("config must be a JSON object")
 
     def _str(key: str, fb: str) -> str:
         v = raw_cfg.get(key)
@@ -279,10 +280,7 @@ def _validate_and_shape(raw_cfg: dict) -> dict:
         raise ValueError("categories must be a non-empty array")
 
     mp = raw_cfg.get("max_pages")
-    if isinstance(mp, int) and 1 <= mp <= 20:
-        max_pages = mp
-    else:
-        max_pages = 3
+    max_pages = mp if isinstance(mp, int) and 1 <= mp <= 20 else 3
 
     # priority_companies: lowercased, deduped, order-preserving.
     pc_raw = _str_list("priority_companies", [])
@@ -390,8 +388,8 @@ def _repoint_config_symlink(profile_name: str) -> None:
     tmp_link = CONFIG_PATH.parent / (CONFIG_PATH.name + ".linktmp")
     if tmp_link.exists() or tmp_link.is_symlink():
         tmp_link.unlink()
-    os.symlink(rel, tmp_link)
-    os.replace(tmp_link, CONFIG_PATH)
+    tmp_link.symlink_to(rel)
+    tmp_link.replace(CONFIG_PATH)
 
 
 def _activate_profile(profile_name: str) -> None:
@@ -541,7 +539,7 @@ def main() -> None:
         args.func(args)
     except SystemExit:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"{type(e).__name__}: {e}"}, 1)
 
 

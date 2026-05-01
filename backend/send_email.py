@@ -92,7 +92,7 @@ def _select_jobs(args) -> list[dict]:
 # ---------- RENDERING ----------
 
 
-def _chip(label: str, fg: str = None, bg: str = None) -> str:
+def _chip(label: str, fg: str | None = None, bg: str | None = None) -> str:
     fg = fg or COLOR["chip_text"]
     bg = bg or COLOR["chip_bg"]
     return (

@@ -14,19 +14,26 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 
-import search
-from search import (
+# Add backend/ to sys.path so the bare `search` import resolves when this
+# tool is invoked directly (`python3 backend/tools/rescue_unscored.py`).
+# Bare-name import lets the test harness (phase_d_test.py) share the same
+# module object with the test's `import search`.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import search  # noqa: E402  (sys.path shim above)
+from search import (  # noqa: E402  (sys.path shim above)
+    BATCH_SIZE,
+    RESULTS_FILE,
     _apply_claude_scoring,
     _apply_regex_fallback,
     _atomic_merge_json,
     _compute_hot,
     _guest_session,
     _load_cv_text,
-    BATCH_SIZE,
     claude_batch_score,
     fetch_description_guest,
-    RESULTS_FILE,
     is_obviously_offtopic,
 )
 
@@ -96,7 +103,7 @@ def main():
         if i < len(unscored) - 1:
             time.sleep(_random.uniform(1.5, 3.0))
             if (i + 1) % 20 == 0:
-                print(f"    … 20-fetch cool-down (10s)")
+                print("    … 20-fetch cool-down (10s)")
                 time.sleep(10.0)
 
     # Stage 3: Claude batch scoring.

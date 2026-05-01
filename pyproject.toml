@@ -60,13 +60,24 @@ ignore = [
     # Tryceratops is opinionated about message length / EM strings — keep the
     # existing readable error messages.
     "TRY003", "TRY300", "TRY301", "TRY400", "TRY401",
+    # The codebase deliberately uses en-dashes in docstrings/comments for
+    # numeric ranges (e.g. "8–12 digits") and parenthetical asides — they
+    # render correctly in IDEs and aren't ambiguous in context.
+    "RUF002", "RUF003",
     # Allow `print()` for the CLI tools — they intentionally write to stdout.
     # Not in default select, listed here for clarity if anyone enables T20.
 ]
 
 [tool.ruff.lint.per-file-ignores]
 # Test runner is a long script intentionally — don't enforce structure here.
-"backend/tests/*.py" = ["B", "ARG", "SIM", "RUF", "PTH", "TRY", "RET"]
+# E402: section-by-section imports interleaved with `section()` calls are a
+#       deliberate readability choice in phase_d_test.py.
+# E741: single-letter loop vars in throwaway list comps.
+# F811: re-imports of importlib in functions that read fresh module state.
+"backend/tests/*.py" = [
+    "B", "ARG", "SIM", "RUF", "PTH", "TRY", "RET",
+    "E402", "E741", "F401", "F811",
+]
 # Scheduler scripts are CLI entrypoints; ARG warnings on `_args` parser
 # callbacks are intentional.
 "backend/ctl/*.py" = ["ARG001"]
@@ -83,6 +94,13 @@ ignore = [
 # Untyped third-party libs (playwright, bs4, requests) are silenced module-wide.
 [tool.mypy]
 python_version = "3.10"
+# `backend` lives at the repo root and is imported both as `backend.search`
+# (when called via `python3 -m`) and as bare `search` (when ctl scripts
+# `sys.path.insert(0, BACKEND)`). explicit_package_bases tells mypy to treat
+# the repo root as a namespace package source root and silences the
+# "found twice under different module names" duplicate-module error.
+explicit_package_bases = true
+mypy_path = "."
 disallow_untyped_defs = true
 warn_unused_ignores = true
 warn_return_any = true
@@ -105,14 +123,32 @@ module = [
     "winreg",
     "anthropic",
     "anthropic.*",
+    # Bare-name `search` import done by ctl/corpus_ctl.py via sys.path shim —
+    # mypy can't follow the runtime path manipulation. The `backend.search`
+    # alias still gets full type checking via the strict global config.
+    "search",
 ]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# search.py uses dynamic module-level globals (the load_config() pattern that
-# mutates SEARCH_QUERIES, CATEGORIES, etc. at runtime). disallow_untyped_defs
-# stays on; we just allow a couple of locally untyped helpers without breaking
-# the build.
+# CLI entrypoints (backend/ctl/, backend/tools/, backend/run.py, backend/send_email.py).
+# Their public surface is JSON envelopes on stdout, not typed function signatures —
+# argparse-driven cmd_* handlers all return None and don't benefit from explicit
+# annotation. Library code (backend/search.py, backend/llm/*) keeps strict mode.
+module = [
+    "backend.ctl.*",
+    "backend.tools.*",
+    "backend.run",
+    "backend.send_email",
+]
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# search.py uses dynamic module-level globals that mutate at load_config() time
+# (SEARCH_QUERIES / CATEGORIES / etc.). The legacy `_atomic_merge_json` callback
+# style passes around untyped mutator closures — typing them all would not pay
+# for the noise. We keep the rest of the file strict via the global setting.
 module = "backend.search"
 disallow_untyped_calls = false
 

@@ -24,18 +24,21 @@ Pass --all to also show previously seen jobs.
 Pass --no-enrich to skip description fetching (faster).
 """
 
+import argparse
+import contextlib
 import json
 import os
+import random
+import re
+import shutil
 import sys
 import time
-import argparse
-import re
-import random
-import shutil
 import traceback
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote_plus
+
+from filelock import FileLock
 
 # When run as `python3 backend/search.py`, sys.path[0] is backend/ — so
 # `from backend.llm import ...` would 404. Prepend the repo root so the
@@ -60,9 +63,11 @@ def _require_playwright():
     if sync_playwright is not None and PlaywrightTimeout is not Exception:
         return
     try:
+        from playwright.sync_api import (  # noqa: N814 — alias the SDK's CamelCase
+            TimeoutError as _PT,
+        )
         from playwright.sync_api import (
             sync_playwright as _sp,
-            TimeoutError as _PT,
         )
     except ImportError as e:
         raise ImportError(
@@ -77,10 +82,8 @@ def _require_playwright():
 
 
 # Line-buffered stdout so long runs stream progress.
-try:
+with contextlib.suppress(Exception):
     sys.stdout.reconfigure(line_buffering=True)
-except Exception:
-    pass
 
 # ---------- CONFIG ----------
 
@@ -928,7 +931,7 @@ def load_config() -> dict:
     try:
         user_cfg = json.loads(CONFIG_FILE.read_text())
         if not isinstance(user_cfg, dict):
-            print(f"⚠ config.json must be a JSON object — using hardcoded defaults")
+            print("⚠ config.json must be a JSON object — using hardcoded defaults")
             return defaults
     except Exception as e:
         print(f"⚠ config.json invalid ({e}) — using hardcoded defaults")
@@ -1043,7 +1046,6 @@ def _category_name_for_id(cat_id: str) -> str:
 # other's state. filelock uses fcntl on POSIX and msvcrt.locking on Windows
 # under the hood — same semantics on all three OSes, no try/except dance.
 # ---------------------------------------------------------------------------
-from filelock import FileLock
 
 
 def _atomic_merge_json(path: Path, mutator):
@@ -1165,7 +1167,7 @@ def _guest_session():
     """Build a single requests.Session for the whole run (connection reuse +
     consistent headers). Imports are local so logged-in mode doesn't pay
     the startup cost of pulling in requests/bs4 if guest mode isn't used."""
-    import requests  # noqa: F401  (kept here to defer import)
+    import requests
 
     s = requests.Session()
     s.headers.update(GUEST_HEADERS)
@@ -1174,8 +1176,7 @@ def _guest_session():
 
 def _strip_html(s: str) -> str:
     s = re.sub(r"<[^>]+>", " ", s or "")
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _parse_guest_cards(html: str, query: str, category: str) -> list[dict]:
@@ -1414,10 +1415,7 @@ def fetch_description_guest(
             or soup.select_one("[class*='description__text']")
             or soup.select_one("[class*='show-more-less-html']")
         )
-        if desc_el:
-            text = _strip_html(desc_el.decode_contents())
-        else:
-            text = _strip_html(r.text)
+        text = _strip_html(desc_el.decode_contents()) if desc_el else _strip_html(r.text)
         if len(text) < 80:
             return text.lower(), "empty"
         return text.lower(), "ok"
@@ -1453,7 +1451,7 @@ def safe_goto(page, url: str, retries=2):
             return True
         except PlaywrightTimeout:
             if attempt < retries:
-                print(f"  Timeout — retrying...")
+                print("  Timeout — retrying...")
                 time.sleep(random.uniform(3, 5))
                 continue
             return False
@@ -1461,7 +1459,7 @@ def safe_goto(page, url: str, retries=2):
             msg = str(e)
             if "ERR_TOO_MANY_REDIRECTS" in msg or "ERR_ABORTED" in msg:
                 if attempt < retries:
-                    print(f"  Redirect loop — cooling down 8s...")
+                    print("  Redirect loop — cooling down 8s...")
                     time.sleep(8)
                     try:
                         page.goto(
@@ -1535,7 +1533,7 @@ def _classify_card(ebp: str, banner_present: bool) -> str:
 
 def _href_params(href: str) -> tuple[str, str]:
     """Return (trk, eBP). Either may be ''."""
-    from urllib.parse import urlparse, parse_qs
+    from urllib.parse import parse_qs, urlparse
 
     try:
         q = parse_qs(urlparse(href).query)
@@ -1584,10 +1582,11 @@ def _query_tokens(query: str) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
     for t in raw:
-        if t in KEYWORD_KEEP_SHORT or (len(t) >= 4 and t not in KEYWORD_STOPWORDS):
-            if t not in seen:
-                seen.add(t)
-                out.append(t)
+        if t not in seen and (
+            t in KEYWORD_KEEP_SHORT or (len(t) >= 4 and t not in KEYWORD_STOPWORDS)
+        ):
+            seen.add(t)
+            out.append(t)
     return out
 
 
@@ -1704,7 +1703,7 @@ def _load_all_cards(page, max_cards=25, max_scrolls=40, stable_needed=3):
             stable_rounds = 0
             last_count = count
 
-        try:
+        with contextlib.suppress(Exception):
             page.evaluate(
                 f"""() => {{
                   const sels = {pane_selectors_json};
@@ -1721,8 +1720,6 @@ def _load_all_cards(page, max_cards=25, max_scrolls=40, stable_needed=3):
                   return false;
                 }}"""
             )
-        except Exception:
-            pass
         # Slightly longer sleep — content hydration takes ~400-700ms per batch.
         time.sleep(random.uniform(0.8, 1.3))
 
@@ -1771,7 +1768,7 @@ def _extract_jobs_from_cards(
             job_id = href.split("/jobs/view/")[1].split("/")[0].split("?")[0]
 
             # Stage 1: eBP / banner classification.
-            trk, ebp = _href_params(href)
+            _trk, ebp = _href_params(href)
             klass = _classify_card(ebp, banner_present)
             if klass == "jymbii":
                 aria = (link_el.get_attribute("aria-label") or "").strip()
@@ -2048,10 +2045,7 @@ def fetch_description(page, url: str, job_id: str = "") -> tuple[str, str]:
     pages, so the fallback was silently returning "" and masquerading as a
     working code path. CSS selectors are now the sole description source.
     """
-    if job_id:
-        fetch_url = f"https://www.linkedin.com/jobs/search/?currentJobId={job_id}"
-    else:
-        fetch_url = url
+    fetch_url = f"https://www.linkedin.com/jobs/search/?currentJobId={job_id}" if job_id else url
     try:
         if not safe_goto(page, fetch_url):
             return "", "nav-failed"
@@ -2135,7 +2129,7 @@ def score_jobs_in_batches(jobs: list[dict], cv_text: str):
     """Send jobs to Claude in batches. Mutates each job in-place. Falls back
     to regex for any job Claude didn't score."""
     if not jobs:
-        return
+        return None
 
     scored_anything = False
     for i in range(0, len(jobs), BATCH_SIZE):
@@ -2315,9 +2309,7 @@ def _compute_hot(job: dict) -> bool:
     score = job.get("score")
     if isinstance(score, (int, float)) and score >= HOT_SCORE_MIN:
         return True
-    if job.get("priority"):
-        return True
-    return False
+    return bool(job.get("priority"))
 
 
 def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts, fetch_one):
@@ -2379,7 +2371,7 @@ def _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts, fetch_one):
             # Every 20 fetches, an extra cool-down to avoid sustained-rate
             # ratelimiting on bigger batches.
             if (i + 1) % 20 == 0:
-                print(f"    … 20-fetch cool-down (10s)")
+                print("    … 20-fetch cool-down (10s)")
                 time.sleep(10.0)
 
     print(
@@ -2446,16 +2438,16 @@ def _run_loggedin_pipeline(
         # `playwright_locale` / `playwright_timezone`.
         resolved_locale, resolved_tz = _resolved_browser_locale_tz()
         stealth_js = _build_stealth_js(resolved_locale)
-        context_kwargs = dict(
-            viewport={"width": 1280, "height": 800},
-            locale=resolved_locale,
-            timezone_id=resolved_tz,
-            user_agent=(
+        context_kwargs = {
+            "viewport": {"width": 1280, "height": 800},
+            "locale": resolved_locale,
+            "timezone_id": resolved_tz,
+            "user_agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
-        )
+        }
 
         if SESSION_FILE.exists():
             ctx = browser.new_context(storage_state=str(SESSION_FILE), **context_kwargs)
@@ -2471,10 +2463,8 @@ def _run_loggedin_pipeline(
             current = page.url
             if "login" in current or "authwall" in current or "checkpoint" in current:
                 print("Session expired — please log in again.")
-                try:
+                with contextlib.suppress(Exception):
                     SESSION_FILE.unlink()
-                except Exception:
-                    pass
                 ctx.close()
                 browser.close()
                 print("Re-run the script to log in fresh.")
@@ -2537,7 +2527,7 @@ def _run_loggedin_pipeline(
                     new_jobs.append(job)
                 qstats["jobs_kept_after_dedup"] = len(new_in_query)
             except PlaywrightTimeout:
-                print(f"  Timeout — skipping")
+                print("  Timeout — skipping")
                 run_errors.append({"query": query, "error": "PlaywrightTimeout"})
             except Exception as e:
                 print(f"  Error on query {query!r}: {str(e)[:120]}")
@@ -2743,11 +2733,14 @@ def main():
     # Stats accumulators shared across both modes.
     per_query_stats: list[dict] = []
     run_errors: list[dict] = []
-    prefilter_skipped = 0
     diagnosis_counts = {"ok": 0, "empty-dom": 0, "authwall": 0, "nav-failed": 0, "error": 0}
 
+    # Both pipelines return (prefilter_skipped, diagnosis_counts). Only the
+    # latter is read downstream — the per-row title-filter count is already
+    # baked into each job's `scored_by="title-filter"` so the corpus reflects
+    # it and run_history derives the count via that field at write time.
     if args.mode == "guest":
-        prefilter_skipped, diagnosis_counts = _run_guest_pipeline(
+        _prefilter_skipped, diagnosis_counts = _run_guest_pipeline(
             args=args,
             all_queries=all_queries,
             seen=seen,
@@ -2759,7 +2752,7 @@ def main():
             run_errors=run_errors,
         )
     else:
-        prefilter_skipped, diagnosis_counts = _run_loggedin_pipeline(
+        _prefilter_skipped, diagnosis_counts = _run_loggedin_pipeline(
             args=args,
             all_queries=all_queries,
             seen=seen,
@@ -2864,7 +2857,11 @@ def main():
     # would silently de-sync the manual-run path from the scheduled-run path.
     # Same convention as the HERE/ROOT block comment near search.py:805.
     try:
-        from send_email import build_digest_html
+        # `send_email` is a sibling module in backend/ (not installed); both
+        # the bare-name and `backend.send_email` paths work because we insert
+        # repo root and backend/ at module-load time. Import here is lazy
+        # because the digest is best-effort.
+        from backend.send_email import build_digest_html
 
         digest_jobs = [j for j in new_jobs if j.get("fit") != "skip"]
         html = build_digest_html(digest_jobs)

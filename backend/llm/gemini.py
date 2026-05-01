@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 
+from ._shared import TEST_BATCH, TEST_CV, parse_json_response
 from .base import LLMProvider
-from ._shared import parse_json_response, TEST_BATCH, TEST_CV
 
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 

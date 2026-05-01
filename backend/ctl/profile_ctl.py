@@ -47,6 +47,7 @@ defaults.json (or a minimal stub).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -140,8 +141,8 @@ def _repoint_symlink(target_name: str) -> None:
     tmp_link = CONFIG_SYMLINK.parent / (CONFIG_SYMLINK.name + ".linktmp")
     if tmp_link.exists() or tmp_link.is_symlink():
         tmp_link.unlink()
-    os.symlink(rel, tmp_link)
-    os.replace(tmp_link, CONFIG_SYMLINK)
+    tmp_link.symlink_to(rel)
+    tmp_link.replace(CONFIG_SYMLINK)
 
 
 def _migrate_if_needed() -> None:
@@ -162,14 +163,7 @@ def _migrate_if_needed() -> None:
     seed_obj: object | None = None
 
     # Case 1: config.json is a regular file with content — migrate it.
-    if CONFIG_SYMLINK.exists() and not CONFIG_SYMLINK.is_symlink():
-        try:
-            seed_obj = json.loads(CONFIG_SYMLINK.read_text(encoding="utf-8"))
-        except Exception:
-            seed_obj = None
-
-    # Case 2: config.json is a broken/valid symlink — read through it.
-    elif CONFIG_SYMLINK.is_symlink():
+    if (CONFIG_SYMLINK.exists() and not CONFIG_SYMLINK.is_symlink()) or CONFIG_SYMLINK.is_symlink():
         try:
             seed_obj = json.loads(CONFIG_SYMLINK.read_text(encoding="utf-8"))
         except Exception:
@@ -199,10 +193,8 @@ def _migrate_if_needed() -> None:
     active = _read_active() or "default"
     if CONFIG_SYMLINK.exists() and not CONFIG_SYMLINK.is_symlink():
         backup = CONFIG_SYMLINK.with_suffix(CONFIG_SYMLINK.suffix + ".premigrate")
-        try:
+        with contextlib.suppress(Exception):
             shutil.copy2(CONFIG_SYMLINK, backup)
-        except Exception:
-            pass
         CONFIG_SYMLINK.unlink()
     _repoint_symlink(active)
 
@@ -288,9 +280,9 @@ def _read_stdin_json_or_empty() -> dict:
     try:
         obj = json.loads(raw)
     except Exception as e:
-        raise ValueError(f"stdin JSON invalid: {e}")
+        raise ValueError(f"stdin JSON invalid: {e}") from e
     if not isinstance(obj, dict):
-        raise ValueError("stdin must be a JSON object (or empty)")
+        raise TypeError("stdin must be a JSON object (or empty)")
     return obj
 
 
@@ -420,7 +412,7 @@ def main() -> None:
         raise
     except ValueError as e:
         _emit({"ok": False, "error": str(e)}, 1)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _emit({"ok": False, "error": f"{type(e).__name__}: {e}"}, 1)
 
 

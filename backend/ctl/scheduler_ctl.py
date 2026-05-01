@@ -125,7 +125,7 @@ def _log_tail(path: Path, max_lines: int = 40, max_bytes: int = 16 * 1024) -> st
         return ""
     try:
         size = path.stat().st_size
-        with open(path, "rb") as f:
+        with path.open("rb") as f:
             if size > max_bytes:
                 f.seek(size - max_bytes)
                 f.readline()  # drop possibly-partial first line

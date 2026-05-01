@@ -55,7 +55,12 @@ def _format_tr(run_command: list[str]) -> str:
 class SchtasksScheduler(Scheduler):
     LABEL = TASK_NAME
 
-    def __init__(self, working_dir: Path, out_log: Path, err_log: Path):
+    def __init__(
+        self,
+        working_dir: Path,
+        out_log: Path,
+        err_log: Path,  # noqa: ARG002 — kept for ABC parity with launchd/systemd
+    ):
         self.working_dir = working_dir
         # schtasks has no separate stdout/stderr redirection; run.py writes
         # to run.log directly. Both args accepted for ABC compliance.
@@ -79,7 +84,12 @@ class SchtasksScheduler(Scheduler):
         # purposes, is_installed == is_loaded.
         return self.is_installed()
 
-    def install(self, interval_seconds: int, mode: str, run_command: list[str]) -> None:
+    def install(
+        self,
+        interval_seconds: int,
+        mode: str,  # noqa: ARG002 — schtasks reads LINKEDINJOBS_MODE from env
+        run_command: list[str],
+    ) -> None:
         # /MO MINUTE expects integer minutes; round up.
         minutes = max(1, (interval_seconds + 59) // 60)
         rc, _, err = _run(

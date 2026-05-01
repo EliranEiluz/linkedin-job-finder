@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
+from ._shared import TEST_BATCH, TEST_CV, parse_json_response
 from .base import LLMProvider
-from ._shared import parse_json_response, TEST_BATCH, TEST_CV
 
 
 class ClaudeSDKProvider(LLMProvider):
     name = "claude_sdk"
 
-    def __init__(self, model: str = "claude-sonnet-4-5"):
+    def __init__(self, model: str = "claude-sonnet-4-5") -> None:
         self.model = model
-        self._client = None
+        # Cached `anthropic.Anthropic` client. Stays Any-typed because the
+        # `anthropic` package is optional — typing it explicitly would force a
+        # hard dep at type-check time.
+        self._client: Any = None
 
-    def _ensure_client(self):
+    def _ensure_client(self) -> Any:
         if self._client is not None:
             return self._client
         if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -77,13 +81,13 @@ class ClaudeSDKProvider(LLMProvider):
         *,
         system: str | None = None,
         max_tokens: int = 4096,
-        json_mode: bool = False,
+        json_mode: bool = False,  # noqa: ARG002 — Anthropic SDK has no JSON-mode flag
     ) -> str | None:
         client = self._ensure_client()
         if client is None:
             return None
         try:
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "model": self.model,
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}],
