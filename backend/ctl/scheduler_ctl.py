@@ -40,8 +40,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # --- paths ---------------------------------------------------------------
-HERE = Path(__file__).resolve().parent      # backend/ctl/
-ROOT = HERE.parent.parent                   # project root
+HERE = Path(__file__).resolve().parent  # backend/ctl/
+ROOT = HERE.parent.parent  # project root
 RUN_SCRIPT = ROOT / "backend" / "run.py"
 SCHED_STATE_FILE = ROOT / "scheduler_state.json"
 LAUNCHD_OUT_LOG = ROOT / "launchd.out.log"
@@ -49,12 +49,17 @@ LAUNCHD_ERR_LOG = ROOT / "launchd.err.log"
 RUN_LOG = ROOT / "run.log"
 
 # --- defaults ------------------------------------------------------------
-DEFAULT_INTERVAL = 43_200   # 12 h
+DEFAULT_INTERVAL = 43_200  # 12 h
 DEFAULT_MODE = "guest"
 
 INTERVAL_LABELS = {
-    3600: "1 h", 7200: "2 h", 14400: "4 h", 21600: "6 h",
-    43200: "12 h", 86400: "24 h", 172800: "48 h",
+    3600: "1 h",
+    7200: "2 h",
+    14400: "4 h",
+    21600: "6 h",
+    43200: "12 h",
+    86400: "24 h",
+    172800: "48 h",
 }
 
 # --- scheduler abstraction (OS-dispatched) -------------------------------
@@ -70,6 +75,7 @@ _SCHEDULER = get_scheduler(
 )
 
 # --- state -----------------------------------------------------------------
+
 
 def _read_sched_state() -> dict:
     if not SCHED_STATE_FILE.exists():
@@ -89,6 +95,7 @@ def _write_sched_state(state: dict) -> None:
 
 
 # --- last/next run estimation (OS-agnostic; uses run.log mtime) -----------
+
 
 def _last_run_iso() -> str | None:
     """Best-effort 'last run' timestamp. Prefers launchd.out.log mtime
@@ -132,6 +139,7 @@ def _log_tail(path: Path, max_lines: int = 40, max_bytes: int = 16 * 1024) -> st
 
 # --- helpers ----------------------------------------------------------------
 
+
 def _emit(obj: dict, code: int = 0):
     print(json.dumps(obj, indent=2, ensure_ascii=False))
     sys.exit(code)
@@ -145,6 +153,7 @@ def _run_command() -> list[str]:
 
 
 # --- commands --------------------------------------------------------------
+
 
 def cmd_status(_args) -> None:
     errors: list[str] = []
@@ -186,18 +195,27 @@ def cmd_install(_args) -> None:
     try:
         _SCHEDULER.install(state["interval_seconds"], state["mode"], _run_command())
     except Exception as e:
-        _emit({
-            "ok": False, "error": str(e),
-            "installed": _SCHEDULER.is_installed(),
+        _emit(
+            {
+                "ok": False,
+                "error": str(e),
+                "installed": _SCHEDULER.is_installed(),
+                "loaded": _SCHEDULER.is_loaded(),
+            },
+            1,
+        )
+    _emit(
+        {
+            "ok": True,
+            "installed": True,
             "loaded": _SCHEDULER.is_loaded(),
-        }, 1)
-    _emit({
-        "ok": True, "installed": True, "loaded": _SCHEDULER.is_loaded(),
-        "interval_seconds": state["interval_seconds"],
-        "mode": state["mode"],
-        "backend": _SCHEDULER.backend_name,
-        "native_id": _SCHEDULER.native_id,
-    }, 0)
+            "interval_seconds": state["interval_seconds"],
+            "mode": state["mode"],
+            "backend": _SCHEDULER.backend_name,
+            "native_id": _SCHEDULER.native_id,
+        },
+        0,
+    )
 
 
 def cmd_uninstall(_args) -> None:
@@ -205,10 +223,15 @@ def cmd_uninstall(_args) -> None:
         _SCHEDULER.uninstall()
     except Exception as e:
         _emit({"ok": False, "error": str(e)}, 1)
-    _emit({
-        "ok": True, "installed": False, "loaded": False,
-        "backend": _SCHEDULER.backend_name,
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "installed": False,
+            "loaded": False,
+            "backend": _SCHEDULER.backend_name,
+        },
+        0,
+    )
 
 
 def cmd_reload(_args) -> None:
@@ -234,10 +257,14 @@ def cmd_set_interval(args) -> None:
             _SCHEDULER.reload(state["interval_seconds"], state["mode"], _run_command())
         except Exception as e:
             _emit({"ok": False, "error": str(e), "interval_seconds": seconds}, 1)
-    _emit({
-        "ok": True, "interval_seconds": seconds,
-        "interval_label": INTERVAL_LABELS.get(seconds, f"{seconds} s"),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "interval_seconds": seconds,
+            "interval_label": INTERVAL_LABELS.get(seconds, f"{seconds} s"),
+        },
+        0,
+    )
 
 
 def cmd_set_mode(args) -> None:
@@ -262,9 +289,11 @@ def main():
     sub.add_parser("install").set_defaults(func=cmd_install)
     sub.add_parser("uninstall").set_defaults(func=cmd_uninstall)
     sub.add_parser("reload").set_defaults(func=cmd_reload)
-    si = sub.add_parser("set-interval"); si.add_argument("seconds", type=int)
+    si = sub.add_parser("set-interval")
+    si.add_argument("seconds", type=int)
     si.set_defaults(func=cmd_set_interval)
-    sm = sub.add_parser("set-mode"); sm.add_argument("mode")
+    sm = sub.add_parser("set-mode")
+    sm.add_argument("mode")
     sm.set_defaults(func=cmd_set_mode)
     args = p.parse_args()
     try:

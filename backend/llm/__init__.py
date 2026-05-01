@@ -1,5 +1,6 @@
 """LLM provider abstraction. Resolves provider from active config and
 delegates `score_batch`. Stage 2 — backend only, no UI yet."""
+
 from __future__ import annotations
 
 import os
@@ -30,6 +31,7 @@ _cached: LLMProvider | None = None
 def _read_cfg() -> dict:
     try:
         from backend import search
+
         cfg = getattr(search, "_ACTIVE_CONFIG", {}) or {}
     except Exception:
         cfg = {}
@@ -51,6 +53,7 @@ def _quick_available(p: LLMProvider) -> bool:
     n = p.name
     if n == "claude_cli":
         import shutil
+
         return bool(shutil.which("claude"))
     if n == "claude_sdk":
         return bool(os.environ.get("ANTHROPIC_API_KEY"))
@@ -64,6 +67,7 @@ def _quick_available(p: LLMProvider) -> bool:
         try:
             import requests
             from .ollama import HOST
+
             r = requests.get(f"{HOST}/api/tags", timeout=2)
             return r.status_code == 200
         except Exception:
@@ -104,8 +108,9 @@ def score_batch(cv_text: str, batch: list[dict]) -> list | None:
     return p.score_batch(cv_text, batch)
 
 
-def complete(prompt: str, *, system: str | None = None,
-             max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+def complete(
+    prompt: str, *, system: str | None = None, max_tokens: int = 4096, json_mode: bool = False
+) -> str | None:
     """Single-shot completion via the resolved provider. Returns raw text or
     None if no provider is configured / the call fails. Used by the wizard
     (onboarding_ctl) and the suggester (config_suggest_ctl) — both of which
@@ -113,8 +118,7 @@ def complete(prompt: str, *, system: str | None = None,
     provider = get_provider()
     if not provider:
         return None
-    return provider.complete(prompt, system=system,
-                             max_tokens=max_tokens, json_mode=json_mode)
+    return provider.complete(prompt, system=system, max_tokens=max_tokens, json_mode=json_mode)
 
 
 def test_provider(name: str | None = None) -> tuple[bool, str]:
@@ -122,7 +126,10 @@ def test_provider(name: str | None = None) -> tuple[bool, str]:
     if not name or name == "auto":
         p = get_provider(force=True)
         if p is None:
-            return False, "no provider available — set ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY, install `claude` CLI, or run `ollama serve`"
+            return (
+                False,
+                "no provider available — set ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY, install `claude` CLI, or run `ollama serve`",
+            )
         ok, msg = p.test()
         return ok, f"[auto -> {p.name}] {msg}"
     if name not in PROVIDERS:

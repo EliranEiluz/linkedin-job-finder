@@ -18,6 +18,7 @@ Caps:
   - 100 pages — extra pages are dropped (truncated_pages=true). 100p covers
     every plausible CV; the cap is a safety belt against pathological inputs.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,7 +46,7 @@ def main() -> int:
         return 1
     if len(data) > MAX_BYTES:
         _emit(
-            {"ok": False, "error": f"PDF exceeds {MAX_BYTES // (1024*1024)} MB cap"},
+            {"ok": False, "error": f"PDF exceeds {MAX_BYTES // (1024 * 1024)} MB cap"},
             code=1,
         )
         return 1

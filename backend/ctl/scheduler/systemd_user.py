@@ -8,6 +8,7 @@ because it (a) requires no root, (b) gets journald logging via
 `journalctl --user -u linkedinjobs`, (c) provides Persistent=true for
 missed-run catch-up — none of which cron offers out of the box.
 """
+
 from __future__ import annotations
 
 import shlex
@@ -26,7 +27,10 @@ ENV_FILE = Path.home() / ".linkedin-jobs.env"
 def _run(*argv: str, timeout: int = 8) -> tuple[int, str, str]:
     try:
         proc = subprocess.run(
-            list(argv), capture_output=True, text=True, timeout=timeout,
+            list(argv),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as e:
@@ -122,8 +126,12 @@ class SystemdUserScheduler(Scheduler):
 
     def last_exit_status(self) -> int | None:
         rc, out, _ = _run(
-            "systemctl", "--user", "show", f"{UNIT_NAME}.service",
-            "--property=ExecMainStatus", "--value",
+            "systemctl",
+            "--user",
+            "show",
+            f"{UNIT_NAME}.service",
+            "--property=ExecMainStatus",
+            "--value",
         )
         if rc != 0:
             return None

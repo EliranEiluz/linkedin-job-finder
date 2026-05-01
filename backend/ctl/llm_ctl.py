@@ -11,6 +11,7 @@ LLM-provider CLI for the welcome wizard. Three commands:
 NEVER logs the key value (not even on error). Same stable JSON CLI style
 as preflight_ctl.py / scheduler_ctl.py.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -21,8 +22,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
 ROOT = HERE.parent.parent
-sys.path.insert(0, str(HERE.parent))    # → backend/
-sys.path.insert(0, str(ROOT))           # so `from backend.llm` resolves
+sys.path.insert(0, str(HERE.parent))  # → backend/
+sys.path.insert(0, str(ROOT))  # so `from backend.llm` resolves
 
 from backend.llm import test_provider, PROVIDERS  # noqa: E402
 
@@ -39,7 +40,7 @@ PROVIDER_META = [
         "env_var": None,
         "help_url": "https://docs.claude.com/claude-code",
         "blurb": "Uses the `claude` command-line tool. Best quality. Requires "
-                 "Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`).",
+        "Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`).",
     },
     {
         "name": "claude_sdk",
@@ -85,7 +86,7 @@ PROVIDER_META = [
         "env_var": None,
         "help_url": "https://ollama.com/download",
         "blurb": "Runs a local model. Free, fully offline. "
-                 "Requires `ollama serve` running with a model pulled.",
+        "Requires `ollama serve` running with a model pulled.",
     },
 ]
 
@@ -197,16 +198,21 @@ def cmd_save_credential() -> None:
         _emit({"ok": False, "error": f"unknown provider: {name}"}, code=1)
     env_var = meta.get("env_var")
     if not env_var:
-        _emit({"ok": False,
-               "error": f"provider '{name}' has no env_var — does not need a key"},
-              code=1)
+        _emit(
+            {"ok": False, "error": f"provider '{name}' has no env_var — does not need a key"},
+            code=1,
+        )
     try:
         _atomic_write_env(env_var, key_value.strip())
     except Exception as e:  # noqa: BLE001
         # Error message refers to the env_var name, NEVER the key value.
-        _emit({"ok": False,
-               "error": f"failed to write {ENV_FILE} ({env_var}): {type(e).__name__}: {e}"},
-              code=1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"failed to write {ENV_FILE} ({env_var}): {type(e).__name__}: {e}",
+            },
+            code=1,
+        )
     # Make the new key visible to the same-process test() that follows.
     os.environ[env_var] = key_value.strip()
     _emit({"ok": True, "env_var": env_var, "env_file": str(ENV_FILE)})

@@ -1,4 +1,5 @@
 """Scheduler ABC + status dataclass shared by all OS backends."""
+
 from __future__ import annotations
 
 import abc
@@ -10,6 +11,7 @@ class SchedulerStatus:
     """Snapshot of the scheduler's state. Returned by `Scheduler.status()`
     in a future revision; today the CLI in `scheduler_ctl.py` builds the
     status JSON itself by combining backend methods + state-file reads."""
+
     installed: bool
     loaded: bool
     interval_seconds: int | None

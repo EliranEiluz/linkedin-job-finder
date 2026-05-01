@@ -8,6 +8,7 @@ as their ProgramArguments / ExecStart / TR. Trigger `scheduler reload`
 from the UI after upgrading from a pre-2026-04 install so any old
 plist/unit files get regenerated to point here.
 """
+
 from __future__ import annotations
 
 import os

@@ -1,0 +1,126 @@
+[project]
+name = "linkedin-job-finder"
+version = "0.0.0"
+description = "Personalized LinkedIn job scraper with LLM scoring."
+requires-python = ">=3.10"
+# Runtime deps live in backend/requirements.txt — keep them in lock-step there
+# so a fresh clone keeps working with `pip install -r backend/requirements.txt`.
+# We do NOT mirror them here because the project is run as scripts, not
+# installed as a package, and duplicating would invite drift.
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "pytest>=8.0",
+]
+
+# ---------- ruff ----------------------------------------------------------
+# Strict-but-pragmatic config. We bias toward bug-finders and modernizers
+# (pyupgrade, simplify, return) plus tidy imports (I) and naming (N). Rules
+# that produce too much noise on the existing codebase are silenced per-file
+# rather than globally — every silencing carries a comment.
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+    "ui/node_modules",
+    "ui/dist",
+    "ui/public",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # simplify
+    "RUF",  # ruff-specific
+    "N",    # naming
+    "ARG",  # unused-arguments
+    "PTH",  # use pathlib
+    "C4",   # flake8-comprehensions
+    "RET",  # flake8-return
+    "TRY",  # tryceratops (exception handling)
+]
+ignore = [
+    # The codebase deliberately uses broad excepts in many top-level CLI
+    # entrypoints to convert any failure into a JSON envelope. Tightening
+    # would add noise without value.
+    "BLE001",
+    # Function naming sometimes embeds intent (e.g. _GENERIC_FALLBACK_*); we
+    # keep the existing snake_case style and don't enforce mixedCase rules.
+    "N802", "N803", "N806",
+    # Some long literal lines (URLs, regex, embedded JS) blow the line cap
+    # without benefit from wrapping.
+    "E501",
+    # Tryceratops is opinionated about message length / EM strings — keep the
+    # existing readable error messages.
+    "TRY003", "TRY300", "TRY301", "TRY400", "TRY401",
+    # Allow `print()` for the CLI tools — they intentionally write to stdout.
+    # Not in default select, listed here for clarity if anyone enables T20.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test runner is a long script intentionally — don't enforce structure here.
+"backend/tests/*.py" = ["B", "ARG", "SIM", "RUF", "PTH", "TRY", "RET"]
+# Scheduler scripts are CLI entrypoints; ARG warnings on `_args` parser
+# callbacks are intentional.
+"backend/ctl/*.py" = ["ARG001"]
+# Tools sometimes need top-level prints + relative path patterns.
+"backend/tools/*.py" = ["PTH", "TRY", "RET"]
+# Probes are diagnostic-only; loose rules.
+"backend/probes/*.py" = ["B", "ARG", "SIM", "PTH", "TRY", "RET"]
+
+[tool.ruff.format]
+# Defaults are fine — 88-char-ish reflow is overridden by line-length above.
+
+# ---------- mypy ---------------------------------------------------------
+# Strict-on-defs (every function must be typed) but not strict-on-everything.
+# Untyped third-party libs (playwright, bs4, requests) are silenced module-wide.
+[tool.mypy]
+python_version = "3.10"
+disallow_untyped_defs = true
+warn_unused_ignores = true
+warn_return_any = true
+ignore_missing_imports = false
+# Tests + probes are scripts, not library code — soften.
+exclude = [
+    "backend/tests/",
+    "backend/probes/",
+]
+
+[[tool.mypy.overrides]]
+# Third-party libs without type stubs. We don't ship .pyi files for them and
+# don't want to install -types packages just for stubs.
+module = [
+    "playwright.*",
+    "bs4",
+    "requests",
+    "filelock",
+    "pypdf",
+    "winreg",
+    "anthropic",
+    "anthropic.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# search.py uses dynamic module-level globals (the load_config() pattern that
+# mutates SEARCH_QUERIES, CATEGORIES, etc. at runtime). disallow_untyped_defs
+# stays on; we just allow a couple of locally untyped helpers without breaking
+# the build.
+module = "backend.search"
+disallow_untyped_calls = false
+
+# ---------- pytest -------------------------------------------------------
+# The existing phase_d_test.py is a script (sys.exit at module level), not
+# pytest-collectable. We wire pytest to skip it so `python3 -m pytest backend/`
+# doesn't error; the script is still invoked directly by CI / Phase D harness.
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+python_files = ["test_*.py"]
+norecursedirs = ["ui", "node_modules", "dist"]

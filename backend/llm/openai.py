@@ -1,4 +1,5 @@
 """OpenAI provider — chat-completions API, JSON mode, paid (no free tier)."""
+
 from __future__ import annotations
 
 import os
@@ -17,6 +18,7 @@ class OpenAIProvider(LLMProvider):
 
     def _prompt(self, cv_text: str, batch: list[dict]) -> str:
         from backend.search import _build_batch_prompt
+
         return _build_batch_prompt(cv_text, batch)
 
     def _api_key(self) -> str | None:
@@ -35,8 +37,10 @@ class OpenAIProvider(LLMProvider):
         body = {
             "model": self.model,
             "messages": [
-                {"role": "system",
-                 "content": f"You score LinkedIn jobs for fit against this CV:\n\n{cv_text}"},
+                {
+                    "role": "system",
+                    "content": f"You score LinkedIn jobs for fit against this CV:\n\n{cv_text}",
+                },
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.2,
@@ -79,8 +83,14 @@ class OpenAIProvider(LLMProvider):
             return True, f"openai ok (model={self.model})"
         return False, "openai returned no parseable result"
 
-    def complete(self, prompt: str, *, system: str | None = None,
-                 max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+    ) -> str | None:
         key = self._api_key()
         if not key:
             return None

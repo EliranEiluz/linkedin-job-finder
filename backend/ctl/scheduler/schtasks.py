@@ -5,6 +5,7 @@ nested-quoting hell when invoked from Python.
 
 The scheduled task invokes the cross-platform `backend/run.py` wrapper —
 no shell required."""
+
 from __future__ import annotations
 
 import re
@@ -22,7 +23,10 @@ def _run(*argv: str, timeout: int = 8) -> tuple[int, str, str]:
     The 'oem' codec is unavailable off-Windows; fall back to default encoding."""
     try:
         proc = subprocess.run(
-            list(argv), capture_output=True, text=True, timeout=timeout,
+            list(argv),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
             encoding="oem",
         )
         return proc.returncode, proc.stdout or "", proc.stderr or ""
@@ -32,7 +36,10 @@ def _run(*argv: str, timeout: int = 8) -> tuple[int, str, str]:
         return 127, "", f"command not found: {e.filename}"
     except LookupError:
         proc = subprocess.run(
-            list(argv), capture_output=True, text=True, timeout=timeout,
+            list(argv),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         return proc.returncode, proc.stdout or "", proc.stderr or ""
 
@@ -76,11 +83,19 @@ class SchtasksScheduler(Scheduler):
         # /MO MINUTE expects integer minutes; round up.
         minutes = max(1, (interval_seconds + 59) // 60)
         rc, _, err = _run(
-            "schtasks", "/Create", "/F",
-            "/TN", TASK_NAME,
-            "/TR", _format_tr(run_command),
-            "/SC", "MINUTE", "/MO", str(minutes),
-            "/RL", "HIGHEST",
+            "schtasks",
+            "/Create",
+            "/F",
+            "/TN",
+            TASK_NAME,
+            "/TR",
+            _format_tr(run_command),
+            "/SC",
+            "MINUTE",
+            "/MO",
+            str(minutes),
+            "/RL",
+            "HIGHEST",
         )
         if rc != 0:
             raise RuntimeError(f"schtasks /Create failed: {err.strip()}")

@@ -19,6 +19,7 @@ Commands (no stdin needed, single JSON object on stdout):
              { name, ok, value|null, fix?: "...shell command..." }, ...
            ] }
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
-ROOT = HERE.parent.parent               # project root
+ROOT = HERE.parent.parent  # project root
 
 # Same env-file path the LLM credential save writes to.
 ENV_FILE = Path.home() / ".linkedin-jobs.env"
@@ -62,12 +63,17 @@ def _check_node() -> dict:
         }
     try:
         proc = subprocess.run(
-            [exe, "--version"], capture_output=True, text=True, timeout=5,
+            [exe, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         ver = (proc.stdout or proc.stderr).strip()
     except Exception as e:  # noqa: BLE001
         return {
-            "name": "node", "ok": False, "value": None,
+            "name": "node",
+            "ok": False,
+            "value": None,
             "fix": f"node found at {exe} but `node --version` failed: {e}",
         }
     return {"name": "node", "ok": True, "value": ver}
@@ -90,6 +96,7 @@ def _check_playwright_chromium() -> dict:
     # Verify chromium is actually installed (not just the python package).
     try:
         from playwright.sync_api import sync_playwright as _sp
+
         with _sp() as p:
             exe_path = p.chromium.executable_path
             if not exe_path or not Path(exe_path).exists():
@@ -125,7 +132,9 @@ def _check_writable(path: Path, name: str) -> dict:
         return {"name": name, "ok": True, "value": str(target_dir)}
     except Exception as e:  # noqa: BLE001
         return {
-            "name": name, "ok": False, "value": str(path),
+            "name": name,
+            "ok": False,
+            "value": str(path),
             "fix": f"chmod the parent directory to be writable by your user: {e}",
         }
 

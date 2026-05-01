@@ -41,11 +41,12 @@ SESSION_FILE = HERE / "linkedin_session.json"
 # discriminator. The canonical signal is the no-results banner (discard all);
 # the secondary signal is the `eBP` query param on each card's anchor.
 EBP_REAL = {
-    "NON_CHARGEABLE_CHANNEL",       # normal organic search hit
-    "C", "CHARGEABLE_CHANNEL",      # promoted/sponsored search slot
+    "NON_CHARGEABLE_CHANNEL",  # normal organic search hit
+    "C",
+    "CHARGEABLE_CHANNEL",  # promoted/sponsored search slot
 }
 EBP_JYMBII = {
-    "NOT_ELIGIBLE_FOR_CHARGING",    # appended recommendation filler
+    "NOT_ELIGIBLE_FOR_CHARGING",  # appended recommendation filler
 }
 
 
@@ -204,14 +205,14 @@ def pretty_print(query: str, url: str, snapshot: dict):
     banner = snapshot.get("bannerPresent")
     cards = snapshot.get("cards", [])
 
-    print(f"\n{'='*72}")
+    print(f"\n{'=' * 72}")
     print(f"QUERY     : {query!r}")
     print(f"URL       : {url}")
     print(f"CARDS     : {len(cards)}")
     print(f"NO-RESULTS BANNER: {'YES — whole list is filler' if banner else 'no'}")
     if banner:
         print(f"  banner text: {snapshot.get('bannerText', '')[:120]}")
-    print(f"{'='*72}")
+    print(f"{'=' * 72}")
 
     # Crude "looks like a company query" heuristic for the diagnostic:
     # single-word Capitalized token. Callers can force via --company.
@@ -225,8 +226,11 @@ def pretty_print(query: str, url: str, snapshot: dict):
         c["_job_id"] = parse_job_id_from_href(c["href"])
         klass = classify_ebp(ebp, banner)
         # Populated cards only — skip empty occludable shells for relevance.
-        if klass != "jymbii" and c["title"] and not company_relevance(
-                query, c["company"], is_company_query):
+        if (
+            klass != "jymbii"
+            and c["title"]
+            and not company_relevance(query, c["company"], is_company_query)
+        ):
             c["_class"] = "offtarget"
         else:
             c["_class"] = klass
@@ -261,8 +265,10 @@ def pretty_print(query: str, url: str, snapshot: dict):
         print(f"\n{'unknown/empty':=^72}")
         populated_unk = [c for c in buckets["unknown"] if c["title"]]
         empty_unk = [c for c in buckets["unknown"] if not c["title"]]
-        print(f"{len(buckets['unknown'])} "
-              f"(populated={len(populated_unk)}, empty-occludable-shells={len(empty_unk)})")
+        print(
+            f"{len(buckets['unknown'])} "
+            f"(populated={len(populated_unk)}, empty-occludable-shells={len(empty_unk)})"
+        )
         for c in populated_unk:
             print(_row(c))
 
@@ -275,20 +281,25 @@ def pretty_print(query: str, url: str, snapshot: dict):
     if not buckets["real"] and (buckets["jymbii"] or buckets["offtarget"]):
         print("\nVERDICT: this query has ZERO real hits — all populated cards are filler.")
     elif buckets["offtarget"]:
-        print(f"\nVERDICT: mixed — {len(buckets['real'])} real hits + "
-              f"{len(buckets['offtarget'])} off-target filler (company name mismatch).")
+        print(
+            f"\nVERDICT: mixed — {len(buckets['real'])} real hits + "
+            f"{len(buckets['offtarget'])} off-target filler (company name mismatch)."
+        )
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("query", help="search keyword (quote if multi-word)")
     ap.add_argument("--start", type=int, default=0, help="pagination offset (0, 25, 50, ...)")
-    ap.add_argument("--company", action="store_true",
-                    help="treat as company name — skip phrase-quoting")
-    ap.add_argument("--save", metavar="PATH",
-                    help="also write the full card snapshot as JSON")
-    ap.add_argument("--keep-open", action="store_true",
-                    help="wait for Enter before closing the browser so you can inspect manually")
+    ap.add_argument(
+        "--company", action="store_true", help="treat as company name — skip phrase-quoting"
+    )
+    ap.add_argument("--save", metavar="PATH", help="also write the full card snapshot as JSON")
+    ap.add_argument(
+        "--keep-open",
+        action="store_true",
+        help="wait for Enter before closing the browser so you can inspect manually",
+    )
     args = ap.parse_args()
 
     if not SESSION_FILE.exists():
@@ -323,14 +334,18 @@ def main():
             page.goto(url, wait_until="domcontentloaded", timeout=25000)
         except PlaywrightTimeout:
             print("Nav timeout.")
-            ctx.close(); browser.close(); sys.exit(2)
+            ctx.close()
+            browser.close()
+            sys.exit(2)
 
         time.sleep(random.uniform(2.0, 3.0))
 
         cur = (page.url or "").lower()
         if "login" in cur or "authwall" in cur or "checkpoint" in cur:
             print("Session expired. Re-run search.py to log in again.")
-            ctx.close(); browser.close(); sys.exit(3)
+            ctx.close()
+            browser.close()
+            sys.exit(3)
 
         final = scroll_inner_list(page, max_rounds=25)
         print(f"Inner-pane scroll settled at {final} cards.")
@@ -341,12 +356,16 @@ def main():
 
         if args.save:
             Path(args.save).write_text(
-                json.dumps({
-                    "query": args.query,
-                    "url": url,
-                    "final_count": final,
-                    "snapshot": snapshot,
-                }, indent=2, ensure_ascii=False)
+                json.dumps(
+                    {
+                        "query": args.query,
+                        "url": url,
+                        "final_count": final,
+                        "snapshot": snapshot,
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
             )
             print(f"\nWrote snapshot: {args.save}")
 

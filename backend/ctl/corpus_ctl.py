@@ -83,15 +83,14 @@ def _emit(obj: dict, code: int = 0):
 
 # ---------- delete ----------
 
+
 def cmd_delete(_args) -> None:
     try:
         body = _read_stdin_json()
     except json.JSONDecodeError as e:
         _emit({"ok": False, "error": f"invalid JSON on stdin: {e}"}, 1)
     ids = body.get("ids") if isinstance(body, dict) else None
-    if (not isinstance(ids, list)
-            or len(ids) == 0
-            or not all(isinstance(i, str) and i for i in ids)):
+    if not isinstance(ids, list) or len(ids) == 0 or not all(isinstance(i, str) and i for i in ids):
         _emit({"ok": False, "error": "ids must be a non-empty array of strings"}, 1)
     id_set = set(ids)
 
@@ -120,12 +119,15 @@ def cmd_delete(_args) -> None:
 
     search._atomic_merge_json(search.SEEN_FILE, _mut_seen)
 
-    _emit({
-        "ok": True,
-        "deleted": deleted["n"],
-        "missing": sorted(missing),
-        "kept_in_seen": len(id_set),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "deleted": deleted["n"],
+            "missing": sorted(missing),
+            "kept_in_seen": len(id_set),
+        },
+        0,
+    )
 
 
 # ---------- rate ----------
@@ -197,11 +199,16 @@ def cmd_rate(_args) -> None:
 
     if not found["hit"]:
         _emit({"ok": False, "error": f"job id {job_id!r} not found in corpus"}, 1)
-    _emit({
-        "ok": True, "id": job_id, "rating": rating,
-        "comment": comment_value if update_comment else None,
-        "rated_at": rated_at,
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "id": job_id,
+            "rating": rating,
+            "comment": comment_value if update_comment else None,
+            "rated_at": rated_at,
+        },
+        0,
+    )
 
 
 # ---------- app-status ----------
@@ -246,13 +253,13 @@ def cmd_app_status(_args) -> None:
     if not isinstance(job_id, str) or not job_id:
         _emit({"ok": False, "error": "id must be a non-empty string"}, 1)
     if not isinstance(status, str) or status not in _APP_STATUS_SET:
-        _emit({
-            "ok": False,
-            "error": (
-                "status must be one of: "
-                + ", ".join(APP_STATUS_VALUES)
-            ),
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": ("status must be one of: " + ", ".join(APP_STATUS_VALUES)),
+            },
+            1,
+        )
 
     update_note = note_in is not _UNSET
     note_value: str | None = None
@@ -313,14 +320,17 @@ def cmd_app_status(_args) -> None:
     if not found["hit"]:
         _emit({"ok": False, "error": f"job id {job_id!r} not found in corpus"}, 1)
 
-    _emit({
-        "ok": True,
-        "id": job_id,
-        "status": status,
-        "app_status_at": now_iso,
-        "history_len": final_history_len["n"],
-        "app_notes": final_notes["v"],
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "id": job_id,
+            "status": status,
+            "app_status_at": now_iso,
+            "history_len": final_history_len["n"],
+            "app_notes": final_notes["v"],
+        },
+        0,
+    )
 
 
 # ---------- applied-import (one-shot localStorage migration) ----------
@@ -346,19 +356,25 @@ def cmd_applied_import(_args) -> None:
     if not all(isinstance(i, str) and i for i in ids):
         _emit({"ok": False, "error": "applied_ids entries must be non-empty strings"}, 1)
     if len(ids) > _APPLIED_IMPORT_MAX:
-        _emit({
-            "ok": False,
-            "error": f"applied_ids exceeds max of {_APPLIED_IMPORT_MAX}",
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"applied_ids exceeds max of {_APPLIED_IMPORT_MAX}",
+            },
+            1,
+        )
 
     # Empty array is a valid no-op — early-return without touching the file.
     if not ids:
-        _emit({
-            "ok": True,
-            "imported": 0,
-            "skipped_already_set": 0,
-            "skipped_not_in_corpus": 0,
-        }, 0)
+        _emit(
+            {
+                "ok": True,
+                "imported": 0,
+                "skipped_already_set": 0,
+                "skipped_not_in_corpus": 0,
+            },
+            0,
+        )
 
     id_set = set(ids)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -393,12 +409,15 @@ def cmd_applied_import(_args) -> None:
 
     search._atomic_merge_json(search.RESULTS_FILE, _mut)
 
-    _emit({
-        "ok": True,
-        "imported": counts["imported"],
-        "skipped_already_set": counts["skipped_already_set"],
-        "skipped_not_in_corpus": len(id_set - seen_ids),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "imported": counts["imported"],
+            "skipped_already_set": counts["skipped_already_set"],
+            "skipped_not_in_corpus": len(id_set - seen_ids),
+        },
+        0,
+    )
 
 
 # ---------- add-manual (single-URL ingest through process_one_job) ----------
@@ -479,17 +498,23 @@ def cmd_add_manual(_args) -> None:
     if not raw.strip():
         _emit({"ok": False, "error": "url_or_id must not be empty"}, 1)
     if len(raw) > _URL_OR_ID_MAX_CHARS:
-        _emit({
-            "ok": False,
-            "error": f"url_or_id exceeds max of {_URL_OR_ID_MAX_CHARS} chars",
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"url_or_id exceeds max of {_URL_OR_ID_MAX_CHARS} chars",
+            },
+            1,
+        )
 
     job_id = extract_job_id(raw)
     if not job_id:
-        _emit({
-            "ok": False,
-            "error": "could not extract job ID from input",
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": "could not extract job ID from input",
+            },
+            1,
+        )
 
     # Dedupe against the on-disk corpus first — short-circuits before we
     # spend a network round-trip + Claude call on a job we already have.
@@ -500,11 +525,14 @@ def cmd_add_manual(_args) -> None:
 
     for row in existing:
         if isinstance(row, dict) and row.get("id") == job_id:
-            _emit({
-                "ok": False,
-                "error": "already in corpus",
-                "existing_id": job_id,
-            }, 1)
+            _emit(
+                {
+                    "ok": False,
+                    "error": "already in corpus",
+                    "existing_id": job_id,
+                },
+                1,
+            )
 
     # Build the stub. Title/company/location are filled in by the guest
     # detail endpoint when fetch_description_guest hits LinkedIn — see
@@ -541,6 +569,7 @@ def cmd_add_manual(_args) -> None:
         HTML. Quietly leaves fields blank if LinkedIn changes the markup."""
         try:
             from bs4 import BeautifulSoup  # local import: same as search.py
+
             soup = BeautifulSoup(html, "html.parser")
             if not stub["title"]:
                 t_el = (
@@ -549,9 +578,7 @@ def cmd_add_manual(_args) -> None:
                     or soup.select_one("h1")
                 )
                 if t_el:
-                    stub["title"] = search._clean_title(
-                        t_el.get_text(strip=True) or ""
-                    )
+                    stub["title"] = search._clean_title(t_el.get_text(strip=True) or "")
             if not stub["company"]:
                 c_el = (
                     soup.select_one("a.topcard__org-name-link")
@@ -563,9 +590,7 @@ def cmd_add_manual(_args) -> None:
             if not stub["location"]:
                 l_el = soup.select_one(".topcard__flavor--bullet")
                 if l_el:
-                    stub["location"] = (
-                        l_el.get_text(strip=True) or ""
-                    ).strip()
+                    stub["location"] = (l_el.get_text(strip=True) or "").strip()
         except Exception:
             pass
 
@@ -589,6 +614,7 @@ def cmd_add_manual(_args) -> None:
         _populate_stub_metadata(html)
         try:
             from bs4 import BeautifulSoup
+
             soup = BeautifulSoup(html, "html.parser")
             desc_el = (
                 soup.select_one(".description__text")
@@ -598,7 +624,8 @@ def cmd_add_manual(_args) -> None:
             )
             text = (
                 search._strip_html(desc_el.decode_contents())
-                if desc_el else search._strip_html(html)
+                if desc_el
+                else search._strip_html(html)
             )
         except Exception:
             text = search._strip_html(html)
@@ -622,24 +649,30 @@ def cmd_add_manual(_args) -> None:
             already_scored=False,
         )
     except Exception as e:
-        _emit({
-            "ok": False,
-            "error": f"pipeline failure: {type(e).__name__}: {e}",
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"pipeline failure: {type(e).__name__}: {e}",
+            },
+            1,
+        )
 
-    _emit({
-        "ok": True,
-        "id": result.get("id"),
-        "title": result.get("title"),
-        "company": result.get("company"),
-        "location": result.get("location"),
-        "fit": result.get("fit"),
-        "score": result.get("score"),
-        "scored_by": result.get("scored_by"),
-        "fit_reasons": result.get("fit_reasons", []),
-        "source": result.get("source"),
-        "manual_added_at": result.get("manual_added_at"),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "id": result.get("id"),
+            "title": result.get("title"),
+            "company": result.get("company"),
+            "location": result.get("location"),
+            "fit": result.get("fit"),
+            "score": result.get("score"),
+            "scored_by": result.get("scored_by"),
+            "fit_reasons": result.get("fit_reasons", []),
+            "source": result.get("source"),
+            "manual_added_at": result.get("manual_added_at"),
+        },
+        0,
+    )
 
 
 def cmd_push_to_end(_args) -> None:
@@ -695,11 +728,14 @@ def cmd_push_to_end(_args) -> None:
     except Exception as e:
         _emit({"ok": False, "error": f"failed to update results.json: {e}"}, 1)
 
-    _emit({
-        "ok": True,
-        "updated": updated["n"],
-        "missing": sorted(missing_seen),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "updated": updated["n"],
+            "missing": sorted(missing_seen),
+        },
+        0,
+    )
 
 
 def cmd_rescore(_args) -> None:
@@ -745,9 +781,15 @@ def cmd_rescore(_args) -> None:
             targets.append(row)
 
     if not targets:
-        _emit({
-            "ok": True, "rescored": 0, "failed": 0, "missing": missing,
-        }, 0)
+        _emit(
+            {
+                "ok": True,
+                "rescored": 0,
+                "failed": 0,
+                "missing": missing,
+            },
+            0,
+        )
 
     # Reuse the guest-mode session + fetch helper. process_one_job will
     # call this once per target. No browser, no LinkedIn auth needed.
@@ -828,15 +870,18 @@ def cmd_rescore(_args) -> None:
         else:
             failed += 1
 
-    _emit({
-        "ok": True,
-        # Kept for back-compat — UI reads it for the headline number.
-        "rescored": claude_rescored,
-        "claude_rescored": claude_rescored,
-        "regex_fallback": regex_fallback,
-        "failed": failed,
-        "missing": missing,
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            # Kept for back-compat — UI reads it for the headline number.
+            "rescored": claude_rescored,
+            "claude_rescored": claude_rescored,
+            "regex_fallback": regex_fallback,
+            "failed": failed,
+            "missing": missing,
+        },
+        0,
+    )
 
 
 def main():

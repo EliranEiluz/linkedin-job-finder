@@ -46,9 +46,9 @@ from pathlib import Path
 # the 2026-04 backend/ reorg, search.py lives one level up at backend/search.py,
 # so we add THAT directory to sys.path (HERE = backend/ctl).
 HERE = Path(__file__).resolve().parent  # backend/ctl/
-ROOT = HERE.parent.parent               # project root (two levels up from backend/ctl/)
-sys.path.insert(0, str(HERE.parent))    # → backend/
-sys.path.insert(0, str(ROOT))           # → project root, so `from backend.llm` resolves
+ROOT = HERE.parent.parent  # project root (two levels up from backend/ctl/)
+sys.path.insert(0, str(HERE.parent))  # → backend/
+sys.path.insert(0, str(ROOT))  # → project root, so `from backend.llm` resolves
 
 # We only need these three helpers; don't trigger the full load_config() pass
 # at import time beyond what search.py already does (it loads the currently-
@@ -201,11 +201,15 @@ def _call_llm(prompt: str) -> tuple[int, str, str]:
     claude_cli -> claude_sdk -> gemini -> openrouter -> ollama)."""
     provider = get_provider()
     if provider is None:
-        return 1, "", (
-            "No LLM provider available. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, "
-            "or OPENROUTER_API_KEY (in ~/.linkedin-jobs.env), install the "
-            "`claude` CLI (npm i -g @anthropic-ai/claude-code), or run "
-            "`ollama serve` locally with a model pulled."
+        return (
+            1,
+            "",
+            (
+                "No LLM provider available. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, "
+                "or OPENROUTER_API_KEY (in ~/.linkedin-jobs.env), install the "
+                "`claude` CLI (npm i -g @anthropic-ai/claude-code), or run "
+                "`ollama serve` locally with a model pulled."
+            ),
         )
     try:
         text = llm_complete(prompt, max_tokens=LLM_MAX_TOKENS, json_mode=True)
@@ -219,11 +223,11 @@ def _call_llm(prompt: str) -> tuple[int, str, str]:
 # ---------- config validation / shape-up ---------------------------------
 
 _KNOWN_GEO_IDS = {
-    "92000000",     # Worldwide
-    "101620260",    # Israel
-    "103644278",    # United States
-    "101165590",    # United Kingdom
-    "91000000",     # Europe
+    "92000000",  # Worldwide
+    "101620260",  # Israel
+    "103644278",  # United States
+    "101165590",  # United Kingdom
+    "91000000",  # Europe
 }
 
 
@@ -297,9 +301,7 @@ def _validate_and_shape(raw_cfg: dict) -> dict:
         "geo_id": _validate_geo_id(_str("geo_id", "")),
         "max_pages": max_pages,
         "priority_companies": priority_companies,
-        "claude_scoring_prompt": _str(
-            "claude_scoring_prompt", defaults["claude_scoring_prompt"]
-        ),
+        "claude_scoring_prompt": _str("claude_scoring_prompt", defaults["claude_scoring_prompt"]),
         "fit_positive_patterns": _str_list(
             "fit_positive_patterns", defaults["fit_positive_patterns"]
         ),
@@ -313,6 +315,7 @@ def _validate_and_shape(raw_cfg: dict) -> dict:
 
 
 # ---------- commands ------------------------------------------------------
+
 
 def cmd_generate(_args) -> None:
     try:
@@ -332,28 +335,37 @@ def cmd_generate(_args) -> None:
     raw = (stdout or "").strip()
 
     if rc != 0:
-        _emit({
-            "ok": False,
-            "error": f"llm error: {(stderr or '').strip()[:400]}",
-            "raw": raw,
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"llm error: {(stderr or '').strip()[:400]}",
+                "raw": raw,
+            },
+            1,
+        )
 
     parsed = _parse_claude_json(raw)
     if not isinstance(parsed, dict):
-        _emit({
-            "ok": False,
-            "error": "could not parse Claude output as a JSON object",
-            "raw": raw,
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": "could not parse Claude output as a JSON object",
+                "raw": raw,
+            },
+            1,
+        )
 
     try:
         config = _validate_and_shape(parsed)
     except Exception as e:
-        _emit({
-            "ok": False,
-            "error": f"generated config failed validation: {e}",
-            "raw": raw,
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"generated config failed validation: {e}",
+                "raw": raw,
+            },
+            1,
+        )
 
     _emit({"ok": True, "config": config, "raw": raw}, 0)
 
@@ -366,9 +378,7 @@ def _atomic_write(path: Path, data: str) -> None:
 
 def _validate_profile_name(name: str) -> None:
     if not isinstance(name, str) or not _PROFILE_NAME_RE.match(name):
-        raise ValueError(
-            f"invalid profile_name {name!r} — must match {_PROFILE_NAME_RE.pattern}"
-        )
+        raise ValueError(f"invalid profile_name {name!r} — must match {_PROFILE_NAME_RE.pattern}")
 
 
 def _repoint_config_symlink(profile_name: str) -> None:
@@ -433,12 +443,15 @@ def cmd_save(_args) -> None:
     except Exception as e:
         _emit({"ok": False, "error": f"failed to write config.json: {e}"}, 1)
 
-    _emit({
-        "ok": True,
-        "cv_path": str(CV_PATH),
-        "config_path": str(CONFIG_PATH),
-        "backup_path": str(CONFIG_BACKUP_PATH) if CONFIG_BACKUP_PATH.exists() else None,
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "cv_path": str(CV_PATH),
+            "config_path": str(CONFIG_PATH),
+            "backup_path": str(CONFIG_BACKUP_PATH) if CONFIG_BACKUP_PATH.exists() else None,
+        },
+        0,
+    )
 
 
 def cmd_save_as_profile(_args) -> None:
@@ -474,13 +487,15 @@ def cmd_save_as_profile(_args) -> None:
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
     profile_path = CONFIGS_DIR / f"{profile_name}.json"
     if profile_path.exists() and not overwrite:
-        _emit({
-            "ok": False,
-            "error": (
-                f"profile {profile_name!r} already exists; "
-                "pass overwrite=true to replace it"
-            ),
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": (
+                    f"profile {profile_name!r} already exists; pass overwrite=true to replace it"
+                ),
+            },
+            1,
+        )
 
     # Write CV first (shared across profiles). If the profile write fails we
     # at least kept the user's CV.
@@ -504,12 +519,15 @@ def cmd_save_as_profile(_args) -> None:
     except Exception as e:
         _emit({"ok": False, "error": f"failed to activate profile: {e}"}, 1)
 
-    _emit({
-        "ok": True,
-        "profile": profile_name,
-        "path": str(profile_path),
-        "cv_path": str(CV_PATH),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "profile": profile_name,
+            "path": str(profile_path),
+            "cv_path": str(CV_PATH),
+        },
+        0,
+    )
 
 
 def main() -> None:

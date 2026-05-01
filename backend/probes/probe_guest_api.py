@@ -62,31 +62,28 @@ def parse_cards(html: str) -> list[dict]:
         link = li.select_one("a[href*='/jobs/view/']")
         if not link:
             continue
-        href = (link.get("href") or "")
+        href = link.get("href") or ""
         if "/jobs/view/" not in href:
             continue
         job_id = href.split("/jobs/view/")[1].split("/")[0].split("?")[0]
-        title_el = li.select_one(
-            ".base-search-card__title, .full-link, h3, "
-            ".sr-only"
-        )
+        title_el = li.select_one(".base-search-card__title, .full-link, h3, .sr-only")
         title = (title_el.get_text(strip=True) if title_el else "").strip()
-        co_el = li.select_one(
-            ".base-search-card__subtitle a, .base-search-card__subtitle, h4"
-        )
+        co_el = li.select_one(".base-search-card__subtitle a, .base-search-card__subtitle, h4")
         company = (co_el.get_text(strip=True) if co_el else "").strip()
         loc_el = li.select_one(".job-search-card__location")
         location = (loc_el.get_text(strip=True) if loc_el else "").strip()
         date_el = li.select_one("time")
         posted = (date_el.get("datetime") if date_el else "") or ""
-        out.append({
-            "id": job_id,
-            "title": title,
-            "company": company,
-            "location": location,
-            "posted": posted,
-            "url": href.split("?")[0],
-        })
+        out.append(
+            {
+                "id": job_id,
+                "title": title,
+                "company": company,
+                "location": location,
+                "posted": posted,
+                "url": href.split("?")[0],
+            }
+        )
     # Dedup within the same page (LinkedIn sometimes duplicates).
     seen = set()
     deduped = []
@@ -101,14 +98,14 @@ def parse_cards(html: str) -> list[dict]:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("query", help='search query, e.g. "security researcher"')
-    ap.add_argument("--geo-id", default=ISRAEL_GEO,
-                    help=f"geoId (default: Israel {ISRAEL_GEO})")
-    ap.add_argument("--days", type=int, default=0,
-                    help="date filter in days; 0 = any (default)")
-    ap.add_argument("--pages", type=int, default=4,
-                    help="number of pages to fetch (start=0,25,...)")
-    ap.add_argument("--sleep", type=float, default=2.0,
-                    help="seconds between page requests (default 2.0)")
+    ap.add_argument("--geo-id", default=ISRAEL_GEO, help=f"geoId (default: Israel {ISRAEL_GEO})")
+    ap.add_argument("--days", type=int, default=0, help="date filter in days; 0 = any (default)")
+    ap.add_argument(
+        "--pages", type=int, default=4, help="number of pages to fetch (start=0,25,...)"
+    )
+    ap.add_argument(
+        "--sleep", type=float, default=2.0, help="seconds between page requests (default 2.0)"
+    )
     args = ap.parse_args()
 
     date_filter = f"r{args.days * 86400}" if args.days else ""
@@ -117,15 +114,17 @@ def main():
     seen_ids = set()
     statuses = []
     page_counts = []
-    print(f"Probing guest API for {args.query!r}, geoId={args.geo_id}, "
-          f"days={args.days or 'any'}, pages={args.pages}")
+    print(
+        f"Probing guest API for {args.query!r}, geoId={args.geo_id}, "
+        f"days={args.days or 'any'}, pages={args.pages}"
+    )
 
     for page_idx in range(args.pages):
         start = page_idx * 25
         status, html = fetch_page(args.query, args.geo_id, start, date_filter)
         statuses.append(status)
         if status != 200:
-            print(f"  page {page_idx+1}: HTTP {status} — bailing.")
+            print(f"  page {page_idx + 1}: HTTP {status} — bailing.")
             page_counts.append(0)
             break
         cards = parse_cards(html)
@@ -134,10 +133,12 @@ def main():
         for c in new_cards:
             seen_ids.add(c["id"])
             all_cards.append(c)
-        print(f"  page {page_idx+1}: {len(cards):>3} cards parsed, "
-              f"{len(new_cards)} new (total {len(all_cards)})")
+        print(
+            f"  page {page_idx + 1}: {len(cards):>3} cards parsed, "
+            f"{len(new_cards)} new (total {len(all_cards)})"
+        )
         if not new_cards:
-            print(f"  page {page_idx+1}: no new cards — stopping.")
+            print(f"  page {page_idx + 1}: no new cards — stopping.")
             break
         time.sleep(args.sleep)
 
@@ -164,14 +165,26 @@ def main():
     # Sample
     print("\nFirst 15 cards:")
     for c in all_cards[:15]:
-        print(f"  [{(c['posted'] or '?'):>10}] "
-              f"{c['title'][:50]:50} @ {(c['company'] or '?')[:25]:25} "
-              f"  {(c['location'] or '?')[:30]}")
+        print(
+            f"  [{(c['posted'] or '?'):>10}] "
+            f"{c['title'][:50]:50} @ {(c['company'] or '?')[:25]:25} "
+            f"  {(c['location'] or '?')[:30]}"
+        )
 
     print()
     # Did big-cos appear?
-    BIGCO_NAMES = ["nvidia", "microsoft", "google", "apple", "amazon",
-                   "intel", "ibm", "meta", "cloudflare", "qualcomm"]
+    BIGCO_NAMES = [
+        "nvidia",
+        "microsoft",
+        "google",
+        "apple",
+        "amazon",
+        "intel",
+        "ibm",
+        "meta",
+        "cloudflare",
+        "qualcomm",
+    ]
     big_hits = {n: 0 for n in BIGCO_NAMES}
     for c in all_cards:
         co = (c["company"] or "").lower()

@@ -55,7 +55,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent  # backend/ctl/
-ROOT = HERE.parent.parent               # project root (state lives here)
+ROOT = HERE.parent.parent  # project root (state lives here)
 CONFIGS_DIR = ROOT / "configs"
 ACTIVE_FILE = ROOT / "active_profile.txt"
 CONFIG_SYMLINK = ROOT / "config.json"
@@ -73,9 +73,7 @@ def _emit(obj: dict, code: int = 0) -> None:
 
 def _validate_name(name: str) -> None:
     if not isinstance(name, str) or not _NAME_RE.match(name):
-        raise ValueError(
-            f"invalid profile name {name!r} — must match {_NAME_RE.pattern}"
-        )
+        raise ValueError(f"invalid profile name {name!r} — must match {_NAME_RE.pattern}")
 
 
 def _profile_path(name: str) -> Path:
@@ -126,9 +124,7 @@ def _atomic_write_json(path: Path, obj: object) -> None:
     """Write a JSON object atomically (temp+rename, same dir)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     tmp.replace(path)
 
 
@@ -260,12 +256,15 @@ def cmd_list(_args) -> None:
                                     break
         except Exception:
             profile_configured = False
-    _emit({
-        "ok": True,
-        "active": active,
-        "profiles": profiles,
-        "cv_present": bool(cv_present or profile_configured),
-    }, 0)
+    _emit(
+        {
+            "ok": True,
+            "active": active,
+            "profiles": profiles,
+            "cv_present": bool(cv_present or profile_configured),
+        },
+        0,
+    )
 
 
 def cmd_activate(args) -> None:
@@ -314,9 +313,7 @@ def cmd_create(args) -> None:
         active = _read_active()
         if active and _profile_path(active).exists():
             try:
-                body = json.loads(
-                    _profile_path(active).read_text(encoding="utf-8")
-                )
+                body = json.loads(_profile_path(active).read_text(encoding="utf-8"))
                 if not isinstance(body, dict):
                     body = {}
             except Exception:
@@ -370,10 +367,13 @@ def cmd_delete(args) -> None:
     if name not in profiles:
         _emit({"ok": False, "error": f"profile {name!r} does not exist"}, 1)
     if len(profiles) == 1:
-        _emit({
-            "ok": False,
-            "error": f"cannot delete the only profile ({name!r})",
-        }, 1)
+        _emit(
+            {
+                "ok": False,
+                "error": f"cannot delete the only profile ({name!r})",
+            },
+            1,
+        )
     _profile_path(name).unlink()
     active = _read_active()
     if active == name:
@@ -396,15 +396,22 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list").set_defaults(func=cmd_list)
-    pa = sub.add_parser("activate"); pa.add_argument("name")
+    pa = sub.add_parser("activate")
+    pa.add_argument("name")
     pa.set_defaults(func=cmd_activate)
-    pc = sub.add_parser("create"); pc.add_argument("name")
+    pc = sub.add_parser("create")
+    pc.add_argument("name")
     pc.set_defaults(func=cmd_create)
-    pd = sub.add_parser("duplicate"); pd.add_argument("src"); pd.add_argument("dst")
+    pd = sub.add_parser("duplicate")
+    pd.add_argument("src")
+    pd.add_argument("dst")
     pd.set_defaults(func=cmd_duplicate)
-    pr = sub.add_parser("rename"); pr.add_argument("old"); pr.add_argument("new")
+    pr = sub.add_parser("rename")
+    pr.add_argument("old")
+    pr.add_argument("new")
     pr.set_defaults(func=cmd_rename)
-    pdel = sub.add_parser("delete"); pdel.add_argument("name")
+    pdel = sub.add_parser("delete")
+    pdel.add_argument("name")
     pdel.set_defaults(func=cmd_delete)
     args = p.parse_args()
     try:

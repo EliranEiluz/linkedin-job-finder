@@ -53,9 +53,11 @@ def strategy_jobposting_endpoint(job_id: str) -> dict:
     if r.status_code == 200 and r.text.strip():
         soup = BeautifulSoup(r.text, "html.parser")
         # Look for the description container — multiple class variants.
-        desc_el = (soup.select_one(".description__text") or
-                   soup.select_one(".show-more-less-html__markup") or
-                   soup.select_one("[class*='description']"))
+        desc_el = (
+            soup.select_one(".description__text")
+            or soup.select_one(".show-more-less-html__markup")
+            or soup.select_one("[class*='description']")
+        )
         if desc_el:
             desc = _strip_html(desc_el.decode_contents())
         else:
@@ -83,10 +85,12 @@ def strategy_public_view(job_id: str) -> tuple[dict, str]:
     if r.status_code != 200:
         return out, r.text
     soup = BeautifulSoup(r.text, "html.parser")
-    desc_el = (soup.select_one(".description__text") or
-               soup.select_one(".show-more-less-html__markup") or
-               soup.select_one(".jobs-description__content") or
-               soup.select_one("#job-details"))
+    desc_el = (
+        soup.select_one(".description__text")
+        or soup.select_one(".show-more-less-html__markup")
+        or soup.select_one(".jobs-description__content")
+        or soup.select_one("#job-details")
+    )
     if desc_el:
         desc = _strip_html(desc_el.decode_contents())
         out["desc_len"] = len(desc)

@@ -1,4 +1,5 @@
 """Claude Code CLI provider — subprocess `claude -p ...`."""
+
 from __future__ import annotations
 
 import shutil
@@ -17,6 +18,7 @@ class ClaudeCLIProvider(LLMProvider):
     def _prompt(self, cv_text: str, batch: list[dict]) -> str:
         # Lazy import to avoid circular dep at module load.
         from backend.search import _build_batch_prompt
+
         return _build_batch_prompt(cv_text, batch)
 
     def score_batch(self, cv_text: str, batch: list[dict]) -> list | None:
@@ -25,10 +27,10 @@ class ClaudeCLIProvider(LLMProvider):
         prompt = self._prompt(cv_text, batch)
         try:
             proc = subprocess.run(
-                ["claude", "-p", prompt,
-                 "--output-format", "text",
-                 "--model", self.model],
-                capture_output=True, text=True, timeout=240,
+                ["claude", "-p", prompt, "--output-format", "text", "--model", self.model],
+                capture_output=True,
+                text=True,
+                timeout=240,
             )
             if proc.returncode != 0:
                 print(f"    claude CLI rc={proc.returncode}: {proc.stderr.strip()[:300]}")
@@ -56,8 +58,14 @@ class ClaudeCLIProvider(LLMProvider):
             return True, f"claude CLI ok (model={self.model})"
         return False, "claude CLI returned no parseable result"
 
-    def complete(self, prompt: str, *, system: str | None = None,
-                 max_tokens: int = 4096, json_mode: bool = False) -> str | None:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+    ) -> str | None:
         # CLI has no separate `--system` flag in the -p path; we just prepend
         # the system message to the user prompt. json_mode is irrelevant here
         # — the CLI emits whatever Claude writes; callers parse the result.
@@ -66,10 +74,10 @@ class ClaudeCLIProvider(LLMProvider):
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
         try:
             proc = subprocess.run(
-                ["claude", "-p", full_prompt,
-                 "--output-format", "text",
-                 "--model", self.model],
-                capture_output=True, text=True, timeout=240,
+                ["claude", "-p", full_prompt, "--output-format", "text", "--model", self.model],
+                capture_output=True,
+                text=True,
+                timeout=240,
             )
             if proc.returncode != 0:
                 print(f"    claude CLI rc={proc.returncode}: {proc.stderr.strip()[:300]}")
