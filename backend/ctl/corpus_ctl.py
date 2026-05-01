@@ -831,8 +831,30 @@ def cmd_rescore(_args) -> None:
         for job in targets:
             job["hot"] = search._compute_hot(job)
 
-        # Stage 5: atomic merge — one write for the whole batch.
-        search.save_results_merge(targets)
+        # Stage 5: atomic upsert — REPLACE existing rows in place. We can't
+        # use search.save_results_merge here because that helper is dedup-by-
+        # id with "existing record wins" semantics (see its docstring), so
+        # it would silently drop every rescore. Bypass via _atomic_merge_json
+        # with our own upsert mutator that swaps matching rows by id and
+        # preserves order. Sibling rows (not in `targets`) pass through
+        # untouched.
+        new_by_id: dict[str, dict] = {
+            str(j["id"]): j for j in targets if j.get("id") is not None
+        }
+
+        def _upsert(current: object) -> list:
+            existing = current if isinstance(current, list) else []
+            out: list = []
+            for row in existing:
+                if isinstance(row, dict):
+                    rid = row.get("id")
+                    if rid is not None and str(rid) in new_by_id:
+                        out.append(new_by_id[str(rid)])
+                        continue
+                out.append(row)
+            return out
+
+        search._atomic_merge_json(search.RESULTS_FILE, _upsert)
 
     # Per-outcome counters for an honest UI report.
     claude_rescored = 0
