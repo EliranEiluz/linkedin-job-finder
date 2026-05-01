@@ -164,6 +164,12 @@ export const CorpusPage = () => {
   const [categoryNamesById, setCategoryNamesById] = useState<Map<string, string>>(
     () => new Map(),
   );
+  // True after the first /api/config fetch settles (success OR failure).
+  // Drives the JobsTable's category-cell fallback: while !configReady, an
+  // unresolved id renders as "…" instead of the noisy de-snaked id, so the
+  // user doesn't see a flash of "cat security swe" before the proper
+  // "Security SWE" name lands ~100-300ms later.
+  const [configReady, setConfigReady] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const { setAppStatus } = useAppStatus();
   const { rateJob, deleteJobs, rescoreJobs, pushToEndJobs } = useCorpusActions();
@@ -527,8 +533,8 @@ export const CorpusPage = () => {
 
   // Fetch /api/config once so we can render category names ("Security",
   // "Companies") instead of de-snaked ids ("Cat Mobyb81c 5"). Best-effort:
-  // any failure leaves the map empty and downstream display falls back to
-  // the id-de-snaker.
+  // any failure leaves the map empty. The configReady flag flips either
+  // way so the table stops showing the loading placeholder.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -544,6 +550,8 @@ export const CorpusPage = () => {
         setCategoryNamesById(m);
       } catch {
         // ignore — fallback display is fine
+      } finally {
+        if (!cancelled) setConfigReady(true);
       }
     })();
     return () => {
@@ -794,6 +802,7 @@ export const CorpusPage = () => {
               onRate={wrappedRateJob}
               onDelete={deleteOne}
               categoryNamesById={categoryNamesById}
+              configReady={configReady}
               cursorRowId={cursorRowId}
               emptyState={
                 isDefault(filters) ? (

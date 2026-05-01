@@ -225,6 +225,12 @@ interface Props {
   // Category column renders the name ("Security") instead of the de-snaked
   // id ("Cat Mobyb81c 5").
   categoryNamesById?: Map<string, string>;
+  // True after /api/config has settled. While false, the category cell uses
+  // a quiet "…" placeholder for unresolved ids instead of the de-snaker
+  // fallback, so the user doesn't see a flash of "cat security swe" before
+  // the proper "Security SWE" name lands ~100-300ms later. Rows whose
+  // category_name is persisted on disk render correctly regardless.
+  configReady?: boolean;
   // Optional richer empty-state — when the table renders 0 rows, this node
   // is shown instead of the default "No jobs match…" line. CorpusPage wires
   // active-filter chips + a "Clear filters" CTA here.
@@ -252,7 +258,7 @@ export const JobsTable = ({
   onApply, onUnapply, applyMovesToEnd = null, onSetApplyPref,
   onRate, onDelete, hasNonDefaultFilter = false, onDeleteAllFiltered,
   onRescoreMany, rescoringIds,
-  categoryNamesById, emptyState, cursorRowId,
+  categoryNamesById, configReady = true, emptyState, cursorRowId,
 }: Props) => {
   const { isMobile } = useViewport();
 
@@ -506,10 +512,19 @@ export const JobsTable = ({
       columnHelper.accessor('category', {
         header: 'Category',
         cell: (info) => {
+          const j = info.row.original;
           const id = info.getValue();
+          // Resolution order — fastest source first, async sources after,
+          // de-snaker only as a last resort once we know the config has
+          // settled (so we don't flash "cat security swe" before the proper
+          // "Security SWE" name lands ~100-300ms later).
+          const name =
+            j.category_name?.trim() ||
+            categoryNamesById?.get(id) ||
+            (configReady ? catLabel(id) : '…');
           return (
             <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">
-              {categoryNamesById?.get(id) ?? catLabel(id)}
+              {name}
             </span>
           );
         },
@@ -1014,7 +1029,9 @@ export const JobsTable = ({
                         </div>
                         <div>
                           <span className="font-semibold text-slate-500">Category: </span>
-                          {categoryNamesById?.get(j.category) ?? catLabel(j.category)}
+                          {j.category_name?.trim() ||
+                            categoryNamesById?.get(j.category) ||
+                            (configReady ? catLabel(j.category) : '…')}
                         </div>
                         <div>
                           <span className="font-semibold text-slate-500">Scored by: </span>
@@ -1024,6 +1041,12 @@ export const JobsTable = ({
                           <span className="font-semibold text-slate-500">Found at: </span>
                           {j.found_at}
                         </div>
+                        {j.scored_at && (
+                          <div>
+                            <span className="font-semibold text-slate-500">Scored at: </span>
+                            {j.scored_at}
+                          </div>
+                        )}
                         {j.scraped_at && (
                           <div>
                             <span className="font-semibold text-slate-500">Scraped at: </span>
