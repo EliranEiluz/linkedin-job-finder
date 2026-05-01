@@ -744,18 +744,114 @@ window.chrome = {{runtime: {{}}}};
 """
 
 
-def _detect_system_timezone() -> str:
-    """Best-effort system timezone detection. stdlib only — no tzlocal dep.
-    Returns an IANA name when possible, else 'UTC'. We deliberately skip
-    POSIX abbreviations (`PST`/`IST` etc.) — Playwright accepts them but
-    LinkedIn's fingerprint check prefers IANA, and a wrong abbrev looks
-    more suspicious than a generic UTC."""
+# Minimal Windows-zone-ID → IANA map. Covers ~30 highest-population zones.
+# Source: CLDR windowsZones.xml (https://github.com/unicode-org/cldr).
+# Fallback for any Windows zone not listed is UTC. Users can override via
+# config.playwright_timezone if they live somewhere uncommon.
+_WINDOWS_TO_IANA: dict[str, str] = {
+    "Israel Standard Time": "Asia/Jerusalem",
+    "Pacific Standard Time": "America/Los_Angeles",
+    "Eastern Standard Time": "America/New_York",
+    "Central Standard Time": "America/Chicago",
+    "Mountain Standard Time": "America/Denver",
+    "Alaskan Standard Time": "America/Anchorage",
+    "Hawaiian Standard Time": "Pacific/Honolulu",
+    "Atlantic Standard Time": "America/Halifax",
+    "GMT Standard Time": "Europe/London",
+    "W. Europe Standard Time": "Europe/Berlin",
+    "Central European Standard Time": "Europe/Warsaw",
+    "Central Europe Standard Time": "Europe/Budapest",
+    "E. Europe Standard Time": "Europe/Bucharest",
+    "FLE Standard Time": "Europe/Helsinki",
+    "Romance Standard Time": "Europe/Paris",
+    "Russian Standard Time": "Europe/Moscow",
+    "Turkey Standard Time": "Europe/Istanbul",
+    "Egypt Standard Time": "Africa/Cairo",
+    "South Africa Standard Time": "Africa/Johannesburg",
+    "Arab Standard Time": "Asia/Riyadh",
+    "Arabian Standard Time": "Asia/Dubai",
+    "Iran Standard Time": "Asia/Tehran",
+    "India Standard Time": "Asia/Kolkata",
+    "China Standard Time": "Asia/Shanghai",
+    "Tokyo Standard Time": "Asia/Tokyo",
+    "Korea Standard Time": "Asia/Seoul",
+    "Singapore Standard Time": "Asia/Singapore",
+    "Taipei Standard Time": "Asia/Taipei",
+    "AUS Eastern Standard Time": "Australia/Sydney",
+    "AUS Central Standard Time": "Australia/Adelaide",
+    "W. Australia Standard Time": "Australia/Perth",
+    "New Zealand Standard Time": "Pacific/Auckland",
+    "SA Pacific Standard Time": "America/Bogota",
+    "E. South America Standard Time": "America/Sao_Paulo",
+    "Argentina Standard Time": "America/Buenos_Aires",
+    "UTC": "UTC",
+    "GMT": "UTC",
+}
+
+
+def _detect_windows_timezone() -> str | None:
+    """Windows-only: read TimeZoneKeyName from the registry, map via
+    _WINDOWS_TO_IANA. Returns None if not on Windows or registry path fails."""
+    import sys
+    if not sys.platform.startswith("win"):
+        return None
     try:
-        # Python 3.6+: datetime carries the local zone via astimezone().tzinfo.
-        # On most platforms this returns an IANA name (e.g. 'America/Los_Angeles').
+        import winreg  # type: ignore[import-not-found]
+        path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\TimeZoneInformation"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+            value, _ = winreg.QueryValueEx(key, "TimeZoneKeyName")
+        if isinstance(value, str) and value.strip():
+            return _WINDOWS_TO_IANA.get(value.strip())
+    except Exception:
+        pass
+    return None
+
+
+def _detect_system_timezone() -> str:
+    """Best-effort system IANA timezone detection. stdlib only — no tzlocal
+    dep. We deliberately skip POSIX abbreviations (`PST`/`IST` etc.) —
+    Playwright accepts them but LinkedIn's fingerprint check prefers IANA
+    and a wrong abbrev looks more suspicious than a generic UTC.
+
+    Resolution order:
+      1) `/etc/localtime` symlink target (works on macOS + most Linux distros).
+         macOS: `/var/db/timezone/zoneinfo/Asia/Jerusalem`
+         Linux: `/usr/share/zoneinfo/Asia/Jerusalem`
+      2) `TZ` env var if it looks like an IANA name (Docker / k8s pattern).
+      3) Windows registry → CLDR Windows-to-IANA map (~30 common zones).
+      4) `datetime.now().astimezone().tzinfo` if it has an IANA `.key` or stringifies to one.
+      5) UTC."""
+    # 1) /etc/localtime symlink → IANA name
+    try:
+        from pathlib import Path
+        link = Path("/etc/localtime")
+        if link.exists():
+            target = str(link.resolve())
+            for marker in ("/zoneinfo/", "/zoneinfo.default/"):
+                idx = target.rfind(marker)
+                if idx >= 0:
+                    iana = target[idx + len(marker):]
+                    if "/" in iana:
+                        return iana
+    except Exception:
+        pass
+    # 2) TZ env var (containers / explicit override)
+    try:
+        from os import environ
+        tz_env = (environ.get("TZ") or "").strip()
+        if tz_env and "/" in tz_env:
+            return tz_env
+    except Exception:
+        pass
+    # 3) Windows registry (covers ~30 highest-population zones)
+    win_tz = _detect_windows_timezone()
+    if win_tz:
+        return win_tz
+    # 4) Python's local-zone object (rarely IANA, but try anyway)
+    try:
         from datetime import datetime
         tz = datetime.now().astimezone().tzinfo
-        name = getattr(tz, "key", None) or str(tz) if tz else None
+        name = getattr(tz, "key", None) or (str(tz) if tz else None)
         if name and "/" in name:
             return name
     except Exception:
