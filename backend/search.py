@@ -959,6 +959,9 @@ def _hardcoded_defaults() -> dict:
         # -> ollama). Specific names use only that provider. Optional `model`
         # field overrides the provider's default.
         "llm_provider": {"name": "auto"},
+        # Stage 3 — wizard picks this; used as the scheduler / scrape default.
+        # "guest" if missing so existing configs without the field stay unchanged.
+        "default_mode": "guest",
     }
 
 
@@ -1115,6 +1118,14 @@ def load_config() -> dict:
         # silently fall back to "auto" on anything malformed.
         "llm_provider": _normalize_llm_provider(
             user_cfg.get("llm_provider"), defaults["llm_provider"]
+        ),
+        # Stage 3 — wizard-picked default scrape mode. Accept only the two
+        # known values; anything else (including missing) falls back to the
+        # default ("guest").
+        "default_mode": (
+            user_cfg["default_mode"]
+            if user_cfg.get("default_mode") in ("guest", "loggedin")
+            else defaults["default_mode"]
         ),
     }
 

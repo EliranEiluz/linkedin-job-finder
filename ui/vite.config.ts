@@ -33,6 +33,15 @@ const PROFILE_CTL = path.join(BACKEND_DIR, 'ctl', 'profile_ctl.py');
 const CORPUS_CTL = path.join(BACKEND_DIR, 'ctl', 'corpus_ctl.py');
 const CORPUS_TIMEOUT_MS = 8_000;
 const PROFILE_TIMEOUT_MS = 10_000;
+// Wizard plumbing — Stage 3 welcome wizard (preflight + LLM picker + linkedin
+// session check). All shell out via runCtl() like the other ctl scripts.
+const PREFLIGHT_CTL = path.join(BACKEND_DIR, 'ctl', 'preflight_ctl.py');
+const PREFLIGHT_TIMEOUT_MS = 30_000;
+const LLM_CTL = path.join(BACKEND_DIR, 'ctl', 'llm_ctl.py');
+const LLM_LIST_TIMEOUT_MS = 10_000;
+const LLM_SAVE_TIMEOUT_MS = 10_000;
+const LLM_TEST_TIMEOUT_MS = 30_000;
+const LINKEDIN_SESSION_PATH = path.join(REPO_ROOT, 'linkedin_session.json');
 
 type ScrapeMode = 'loggedin' | 'guest';
 type RunStatus = 'running' | 'done' | 'error' | 'killed';
@@ -234,7 +243,7 @@ const spawnScrape = async (mode: ScrapeMode): Promise<ScrapeRun> => {
   }
 };
 
-// --- scheduler_ctl.py shell-out --------------------------------------
+// --- ctl shell-out helper --------------------------------------------
 
 interface SchedulerCtlResult {
   exitCode: number | null;
@@ -244,10 +253,22 @@ interface SchedulerCtlResult {
   spawnError: string | null;
 }
 
-// Shell out to scheduler_ctl.py with a hard timeout. Uses spawn (not exec)
-// so the args list is passed verbatim — no shell injection vector even
-// though the inputs come from a trusted local UI.
-const runSchedulerCtl = (args: string[]): Promise<SchedulerCtlResult> =>
+// Generic spawn-and-pipe for any of the backend/ctl/*.py scripts. Uses
+// spawn (not exec) so args pass verbatim — no shell injection vector even
+// though inputs come from a trusted local UI. Optional stdinPayload is
+// piped in (and EPIPE swallowed if the child already exited). The hard
+// timeout SIGKILLs the child and surfaces a `timedOut` flag.
+//
+// All five callers (scheduler / onboarding / config-suggest / profile /
+// corpus) delegate here; the per-route response shapers downstream still
+// own status-code policy (e.g. corpus's 200/400/409/500/504 vs scheduler's
+// 200/500/504).
+const runCtl = (
+  scriptPath: string,
+  args: string[],
+  stdinPayload: string | null,
+  timeoutMs: number,
+): Promise<SchedulerCtlResult> =>
   new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
@@ -255,26 +276,18 @@ const runSchedulerCtl = (args: string[]): Promise<SchedulerCtlResult> =>
     let spawnError: string | null = null;
     let settled = false;
 
-    const child = spawn('python3', [SCHEDULER_CTL, ...args], {
+    const child = spawn('python3', [scriptPath, ...args], {
       cwd: REPO_ROOT,
       env: process.env,
     });
 
     const timer = setTimeout(() => {
       timedOut = true;
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-    }, SCHEDULER_TIMEOUT_MS);
+      try { child.kill('SIGKILL'); } catch { /* already dead */ }
+    }, timeoutMs);
 
-    child.stdout.on('data', (c: Buffer) => {
-      stdout += c.toString('utf8');
-    });
-    child.stderr.on('data', (c: Buffer) => {
-      stderr += c.toString('utf8');
-    });
+    child.stdout.on('data', (c: Buffer) => { stdout += c.toString('utf8'); });
+    child.stderr.on('data', (c: Buffer) => { stderr += c.toString('utf8'); });
     child.on('error', (err) => {
       spawnError = (err as Error).message;
       if (settled) return;
@@ -288,7 +301,27 @@ const runSchedulerCtl = (args: string[]): Promise<SchedulerCtlResult> =>
       clearTimeout(timer);
       resolve({ exitCode: code, stdout, stderr, timedOut, spawnError });
     });
+
+    if (stdinPayload !== null) {
+      child.stdin.on('error', (err) => {
+        // Swallow EPIPE — the child may have already exited; close handler
+        // surfaces the real error.
+        if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
+          console.error(`[${path.basename(scriptPath)}] stdin error:`, err);
+        }
+      });
+      child.stdin.end(stdinPayload);
+    } else {
+      // No stdin payload: just close the stream so the child sees EOF.
+      child.stdin.end();
+    }
   });
+
+// Backwards-compat thin wrappers. Existing call sites + response shapers
+// reference these by name; keeping them lets the diff stay small and
+// preserves the per-script default-timeout knobs.
+const runSchedulerCtl = (args: string[]): Promise<SchedulerCtlResult> =>
+  runCtl(SCHEDULER_CTL, args, null, SCHEDULER_TIMEOUT_MS);
 
 // Try to parse stdout as JSON. If parsing fails, synthesize an error
 // envelope so the client always receives well-formed JSON.
@@ -351,65 +384,15 @@ const schedulerResponse = (
 
 // --- onboarding_ctl.py shell-out -------------------------------------
 
-// Parallel to runSchedulerCtl, but with a configurable timeout and optional
-// stdin payload. Kept separate rather than generalized to preserve the
-// scheduler path's exact behavior (and its short timeout).
+// Delegates to runCtl. Kept as a named wrapper because the response-shaper
+// (onboardingResponse) below has different envelope semantics from the
+// scheduler one (always-passthrough on JSON).
 const runOnboardingCtl = (
   args: string[],
   stdinPayload: string,
   timeoutMs: number,
 ): Promise<SchedulerCtlResult> =>
-  new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    let spawnError: string | null = null;
-    let settled = false;
-
-    const child = spawn('python3', [ONBOARDING_CTL, ...args], {
-      cwd: REPO_ROOT,
-      env: process.env,
-    });
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-    }, timeoutMs);
-
-    child.stdout.on('data', (c: Buffer) => {
-      stdout += c.toString('utf8');
-    });
-    child.stderr.on('data', (c: Buffer) => {
-      stderr += c.toString('utf8');
-    });
-    child.on('error', (err) => {
-      spawnError = (err as Error).message;
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ exitCode: null, stdout, stderr, timedOut, spawnError });
-    });
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ exitCode: code, stdout, stderr, timedOut, spawnError });
-    });
-
-    // Feed the body JSON on stdin so secrets (CV text) never hit argv.
-    child.stdin.on('error', (err) => {
-      // Swallow EPIPE — the child may have already exited; close handler
-      // will surface the real error.
-      if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
-        console.error('[onboarding] stdin error:', err);
-      }
-    });
-    child.stdin.end(stdinPayload);
-  });
+  runCtl(ONBOARDING_CTL, args, stdinPayload, timeoutMs);
 
 // Shape an onboarding-ctl result into an HTTP response. Unlike scheduler_ctl
 // we ALWAYS try to pass through the JSON envelope (including on non-zero
@@ -1025,6 +1008,131 @@ const configApiPlugin = (): Plugin => ({
           const reloadArgs = ['reload'];
           const reloadResult = await runSchedulerCtl(reloadArgs);
           return schedulerResponse(res, reloadArgs, reloadResult);
+        }
+
+        // ---- preflight + LLM picker + linkedin-session (wizard) -------------
+        //
+        // Preflight: shells to preflight_ctl.py — checks python/node/playwright/
+        // writable dirs. Always returns a parsed JSON envelope, even when the
+        // python script itself reports failures (the UI renders the per-check
+        // results, not the top-level ok flag).
+
+        if (url.startsWith('/api/preflight/check') && req.method === 'GET') {
+          const result = await runCtl(PREFLIGHT_CTL, ['check'], null, PREFLIGHT_TIMEOUT_MS);
+          if (result.spawnError) {
+            return sendJson(res, 500, {
+              ok: false, error: `failed to spawn preflight_ctl.py: ${result.spawnError}`,
+            });
+          }
+          if (result.timedOut) {
+            return sendJson(res, 504, { ok: false, error: 'preflight_ctl.py timed out' });
+          }
+          try {
+            return sendJson(res, 200, JSON.parse(result.stdout));
+          } catch {
+            return sendJson(res, 500, {
+              ok: false, error: 'preflight_ctl.py emitted non-JSON',
+              raw_stdout: result.stdout.slice(0, 500),
+              raw_stderr: result.stderr.slice(0, 500),
+            });
+          }
+        }
+
+        if (url.startsWith('/api/llm/list') && req.method === 'GET') {
+          const result = await runCtl(LLM_CTL, ['list'], null, LLM_LIST_TIMEOUT_MS);
+          if (result.spawnError) {
+            return sendJson(res, 500, { ok: false, error: result.spawnError });
+          }
+          if (result.timedOut) {
+            return sendJson(res, 504, { ok: false, error: 'llm_ctl list timed out' });
+          }
+          try {
+            return sendJson(res, 200, JSON.parse(result.stdout));
+          } catch {
+            return sendJson(res, 500, {
+              ok: false, error: 'llm_ctl emitted non-JSON',
+              raw_stderr: result.stderr.slice(0, 500),
+            });
+          }
+        }
+
+        if (url.startsWith('/api/llm/test') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          // Validate the body shape but DON'T log it — the request body for
+          // sibling /api/llm/save-credential is sensitive and we want to be
+          // consistent across both endpoints.
+          let body: { name?: unknown };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+          const name = typeof body.name === 'string' && body.name.trim()
+            ? body.name.trim() : 'auto';
+          const result = await runCtl(
+            LLM_CTL, ['test'], JSON.stringify({ name }), LLM_TEST_TIMEOUT_MS,
+          );
+          if (result.spawnError) {
+            return sendJson(res, 500, { ok: false, error: result.spawnError });
+          }
+          if (result.timedOut) {
+            return sendJson(res, 504, { ok: false, error: 'llm_ctl test timed out' });
+          }
+          try {
+            return sendJson(res, 200, JSON.parse(result.stdout));
+          } catch {
+            return sendJson(res, 500, {
+              ok: false, error: 'llm_ctl emitted non-JSON',
+              raw_stderr: result.stderr.slice(0, 500),
+            });
+          }
+        }
+
+        if (url.startsWith('/api/llm/save-credential') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          // *** SENSITIVE *** never log raw — it carries the API key. ***
+          let body: { name?: unknown; key?: unknown };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+          if (typeof body.name !== 'string' || !body.name) {
+            return sendJson(res, 400, { ok: false, error: 'name must be a non-empty string' });
+          }
+          if (typeof body.key !== 'string' || !body.key.trim()) {
+            return sendJson(res, 400, { ok: false, error: 'key must be a non-empty string' });
+          }
+          const result = await runCtl(
+            LLM_CTL, ['save-credential'],
+            JSON.stringify({ name: body.name, key: body.key }),
+            LLM_SAVE_TIMEOUT_MS,
+          );
+          if (result.spawnError) {
+            return sendJson(res, 500, { ok: false, error: result.spawnError });
+          }
+          if (result.timedOut) {
+            return sendJson(res, 504, { ok: false, error: 'llm_ctl save timed out' });
+          }
+          try {
+            const parsed = JSON.parse(result.stdout);
+            return sendJson(res, parsed.ok ? 200 : 400, parsed);
+          } catch {
+            return sendJson(res, 500, {
+              ok: false, error: 'llm_ctl emitted non-JSON',
+              raw_stderr: result.stderr.slice(0, 500),
+            });
+          }
+        }
+
+        // linkedin_session.json existence — used by Step 3 of the wizard
+        // (logged-in mode) to detect whether the user has already run
+        // `python3 backend/search.py --mode=loggedin` once to seed the
+        // playwright session file. No body / GET only.
+        if (url.startsWith('/api/linkedin-session/exists') && req.method === 'GET') {
+          if (!existsSync(LINKEDIN_SESSION_PATH)) {
+            return sendJson(res, 200, { exists: false, mtime: null });
+          }
+          try {
+            const stat = await fs.stat(LINKEDIN_SESSION_PATH);
+            return sendJson(res, 200, { exists: true, mtime: stat.mtime.toISOString() });
+          } catch (e) {
+            return sendJson(res, 500, { exists: false, error: (e as Error).message });
+          }
         }
 
         // ---- onboarding endpoints -------------------------------------------

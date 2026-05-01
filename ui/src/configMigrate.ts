@@ -202,6 +202,11 @@ export const normalizeConfig = (raw: unknown): CrawlerConfig => {
 
   const llmProvider = normalizeLLMProvider(r.llm_provider);
 
+  let defaultMode: 'guest' | 'loggedin' | undefined;
+  if (r.default_mode === 'guest' || r.default_mode === 'loggedin') {
+    defaultMode = r.default_mode;
+  }
+
   const feedbackMax =
     typeof r.feedback_examples_max === 'number'
     && Number.isFinite(r.feedback_examples_max)
@@ -224,6 +229,7 @@ export const normalizeConfig = (raw: unknown): CrawlerConfig => {
     offtopic_title_patterns: offtopic,
     feedback_examples_max: feedbackMax,
     llm_provider: llmProvider,
+    default_mode: defaultMode,
   };
 };
 
@@ -264,6 +270,9 @@ export const serializeConfig = (cfg: CrawlerConfig): Record<string, unknown> => 
     const lp: Record<string, unknown> = { name: cfg.llm_provider.name };
     if (cfg.llm_provider.model) lp.model = cfg.llm_provider.model;
     out.llm_provider = lp;
+  }
+  if (cfg.default_mode === 'guest' || cfg.default_mode === 'loggedin') {
+    out.default_mode = cfg.default_mode;
   }
   return out;
 };

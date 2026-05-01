@@ -52,6 +52,10 @@ export interface CrawlerConfig {
   feedback_examples_max?: number;
   // Stage 2 — backend LLM provider selector. Omit to keep "auto" behavior.
   llm_provider?: LLMProviderConfig;
+  // Stage 3 — picked in the welcome wizard (Step 3). Used as the default
+  // scrape mode and pre-fill for the scheduler card. "guest" if missing
+  // (matches the legacy implicit default).
+  default_mode?: 'guest' | 'loggedin';
 
   // --- legacy (one-time migrate via normalizeConfig) ---------------------
   // Kept optional so older config.json files load without a type error.
@@ -118,5 +122,6 @@ export const configsEqual = (a: CrawlerConfig, b: CrawlerConfig): boolean => {
   const bp = b.llm_provider;
   if ((ap?.name ?? null) !== (bp?.name ?? null)) return false;
   if ((ap?.model ?? null) !== (bp?.model ?? null)) return false;
+  if ((a.default_mode ?? null) !== (b.default_mode ?? null)) return false;
   return true;
 };
