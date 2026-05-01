@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { postJson } from './api';
 import type { AppStatus, Fit, Source } from './types';
 
 export const useDebounced = <T>(value: T, delay = 150): T => {
@@ -35,11 +36,7 @@ export const useCorpusActions = () => {
     async (ids: string[]): Promise<CorpusActionsResult> => {
       if (ids.length === 0) return { ok: true };
       try {
-        const res = await fetch('/api/corpus/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids }),
-        });
+        const res = await postJson('/api/corpus/delete', { ids });
         const body = (await res.json()) as { ok?: boolean; error?: string };
         if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
@@ -62,11 +59,7 @@ export const useCorpusActions = () => {
       try {
         const payload: Record<string, unknown> = { id, rating };
         if (comment !== undefined) payload.comment = comment;
-        const res = await fetch('/api/corpus/rate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
+        const res = await postJson('/api/corpus/rate', payload);
         const body = (await res.json()) as { ok?: boolean; error?: string };
         if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         // NOTE: do NOT fire corpus-stale here. The autosave inside
@@ -97,11 +90,7 @@ export const useCorpusActions = () => {
     }> => {
       if (ids.length === 0) return { ok: true, rescored: 0 };
       try {
-        const res = await fetch('/api/corpus/rescore', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids }),
-        });
+        const res = await postJson('/api/corpus/rescore', { ids });
         const body = (await res.json()) as {
           ok?: boolean; error?: string;
           rescored?: number; claude_rescored?: number;
@@ -132,11 +121,7 @@ export const useCorpusActions = () => {
     async (ids: string[], pushed: boolean): Promise<CorpusActionsResult> => {
       if (ids.length === 0) return { ok: true };
       try {
-        const res = await fetch('/api/corpus/push-to-end', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids, pushed }),
-        });
+        const res = await postJson('/api/corpus/push-to-end', { ids, pushed });
         const body = (await res.json()) as { ok?: boolean; error?: string };
         if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
@@ -184,11 +169,7 @@ export const useAppStatus = () => {
       try {
         const payload: Record<string, unknown> = { id, status };
         if (note !== undefined) payload.note = note;
-        const res = await fetch('/api/corpus/app-status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
+        const res = await postJson('/api/corpus/app-status', payload);
         const body = (await res.json()) as { ok?: boolean; error?: string };
         if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
@@ -203,10 +184,8 @@ export const useAppStatus = () => {
   const bulkImportApplied = useCallback(
     async (ids: string[]): Promise<BulkImportResult> => {
       try {
-        const res = await fetch('/api/corpus/applied-bulk-import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ applied_ids: ids }),
+        const res = await postJson('/api/corpus/applied-bulk-import', {
+          applied_ids: ids,
         });
         const body = (await res.json()) as {
           ok?: boolean; error?: string; imported?: number;
@@ -268,10 +247,8 @@ export const useAddManual = () => {
         return { ok: false, error: 'paste a LinkedIn URL or job id' };
       }
       try {
-        const res = await fetch('/api/corpus/add-manual', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url_or_id: trimmed }),
+        const res = await postJson('/api/corpus/add-manual', {
+          url_or_id: trimmed,
         });
         const body = (await res.json()) as {
           ok?: boolean;
