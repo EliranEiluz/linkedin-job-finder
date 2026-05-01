@@ -106,7 +106,7 @@ interface WizardDraft {
 
 const Stepper = ({ step }: { step: Step }) => {
   // Labels: short for mobile, full at md+. [shortLabel, fullLabel].
-  const labels: ReadonlyArray<readonly [string, string]> = [
+  const labels: readonly (readonly [string, string])[] = [
     ['Sys', 'Pre-flight'],
     ['LLM', 'LLM provider'],
     ['Geo', 'Geo scope'],
@@ -213,7 +213,7 @@ const Step0Preflight = ({ onAdvance }: { onAdvance: () => void }) => {
   useEffect(() => {
     if (state.kind === 'ok') {
       const t = setTimeout(onAdvance, 600);
-      return () => clearTimeout(t);
+      return () => { clearTimeout(t); };
     }
   }, [state, onAdvance]);
 
@@ -450,7 +450,7 @@ const Step1LLM = ({
             </button>
             <button
               type="button"
-              onClick={() => setShowPicker(true)}
+              onClick={() => { setShowPicker(true); }}
               className="rounded border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
             >
               Change
@@ -511,7 +511,7 @@ const Step1LLM = ({
                   <input
                     type="password"
                     value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
+                    onChange={(e) => { setApiKey(e.target.value); }}
                     placeholder="paste key…"
                     autoComplete="off"
                     className="w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
@@ -612,7 +612,7 @@ const Step2Geo = ({
               key={g.value}
               type="button"
               aria-pressed={isSel}
-              onClick={() => pick(g.value)}
+              onClick={() => { pick(g.value); }}
               className={clsx(
                 'rounded border p-4 text-left transition focus:outline-none focus:ring-2 focus:ring-indigo-400',
                 isSel
@@ -630,7 +630,7 @@ const Step2Geo = ({
       <div className="mb-4 rounded border border-slate-200 bg-white">
         <button
           type="button"
-          onClick={() => setCustomOpen((v) => !v)}
+          onClick={() => { setCustomOpen((v) => !v); }}
           className="flex w-full items-center justify-between rounded-t px-3 py-2 text-left text-sm hover:bg-slate-50"
         >
           <span className="font-medium text-slate-700">Custom URN</span>
@@ -646,14 +646,14 @@ const Step2Geo = ({
                 type="text"
                 inputMode="numeric"
                 value={custom}
-                onChange={(e) => setCustom(e.target.value.replace(/[^\d]/g, ''))}
+                onChange={(e) => { setCustom(e.target.value.replace(/[^\d]/g, '')); }}
                 placeholder="e.g. 101165590"
                 className="flex-1 rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
               />
               <button
                 type="button"
                 disabled={!custom}
-                onClick={() => pick(custom)}
+                onClick={() => { pick(custom); }}
                 className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
                 Use
@@ -837,14 +837,20 @@ const readFileAsText = async (file: File): Promise<string> => {
     const j = (await res.json().catch(() => ({}))) as
       { ok?: boolean; text?: string; error?: string };
     if (!res.ok || !j.ok || typeof j.text !== 'string') {
-      throw new Error(j.error || `extract-pdf failed (HTTP ${res.status})`);
+      throw new Error(j.error ?? `extract-pdf failed (HTTP ${res.status.toString()})`);
     }
     return j.text;
   }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+    reader.onload = () => {
+      // FileReader.result is `string | ArrayBuffer | null` after readAsText;
+      // for the text reader it's always string-or-null but we coerce
+      // explicitly so the `string()` path can't surface "[object …]".
+      const r = reader.result;
+      resolve(typeof r === 'string' ? r : '');
+    };
+    reader.onerror = () => { reject(reader.error ?? new Error('read failed')); };
     reader.readAsText(file);
   });
 };
@@ -893,7 +899,7 @@ const Step4CV = ({
           <div className="mb-4 md:hidden">
             <button
               type="button"
-              onClick={() => setCalloutOpen((v) => !v)}
+              onClick={() => { setCalloutOpen((v) => !v); }}
               aria-expanded={calloutOpen}
               className="flex w-full items-center justify-between rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-left text-sm text-indigo-800"
             >
@@ -958,7 +964,7 @@ const Step4CV = ({
       )}
       <textarea
         value={cv}
-        onChange={(e) => setCv(e.target.value)}
+        onChange={(e) => { setCv(e.target.value); }}
         placeholder="Paste your CV here…"
         className="h-72 w-full rounded border border-slate-300 bg-white p-3 text-sm font-mono leading-5 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
       />
@@ -1005,7 +1011,7 @@ const Step5Intent = ({
     </p>
     <textarea
       value={intent}
-      onChange={(e) => setIntent(e.target.value)}
+      onChange={(e) => { setIntent(e.target.value); }}
       placeholder="e.g. Staff/principal backend or platform engineer, Go or Rust preferred, remote-friendly, mid-size infra companies, no sales / no smart-contract dev / no interviews that require LeetCode live coding…"
       className="h-56 w-full rounded border border-slate-300 bg-white p-3 text-sm leading-6 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
     />
@@ -1047,7 +1053,7 @@ const Expandable = ({
     <div className="rounded border border-slate-200 bg-white">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { setOpen((v) => !v); }}
         className="flex w-full items-center justify-between rounded-t px-3 py-2 text-left text-sm hover:bg-slate-50"
       >
         <span>
@@ -1406,7 +1412,7 @@ const Step6Generate = ({
                 <input
                   type="text"
                   value={profileName}
-                  onChange={(e) => setProfileName(e.target.value)}
+                  onChange={(e) => { setProfileName(e.target.value); }}
                   disabled={saving}
                   placeholder={defaultProfileName()}
                   className="mb-2 w-full max-w-sm rounded border border-slate-300 bg-white px-2 py-1 text-sm font-mono shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 disabled:opacity-50"
@@ -1505,14 +1511,14 @@ const Step7WhatsNext = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: defaultMode }),
       });
-      const body = await res.json();
+      const body = (await res.json()) as { error?: string };
       if (res.ok) {
         setScrapeMsg({
           kind: 'ok',
           text: 'Scrape started — see Run History tab. Takes 5-15 min.',
         });
       } else {
-        setScrapeMsg({ kind: 'err', text: body.error ?? `HTTP ${res.status}` });
+        setScrapeMsg({ kind: 'err', text: body.error ?? `HTTP ${res.status.toString()}` });
       }
     } catch (e) {
       setScrapeMsg({ kind: 'err', text: (e as Error).message });
@@ -1550,7 +1556,7 @@ const Step7WhatsNext = ({
         </button>
         <button
           type="button"
-          onClick={() => onSwitchTab('config')}
+          onClick={() => { onSwitchTab('config'); }}
           className="rounded border border-slate-200 bg-white p-4 text-left transition hover:border-indigo-400 hover:bg-indigo-50/40 focus:outline-none focus:ring-2 focus:ring-indigo-400"
         >
           <div className="font-semibold text-slate-800">Schedule daily auto-scrape</div>
@@ -1561,7 +1567,7 @@ const Step7WhatsNext = ({
         </button>
         <button
           type="button"
-          onClick={() => onSwitchTab('corpus')}
+          onClick={() => { onSwitchTab('corpus'); }}
           className="rounded border border-slate-200 bg-white p-4 text-left transition hover:border-indigo-400 hover:bg-indigo-50/40 focus:outline-none focus:ring-2 focus:ring-indigo-400"
         >
           <div className="font-semibold text-slate-800">Skip — go to Corpus</div>
@@ -1651,7 +1657,7 @@ export const OnboardingPage = ({
             </span>
             <button
               type="button"
-              onClick={() => onSwitchTab('config')}
+              onClick={() => { onSwitchTab('config'); }}
               className="rounded bg-white px-2 py-0.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
             >
               Open Crawler Config →
@@ -1662,37 +1668,37 @@ export const OnboardingPage = ({
 
       <Stepper step={step} />
 
-      {step === 0 && <Step0Preflight onAdvance={() => setStep(1)} />}
+      {step === 0 && <Step0Preflight onAdvance={() => { setStep(1); }} />}
       {step === 1 && (
         <Step1LLM
           draft={draft}
           setDraft={setDraft}
-          onAdvance={() => setStep(2)}
-          onBack={() => setStep(0)}
+          onAdvance={() => { setStep(2); }}
+          onBack={() => { setStep(0); }}
         />
       )}
       {step === 2 && (
         <Step2Geo
           draft={draft}
           setDraft={setDraft}
-          onAdvance={() => setStep(3)}
-          onBack={() => setStep(1)}
+          onAdvance={() => { setStep(3); }}
+          onBack={() => { setStep(1); }}
         />
       )}
       {step === 3 && (
         <Step3Mode
           draft={draft}
           setDraft={setDraft}
-          onAdvance={() => setStep(4)}
-          onBack={() => setStep(2)}
+          onAdvance={() => { setStep(4); }}
+          onBack={() => { setStep(2); }}
         />
       )}
       {step === 4 && (
         <Step4CV
           cv={cv}
           setCv={setCv}
-          onNext={() => setStep(5)}
-          onBack={() => setStep(3)}
+          onNext={() => { setStep(5); }}
+          onBack={() => { setStep(3); }}
           haveExistingConfig={haveExisting}
         />
       )}
@@ -1700,8 +1706,8 @@ export const OnboardingPage = ({
         <Step5Intent
           intent={intent}
           setIntent={setIntent}
-          onBack={() => setStep(4)}
-          onNext={() => setStep(6)}
+          onBack={() => { setStep(4); }}
+          onNext={() => { setStep(6); }}
         />
       )}
       {step === 6 && (
@@ -1711,7 +1717,7 @@ export const OnboardingPage = ({
           current={current}
           draft={draft}
           haveExisting={haveExisting}
-          onBack={() => setStep(5)}
+          onBack={() => { setStep(5); }}
           onSaved={(name) => {
             setSavedProfile(name ?? null);
             setSaved(true);
@@ -1727,7 +1733,7 @@ export const OnboardingPage = ({
           savedProfile={savedProfile}
           defaultMode={draft.default_mode ?? 'guest'}
           onSwitchTab={onSwitchTab}
-          onDismiss={() => onSwitchTab('corpus')}
+          onDismiss={() => { onSwitchTab('corpus'); }}
         />
       )}
     </div>

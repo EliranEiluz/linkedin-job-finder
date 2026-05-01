@@ -121,7 +121,7 @@ export const JobActionsPopover = ({
     if (!confirmDelete) {
       setConfirmDelete(true);
       // Auto-revert confirm state after 4s if not clicked again.
-      window.setTimeout(() => setConfirmDelete(false), 4000);
+      window.setTimeout(() => { setConfirmDelete(false); }, 4000);
       return;
     }
     setDeleting(true);
@@ -129,7 +129,7 @@ export const JobActionsPopover = ({
     const r = await onDelete(job.id);
     setDeleting(false);
     if (!r.ok) {
-      setErr(r.error || 'delete failed');
+      setErr(r.error ?? 'delete failed');
       setConfirmDelete(false);
       return;
     }
@@ -165,7 +165,7 @@ export const JobActionsPopover = ({
           role="dialog"
           aria-label="Job actions"
           aria-modal="true"
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); }}
           className="fixed inset-x-3 bottom-3 z-50 rounded-lg border border-slate-200 bg-white p-3 shadow-2xl"
         >
           <PopoverBody
@@ -197,7 +197,7 @@ export const JobActionsPopover = ({
       ref={popoverRef}
       role="dialog"
       aria-label="Job actions"
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); }}
       style={{
         position: 'fixed',
         top: coords.top,
@@ -285,7 +285,7 @@ const PopoverBody = ({
         {isApplied ? (
           <button
             type="button"
-            onClick={() => onUnapply(job.id)}
+            onClick={() => { onUnapply(job.id); }}
             className="inline-flex w-full items-center justify-center rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
           >
             Mark as not applied
@@ -294,14 +294,14 @@ const PopoverBody = ({
           <>
             <button
               type="button"
-              onClick={() => onApply(true)}
+              onClick={() => { onApply(true); }}
               className="inline-flex w-full items-center justify-center rounded border border-emerald-600 bg-emerald-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
             >
               Apply and move to end
             </button>
             <button
               type="button"
-              onClick={() => onApply(false)}
+              onClick={() => { onApply(false); }}
               className="inline-flex w-full items-center justify-center rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
             >
               Apply but keep in place
@@ -310,7 +310,7 @@ const PopoverBody = ({
               <input
                 type="checkbox"
                 checked={remember}
-                onChange={(e) => setRemember(e.target.checked)}
+                onChange={(e) => { setRemember(e.target.checked); }}
                 className="h-3 w-3 cursor-pointer rounded border-slate-300 text-brand-700 focus:ring-brand-700"
               />
               Remember my choice
@@ -319,7 +319,7 @@ const PopoverBody = ({
         ) : (
           <button
             type="button"
-            onClick={() => onApply(applyMovesToEnd)}
+            onClick={() => { onApply(applyMovesToEnd); }}
             className="inline-flex w-full items-center justify-center rounded border border-emerald-600 bg-emerald-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
           >
             {applyMovesToEnd ? 'Apply and move to end' : 'Apply but keep in place'}
@@ -397,7 +397,7 @@ const PopoverBody = ({
           {' · '}
           <button
             type="button"
-            onClick={() => onSetApplyPref(null)}
+            onClick={() => { onSetApplyPref(null); }}
             className="text-brand-700 hover:underline"
           >
             change

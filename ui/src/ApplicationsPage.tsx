@@ -200,11 +200,11 @@ const isStaleJob = (j: Job): boolean => {
 };
 
 const fetchJobs = async (): Promise<Job[]> => {
-  const res = await fetch(`${RESULTS_URL}?t=${Date.now()}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const res = await fetch(`${RESULTS_URL}?t=${Date.now().toString()}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status.toString()}`);
   const text = await res.text();
   if (!text.trim()) return [];
-  const data = JSON.parse(text);
+  const data: unknown = JSON.parse(text);
   if (!Array.isArray(data)) throw new Error('results.json root must be an array');
   return data as Job[];
 };
@@ -330,8 +330,8 @@ const CardContent = ({ job, stale }: { job: Job; stale?: boolean }) => (
           href={job.url}
           target="_blank"
           rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); }}
+          onPointerDown={(e) => { e.stopPropagation(); }}
           className="shrink-0 text-[11px] font-medium text-brand-700 hover:underline"
         >
           Open ↗
@@ -385,7 +385,7 @@ const SortableCard = ({ job, stale, isFirstStale, onOpen }: CardProps) => {
         // Ignore clicks that originated on inner handlers (the "Open ↗"
         // anchor calls stopPropagation on pointerdown so its event never
         // reaches us). Defer slightly so any in-flight drag-end runs first.
-        window.setTimeout(() => onOpen(job), 0);
+        window.setTimeout(() => { onOpen(job); }, 0);
       }}
       data-stale={stale ? '1' : undefined}
       data-first-stale={isFirstStale ? '1' : undefined}
@@ -508,7 +508,7 @@ const ViewToggle = ({ view, onChange }: ViewToggleProps) => {
     <button
       key={mode}
       type="button"
-      onClick={() => onChange(mode)}
+      onClick={() => { onChange(mode); }}
       aria-pressed={view === mode}
       className={clsx(
         'rounded px-2.5 py-1 text-xs font-medium transition-colors',
@@ -544,11 +544,11 @@ const SummaryStrip = ({ counts, staleCount, onClickStale }: SummaryStripProps) =
   // On mobile the strip wrapped to two lines; zero-count chips were just
   // visual noise. Filter them out on mobile so the strip stays compact.
   // Desktop still shows muted zero-count chips (the at-a-glance use case).
-  const visible = COLUMNS.filter((s) => !(isMobile && (counts[s] ?? 0) === 0));
+  const visible = COLUMNS.filter((s) => !(isMobile && counts[s] === 0));
   return (
     <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[11px]">
       {visible.map((s, i) => {
-        const n = counts[s] ?? 0;
+        const n = counts[s];
         const muted = n === 0;
         return (
           <span key={s} className="inline-flex items-center gap-1">
@@ -621,7 +621,7 @@ const TrackerTable = ({
         id: 'title',
         header: 'Title',
         cell: (info) => {
-          const v = info.getValue() ?? '';
+          const v = info.getValue();
           return (
             <span className="text-slate-800" title={v}>
               {TRUNCATE(v || '(untitled)')}
@@ -646,7 +646,7 @@ const TrackerTable = ({
         id: 'status',
         header: 'Status',
         cell: (info) => {
-          const s = (info.row.original.app_status ?? 'new') as AppStatus;
+          const s = (info.row.original.app_status ?? 'new');
           return (
             <span
               className={clsx(
@@ -660,8 +660,8 @@ const TrackerTable = ({
           );
         },
         sortingFn: (a, b) => {
-          const sa = (a.original.app_status ?? 'new') as AppStatus;
-          const sb = (b.original.app_status ?? 'new') as AppStatus;
+          const sa = (a.original.app_status ?? 'new');
+          const sb = (b.original.app_status ?? 'new');
           return APP_STATUS_ORDER_INDEX[sa] - APP_STATUS_ORDER_INDEX[sb];
         },
       }),
@@ -729,7 +729,7 @@ const TrackerTable = ({
               href={j.url}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); }}
               className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700"
             >
               Open ↗
@@ -812,7 +812,7 @@ const TrackerTable = ({
                   // modal — same affordance as the kanban cards. The "Open ↗"
                   // action cell calls stopPropagation on its inner link so
                   // users can still jump straight to LinkedIn from the table.
-                  onClick={() => onOpenRow(j)}
+                  onClick={() => { onOpenRow(j); }}
                   className={clsx(
                     'cursor-pointer border-b border-slate-100 hover:bg-slate-50',
                     stale && 'border-l-4 border-l-amber-400',
@@ -904,7 +904,7 @@ interface AppDetailModalProps {
 const AppDetailModal = ({
   job, onClose, onSaveNotes, onChangeStatus, onRate,
 }: AppDetailModalProps) => {
-  const status = (job.app_status ?? 'new') as AppStatus;
+  const status = (job.app_status ?? 'new');
 
   // Notes editor state. `notesDraft` is what the user is typing;
   // `notesSaved` is the last value successfully persisted (used to decide
@@ -943,7 +943,7 @@ const AppDetailModal = ({
       if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); };
   }, [onClose]);
 
   // Persist the current notes draft. Used by both the debounced autosave
@@ -963,11 +963,11 @@ const AppDetailModal = ({
         setNotesSaved(text);
         if (savedFadeRef.current) window.clearTimeout(savedFadeRef.current);
         savedFadeRef.current = window.setTimeout(
-          () => setSaveStatus('idle'), 1500,
+          () => { setSaveStatus('idle'); }, 1500,
         );
       } else {
         setSaveStatus('error');
-        setSaveErr(r.error || 'notes save failed');
+        setSaveErr(r.error ?? 'notes save failed');
       }
     },
     [job.id, onSaveNotes],
@@ -1017,7 +1017,7 @@ const AppDetailModal = ({
     const r = await onChangeStatus(job.id, next);
     setStatusBusy(false);
     if (!r.ok) {
-      setStatusErr(r.error || 'status change failed');
+      setStatusErr(r.error ?? 'status change failed');
     } else {
       // Page-level reload (via the corpus-stale event fired by useAppStatus)
       // will re-render with the new status; we close so the user sees the
@@ -1128,7 +1128,7 @@ const AppDetailModal = ({
             <textarea
               id={`app-notes-${job.id}`}
               value={notesDraft}
-              onChange={(e) => handleNotesChange(e.target.value.slice(0, NOTES_MAX))}
+              onChange={(e) => { handleNotesChange(e.target.value.slice(0, NOTES_MAX)); }}
               onBlur={handleNotesBlur}
               rows={5}
               placeholder="Recruiter pinged me Friday, interview rescheduled, take-home due Tue…"
@@ -1153,11 +1153,11 @@ const AppDetailModal = ({
                     <span
                       className={clsx(
                         'inline-flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
-                        STATUS_CHIP[(h.status ?? 'new') as AppStatus],
+                        STATUS_CHIP[h.status],
                       )}
                     >
-                      <Dot color={STATUS_DOT[(h.status ?? 'new') as AppStatus]} />
-                      {STATUS_LABEL[(h.status ?? 'new') as AppStatus]}
+                      <Dot color={STATUS_DOT[h.status]} />
+                      {STATUS_LABEL[h.status]}
                     </span>
                     <span className="text-slate-400">{safeRel(h.at)}</span>
                   </li>
@@ -1281,7 +1281,7 @@ export const ApplicationsPage = () => {
       const id = Date.now();
       setToast({ id, text, kind });
       toastTimerRef.current = window.setTimeout(() => {
-        setToast((cur) => (cur && cur.id === id ? null : cur));
+        setToast((cur) => (cur?.id === id ? null : cur));
       }, 3500);
     },
     [],
@@ -1308,7 +1308,7 @@ export const ApplicationsPage = () => {
   useEffect(() => {
     const onStale = () => void reload();
     window.addEventListener('linkedinjobs:corpus-stale', onStale);
-    return () => window.removeEventListener('linkedinjobs:corpus-stale', onStale);
+    return () => { window.removeEventListener('linkedinjobs:corpus-stale', onStale); };
   }, [reload]);
 
   // ---- One-shot localStorage migration ----
@@ -1331,9 +1331,9 @@ export const ApplicationsPage = () => {
         }
         let ids: string[] = [];
         try {
-          const parsed = JSON.parse(raw);
+          const parsed: unknown = JSON.parse(raw);
           if (Array.isArray(parsed)) {
-            ids = parsed.filter((x) => typeof x === 'string');
+            ids = parsed.filter((x): x is string => typeof x === 'string');
           }
         } catch {
           /* malformed — treat as empty */
@@ -1478,7 +1478,7 @@ export const ApplicationsPage = () => {
   }, [cards]);
 
   const totalActive = useMemo(
-    () => COLUMNS.reduce((acc, s) => acc + (counts[s] ?? 0), 0),
+    () => COLUMNS.reduce((acc, s) => acc + counts[s], 0),
     [counts],
   );
 
@@ -1503,7 +1503,7 @@ export const ApplicationsPage = () => {
     window.setTimeout(() => {
       const el = document.querySelector(
         `[data-first-stale="1"]`,
-      ) as HTMLElement | null;
+      );
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 0);
   }, [view, firstStaleId]);
@@ -1632,7 +1632,7 @@ export const ApplicationsPage = () => {
         <TrackerTable
           jobs={allJobs}
           staleOnly={staleOnly}
-          onClearStaleOnly={() => setStaleOnly(false)}
+          onClearStaleOnly={() => { setStaleOnly(false); }}
           onOpenRow={handleOpenCard}
         />
       ) : (
@@ -1641,8 +1641,8 @@ export const ApplicationsPage = () => {
             sensors={sensors}
             collisionDetection={closestCenter}
             onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDragCancel={() => setActiveJob(null)}
+            onDragEnd={(e) => { void handleDragEnd(e); }}
+            onDragCancel={() => { setActiveJob(null); }}
           >
             <div className="flex h-full gap-3 p-4">
               {COLUMNS.map((status) => (
@@ -1670,7 +1670,7 @@ export const ApplicationsPage = () => {
         <AppDetailModal
           key={openDetailJob.id}
           job={openDetailJob}
-          onClose={() => setOpenDetailFor(null)}
+          onClose={() => { setOpenDetailFor(null); }}
           onSaveNotes={(id, status, note) => setAppStatus(id, status, note)}
           onChangeStatus={handleChangeStatusFromModal}
           onRate={(id, rating, comment) => rateJob(id, rating, comment)}

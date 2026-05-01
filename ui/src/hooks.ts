@@ -4,8 +4,8 @@ import type { AppStatus, Fit, Source } from './types';
 export const useDebounced = <T>(value: T, delay = 150): T => {
   const [v, setV] = useState(value);
   useEffect(() => {
-    const id = window.setTimeout(() => setV(value), delay);
-    return () => window.clearTimeout(id);
+    const id = window.setTimeout(() => { setV(value); }, delay);
+    return () => { window.clearTimeout(id); };
   }, [value, delay]);
   return v;
 };
@@ -41,7 +41,7 @@ export const useCorpusActions = () => {
           body: JSON.stringify({ ids }),
         });
         const body = (await res.json()) as { ok?: boolean; error?: string };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
         return { ok: true };
       } catch (e) {
@@ -68,7 +68,7 @@ export const useCorpusActions = () => {
           body: JSON.stringify(payload),
         });
         const body = (await res.json()) as { ok?: boolean; error?: string };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         // NOTE: do NOT fire corpus-stale here. The autosave inside
         // RatingCommentEditor calls this on every keystroke debounce; firing
         // stale would reload results.json mid-typing, remount the row card,
@@ -107,7 +107,7 @@ export const useCorpusActions = () => {
           rescored?: number; claude_rescored?: number;
           regex_fallback?: number; failed?: number; missing?: string[];
         };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
         return {
           ok: true,
@@ -138,7 +138,7 @@ export const useCorpusActions = () => {
           body: JSON.stringify({ ids, pushed }),
         });
         const body = (await res.json()) as { ok?: boolean; error?: string };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
         return { ok: true };
       } catch (e) {
@@ -190,7 +190,7 @@ export const useAppStatus = () => {
           body: JSON.stringify(payload),
         });
         const body = (await res.json()) as { ok?: boolean; error?: string };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
         return { ok: true };
       } catch (e) {
@@ -211,7 +211,7 @@ export const useAppStatus = () => {
         const body = (await res.json()) as {
           ok?: boolean; error?: string; imported?: number;
         };
-        if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         fireStale();
         return { ok: true, imported: body.imported ?? 0 };
       } catch (e) {
@@ -263,7 +263,7 @@ export const useAddManual = () => {
 
   const addManual = useCallback(
     async (input: string): Promise<AddManualResult> => {
-      const trimmed = (input || '').trim();
+      const trimmed = input.trim();
       if (!trimmed) {
         return { ok: false, error: 'paste a LinkedIn URL or job id' };
       }
@@ -293,11 +293,11 @@ export const useAddManual = () => {
             ok: false,
             alreadyInCorpus: true,
             existingId: body.existing_id,
-            error: body.error || 'already in corpus',
+            error: body.error ?? 'already in corpus',
           };
         }
         if (!body.ok || !body.id) {
-          return { ok: false, error: body.error || `HTTP ${res.status}` };
+          return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
         }
         fireStale();
         return {

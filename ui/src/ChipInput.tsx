@@ -60,7 +60,7 @@ export const ChipInput = ({
           {v}
           <button
             type="button"
-            onClick={() => remove(i)}
+            onClick={() => { remove(i); }}
             className="-mr-0.5 rounded-full px-1 text-brand-700 hover:bg-brand-100 hover:text-brand-900"
             title="Remove"
             aria-label={`Remove ${v}`}
@@ -72,9 +72,9 @@ export const ChipInput = ({
       <input
         type="text"
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => { setDraft(e.target.value); }}
         onKeyDown={onKey}
-        onBlur={() => commit(draft)}
+        onBlur={() => { commit(draft); }}
         placeholder={values.length === 0 ? placeholder : ''}
         className={clsx(
           'min-w-[8rem] flex-1 border-0 bg-transparent p-0 text-sm focus:outline-none focus:ring-0',

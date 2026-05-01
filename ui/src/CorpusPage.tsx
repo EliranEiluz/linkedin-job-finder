@@ -184,7 +184,12 @@ export const CorpusPage = () => {
     Map<string, 'add' | 'remove'>
   >(new Map());
 
-  const allJobs: Job[] = state.kind === 'ok' ? state.jobs : [];
+  // Memoized so downstream useMemo / useCallback dep arrays don't churn
+  // every render — re-creating an empty `[]` literal would invalidate them.
+  const allJobs: Job[] = useMemo(
+    () => (state.kind === 'ok' ? state.jobs : []),
+    [state],
+  );
 
   // Per-row "applied but keep in place" override. When the user clicks
   // "Apply but keep in place" in the popover (or the per-row equivalent),
@@ -232,11 +237,11 @@ export const CorpusPage = () => {
         // We GC the pending Map after a beat to keep it small.
         if (r.ok) {
           window.setTimeout(
-            () => setPushedPending((m) => {
+            () => { setPushedPending((m) => {
               const next = new Map(m);
               next.delete(id);
               return next;
-            }),
+            }); },
             1500,
           );
         } else {
@@ -259,11 +264,11 @@ export const CorpusPage = () => {
       void pushToEndJobs([id], false).then((r) => {
         if (r.ok) {
           window.setTimeout(
-            () => setPushedPending((m) => {
+            () => { setPushedPending((m) => {
               const next = new Map(m);
               next.delete(id);
               return next;
-            }),
+            }); },
             1500,
           );
         } else {
@@ -289,11 +294,11 @@ export const CorpusPage = () => {
       void pushToEndJobs(ids, true).then((r) => {
         if (r.ok) {
           window.setTimeout(
-            () => setPushedPending((m) => {
+            () => { setPushedPending((m) => {
               const next = new Map(m);
               for (const id of ids) next.delete(id);
               return next;
-            }),
+            }); },
             1500,
           );
         } else {
@@ -529,9 +534,10 @@ export const CorpusPage = () => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/config?t=${Date.now()}`);
+        const res = await fetch(`/api/config?t=${Date.now().toString()}`);
         if (!res.ok) return;
         const cfg = normalizeConfig(await res.json());
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mutated by cleanup
         if (cancelled) return;
         const m = new Map<string, string>();
         for (const c of cfg.categories) {
@@ -577,7 +583,7 @@ export const CorpusPage = () => {
       void reload();
     };
     window.addEventListener('linkedinjobs:corpus-stale', onStale);
-    return () => window.removeEventListener('linkedinjobs:corpus-stale', onStale);
+    return () => { window.removeEventListener('linkedinjobs:corpus-stale', onStale); };
   }, [reload]);
 
   // URL sync — preserve the active tab when rewriting filters.
@@ -639,7 +645,7 @@ export const CorpusPage = () => {
           e.preventDefault();
           return;
         }
-        if (isInput) (t as HTMLElement).blur();
+        if (isInput) (t).blur();
         return;
       }
       if (isInput) return;
@@ -681,7 +687,7 @@ export const CorpusPage = () => {
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); };
   }, [cursorIndex, filtered, showCheatsheet, toggleApplied]);
 
   const cursorRowId = filtered[cursorIndex]?.id ?? null;
@@ -693,7 +699,7 @@ export const CorpusPage = () => {
           Refresh button. See §2 alt A in DESIGN_UI_POLISH.md. */}
       <AddManualModal
         open={addManualOpen}
-        onClose={() => setAddManualOpen(false)}
+        onClose={() => { setAddManualOpen(false); }}
       />
 
       {state.kind === 'ok' && (
@@ -704,7 +710,7 @@ export const CorpusPage = () => {
           loadedAt={state.loadedAt}
           onRefresh={() => void reload()}
           refreshing={false}
-          onAddManual={() => setAddManualOpen(true)}
+          onAddManual={() => { setAddManualOpen(true); }}
           categoryNamesById={categoryNamesById}
         />
       )}
@@ -743,7 +749,7 @@ export const CorpusPage = () => {
               applyMovesToEnd={applyMovesToEnd}
               onSetApplyPref={setApplyMovesToEnd}
               hasNonDefaultFilter={!isDefault(filters)}
-              onDeleteAllFiltered={() => deleteJobs(filtered.map((j) => j.id))}
+              onDeleteAllFiltered={() => { void deleteJobs(filtered.map((j) => j.id)); }}
               onRescoreMany={async (ids) => {
                 setRescoreBusy(true);
                 try {
@@ -801,7 +807,7 @@ export const CorpusPage = () => {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setFilters(defaultFilters())}
+                      onClick={() => { setFilters(defaultFilters()); }}
                       className="rounded border border-brand-700 bg-white px-3 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50"
                     >
                       Clear all filters
@@ -818,17 +824,17 @@ export const CorpusPage = () => {
       {showCheatsheet && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4"
-          onClick={() => setShowCheatsheet(false)}
+          onClick={() => { setShowCheatsheet(false); }}
         >
           <div
             className="max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); }}
           >
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-900">Keyboard shortcuts</h3>
               <button
                 type="button"
-                onClick={() => setShowCheatsheet(false)}
+                onClick={() => { setShowCheatsheet(false); }}
                 className="text-xs text-slate-500 hover:text-slate-700"
               >
                 Esc

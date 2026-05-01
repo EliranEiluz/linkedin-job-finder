@@ -17,9 +17,9 @@ const CategoryRow = ({
   onMove: (delta: -1 | 1) => void;
   onDelete: () => void;
 }) => {
-  const setName = (name: string) => onChange({ ...category, name });
-  const setType = (type: CategoryType) => onChange({ ...category, type });
-  const setQueries = (queries: string[]) => onChange({ ...category, queries });
+  const setName = (name: string) => { onChange({ ...category, name }); };
+  const setType = (type: CategoryType) => { onChange({ ...category, type }); };
+  const setQueries = (queries: string[]) => { onChange({ ...category, queries }); };
 
   return (
     <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
@@ -28,7 +28,7 @@ const CategoryRow = ({
         <div className="flex flex-col gap-0.5">
           <button
             type="button"
-            onClick={() => onMove(-1)}
+            onClick={() => { onMove(-1); }}
             disabled={isFirst}
             className="rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-500 hover:border-brand-500 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
             title="Move up"
@@ -38,7 +38,7 @@ const CategoryRow = ({
           </button>
           <button
             type="button"
-            onClick={() => onMove(1)}
+            onClick={() => { onMove(1); }}
             disabled={isLast}
             className="rounded border border-slate-300 bg-white px-1.5 text-[10px] text-slate-500 hover:border-brand-500 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
             title="Move down"
@@ -51,7 +51,7 @@ const CategoryRow = ({
         <input
           type="text"
           value={category.name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => { setName(e.target.value); }}
           placeholder="Category name (e.g. ML Researcher)"
           className="flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-sm font-medium focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
         />
@@ -72,7 +72,7 @@ const CategoryRow = ({
             type="radio"
             name={`type-${category.id}`}
             checked={category.type === 'keyword'}
-            onChange={() => setType('keyword')}
+            onChange={() => { setType('keyword'); }}
             className="text-brand-700 focus:ring-brand-700"
           />
           Keyword search
@@ -82,7 +82,7 @@ const CategoryRow = ({
             type="radio"
             name={`type-${category.id}`}
             checked={category.type === 'company'}
-            onChange={() => setType('company')}
+            onChange={() => { setType('company'); }}
             className="text-brand-700 focus:ring-brand-700"
           />
           Company search
@@ -185,9 +185,9 @@ export const CategoryManager = ({
               category={cat}
               isFirst={i === 0}
               isLast={i === categories.length - 1}
-              onChange={(next) => updateAt(i, next)}
-              onMove={(delta) => moveAt(i, delta)}
-              onDelete={() => removeAt(i)}
+              onChange={(next) => { updateAt(i, next); }}
+              onMove={(delta) => { moveAt(i, delta); }}
+              onDelete={() => { removeAt(i); }}
             />
           ))}
         </div>

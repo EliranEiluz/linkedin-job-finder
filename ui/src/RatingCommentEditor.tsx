@@ -87,7 +87,7 @@ export const RatingCommentEditor = ({
     const r = await onSave(n);
     if (!r.ok) {
       setRating(previous);
-      setErr(r.error || 'rate failed');
+      setErr(r.error ?? 'rate failed');
     }
   };
 
@@ -106,11 +106,11 @@ export const RatingCommentEditor = ({
         setSaveStatus('saved');
         if (savedFadeRef.current) window.clearTimeout(savedFadeRef.current);
         savedFadeRef.current = window.setTimeout(
-          () => setSaveStatus('idle'), 1500,
+          () => { setSaveStatus('idle'); }, 1500,
         );
       } else {
         setSaveStatus('error');
-        setErr(r.error || 'comment save failed');
+        setErr(r.error ?? 'comment save failed');
       }
     },
     [onSave],
@@ -173,7 +173,7 @@ export const RatingCommentEditor = ({
   );
 
   return (
-    <div onClick={(e) => e.stopPropagation()}>
+    <div onClick={(e) => { e.stopPropagation(); }}>
       {showRating && (
         <div className={compact ? 'mb-2' : 'mt-2'}>
           <div className="mb-1 flex items-center justify-between">
@@ -193,7 +193,7 @@ export const RatingCommentEditor = ({
           </div>
           <div
             className="flex items-center gap-1"
-            onMouseLeave={() => setHoverRating(null)}
+            onMouseLeave={() => { setHoverRating(null); }}
           >
             {[1, 2, 3, 4, 5].map((n) => {
               const filled = (hoverRating ?? rating ?? 0) >= n;
@@ -202,7 +202,7 @@ export const RatingCommentEditor = ({
                   key={n}
                   type="button"
                   onClick={() => void handleRate(n)}
-                  onMouseEnter={() => setHoverRating(n)}
+                  onMouseEnter={() => { setHoverRating(n); }}
                   className={clsx(
                     'flex items-center justify-center rounded leading-none transition-colors',
                     compact ? 'h-5 w-5 text-base' : 'h-7 w-7 text-lg',
@@ -239,7 +239,7 @@ export const RatingCommentEditor = ({
         <textarea
           id={`rce-comment-${jobId}`}
           value={commentDraft}
-          onChange={(e) => handleCommentChange(e.target.value.slice(0, COMMENT_MAX))}
+          onChange={(e) => { handleCommentChange(e.target.value.slice(0, COMMENT_MAX)); }}
           onBlur={handleCommentBlur}
           rows={rows}
           placeholder="Why this rating? Anything to remember about this role…"

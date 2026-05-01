@@ -146,12 +146,12 @@ export const validateGeoId = (raw: unknown): string => {
   const s = raw.trim();
   if (!s) return '';
   if (!/^\d+$/.test(s)) {
-    // eslint-disable-next-line no-console
+     
     console.warn(`geo_id ${JSON.stringify(raw)} is not a digit string — dropping`);
     return '';
   }
   if (!KNOWN_GEO_IDS.has(s)) {
-    // eslint-disable-next-line no-console
+     
     console.warn(
       `geo_id ${s} is not a known LinkedIn URN — accepting but verify before scraping`,
     );
@@ -266,7 +266,7 @@ export const serializeConfig = (cfg: CrawlerConfig): Record<string, unknown> => 
   if (cfg.feedback_examples_max !== undefined) {
     out.feedback_examples_max = cfg.feedback_examples_max;
   }
-  if (cfg.llm_provider && cfg.llm_provider.name) {
+  if (cfg.llm_provider?.name) {
     const lp: Record<string, unknown> = { name: cfg.llm_provider.name };
     if (cfg.llm_provider.model) lp.model = cfg.llm_provider.model;
     out.llm_provider = lp;

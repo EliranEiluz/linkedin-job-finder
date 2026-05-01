@@ -52,6 +52,7 @@ const fitBadge = (fit: Job['fit']) => {
 // source of truth = no drift when the threshold or formula tunes.
 // Falls back to `false` for legacy rows persisted before the field
 // existed (the backfill should have caught them all, but defensive).
+// eslint-disable-next-line react-refresh/only-export-components
 export const isHotJob = (j: Pick<Job, 'hot'>): boolean => j.hot === true;
 
 // Compact amber pill for the desktop "!" column + mobile card priority
@@ -108,6 +109,7 @@ const catLabel = (id: string): string =>
   LEGACY_CAT_ALIAS[id] ?? id.replace(/[_-]+/g, ' ');
 
 // Tooltip strings for cryptic chips. Native title="" — no Radix dep.
+// eslint-disable-next-line react-refresh/only-export-components
 export const TOOLTIPS = {
   sourceLoggedin: 'Job scraped via Playwright + saved LinkedIn session',
   sourceGuest: 'Job scraped via the unauthenticated /jobs-guest API',
@@ -296,7 +298,7 @@ export const JobsTable = ({
     useCallback((updater) => {
       setSorting((prev) => {
         const next = typeof updater === 'function'
-          ? (updater as (s: SortingState) => SortingState)(prev)
+          ? (updater)(prev)
           : updater;
         const withoutPin = next.filter((s) => s.id !== 'applied');
         return [{ id: 'applied', desc: false }, ...withoutPin];
@@ -404,7 +406,7 @@ export const JobsTable = ({
                       return next;
                     });
                   }}
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); }}
                   className="h-3.5 w-3.5 cursor-pointer rounded border-slate-300 text-brand-700 focus:ring-brand-700 disabled:opacity-40"
                   title={
                     visible.length === 0
@@ -426,12 +428,12 @@ export const JobsTable = ({
             return (
               <div
                 className="inline-flex items-center gap-1.5"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); }}
               >
                 <input
                   type="checkbox"
                   checked={isSelected}
-                  onChange={() => toggleSelected(j.id)}
+                  onChange={() => { toggleSelected(j.id); }}
                   className="h-4 w-4 cursor-pointer rounded border-slate-300 text-brand-700 focus:ring-brand-700"
                   title={isSelected ? 'Deselect row' : 'Select row'}
                   aria-label={isSelected ? 'Deselect row' : 'Select row'}
@@ -494,7 +496,7 @@ export const JobsTable = ({
           const v = info.row.original.score;
           return (
             <span className="tabular-nums text-slate-700">
-              {v == null ? '—' : v}
+              {v ?? '—'}
             </span>
           );
         },
@@ -550,7 +552,7 @@ export const JobsTable = ({
           return (
             <div
               className="flex items-center gap-1.5"
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); }}
             >
               <button
                 type="button"
@@ -577,7 +579,7 @@ export const JobsTable = ({
               {onDelete && (
                 <button
                   type="button"
-                  onClick={() => handleInlineDelete(j.id)}
+                  onClick={() => { handleInlineDelete(j.id); }}
                   className={clsx(
                     ROW_ACTION_BTN_BASE,
                     'transition-transform',
@@ -633,7 +635,8 @@ export const JobsTable = ({
       }),
     ],
     [
-      confirmDeleteId, handleInlineDelete, onDelete, applied, pushedToEndIds,
+      confirmDeleteId, handleInlineDelete, onDelete, onRate,
+      applied, pushedToEndIds,
       selectedIds, toggleSelected, categoryNamesById,
     ],
   );
@@ -676,7 +679,7 @@ export const JobsTable = ({
     const first = sorting.find((s) => s.id !== 'applied');
     if (!first) return MOBILE_SORT_OPTIONS[0].id;
     const match = MOBILE_SORT_OPTIONS.find((o) => o.id === first.id);
-    return (match?.id ?? MOBILE_SORT_OPTIONS[0].id) as typeof MOBILE_SORT_OPTIONS[number]['id'];
+    return (match?.id ?? MOBILE_SORT_OPTIONS[0].id);
   }, [sorting]);
 
   const onMobileSortChange = (next: typeof MOBILE_SORT_OPTIONS[number]['id']) => {
@@ -700,7 +703,7 @@ export const JobsTable = ({
             <select
               id="mobile-sort"
               value={activeMobileSort}
-              onChange={(e) => onMobileSortChange(e.target.value as typeof MOBILE_SORT_OPTIONS[number]['id'])}
+              onChange={(e) => { onMobileSortChange(e.target.value as typeof MOBILE_SORT_OPTIONS[number]['id']); }}
               className="min-h-[44px] flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
             >
               {MOBILE_SORT_OPTIONS.map((o) => (
@@ -771,7 +774,7 @@ export const JobsTable = ({
               selectedIds.size > 0 &&
               [...selectedIds].every((id) => applied.has(id))
             }
-            onClear={() => setSelectedIds(new Set())}
+            onClear={() => { setSelectedIds(new Set()); }}
             onDeleteSelected={() => {
               if (!onDelete) return;
               const ids = [...selectedIds];
@@ -848,7 +851,7 @@ export const JobsTable = ({
                       propagation. */}
                   <div
                     className="flex items-start gap-2"
-                    onClick={() => toggleExpand(j.id)}
+                    onClick={() => { toggleExpand(j.id); }}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="line-clamp-2 text-sm font-medium leading-snug text-slate-900">
@@ -879,13 +882,13 @@ export const JobsTable = ({
                           ephemeral state — see BulkActionBar above. */}
                       <label
                         className="inline-flex h-11 w-11 cursor-pointer items-center justify-center"
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); }}
                         title={selectedIds.has(j.id) ? 'Deselect row' : 'Select row'}
                       >
                         <input
                           type="checkbox"
                           checked={selectedIds.has(j.id)}
-                          onChange={() => toggleSelected(j.id)}
+                          onChange={() => { toggleSelected(j.id); }}
                           className="h-5 w-5 cursor-pointer rounded border-slate-300 text-brand-700 focus:ring-brand-700"
                           aria-label={selectedIds.has(j.id) ? 'Deselect row' : 'Select row'}
                         />
@@ -1082,7 +1085,7 @@ export const JobsTable = ({
                 return (
                   <Fragment key={j.id}>
                     <tr
-                      onClick={() => toggleExpand(j.id)}
+                      onClick={() => { toggleExpand(j.id); }}
                       className={clsx(
                         'cursor-pointer border-b border-slate-100 hover:bg-slate-100',
                         // Hot match gets an amber accent border. Priority-only
@@ -1213,7 +1216,7 @@ export const JobsTable = ({
           <label className="text-slate-500">Per page</label>
           <select
             value={pageSize}
-            onChange={(e) => table.setPageSize(Number(e.target.value))}
+            onChange={(e) => { table.setPageSize(Number(e.target.value)); }}
             className="rounded border border-slate-300 bg-white px-1.5 py-0.5"
           >
             {[25, 50, 100, 200].map((s) => (
@@ -1223,14 +1226,14 @@ export const JobsTable = ({
             ))}
           </select>
           <button
-            onClick={() => table.setPageIndex(0)}
+            onClick={() => { table.setPageIndex(0); }}
             disabled={!table.getCanPreviousPage()}
             className="rounded border border-slate-300 bg-white px-2 py-0.5 disabled:opacity-40"
           >
             «
           </button>
           <button
-            onClick={() => table.previousPage()}
+            onClick={() => { table.previousPage(); }}
             disabled={!table.getCanPreviousPage()}
             className="rounded border border-slate-300 bg-white px-2 py-0.5 disabled:opacity-40"
           >
@@ -1240,14 +1243,14 @@ export const JobsTable = ({
             {pageCount === 0 ? 0 : pageIndex + 1} / {pageCount}
           </span>
           <button
-            onClick={() => table.nextPage()}
+            onClick={() => { table.nextPage(); }}
             disabled={!table.getCanNextPage()}
             className="rounded border border-slate-300 bg-white px-2 py-0.5 disabled:opacity-40"
           >
             ›
           </button>
           <button
-            onClick={() => table.setPageIndex(pageCount - 1)}
+            onClick={() => { table.setPageIndex(pageCount - 1); }}
             disabled={!table.getCanNextPage()}
             className="rounded border border-slate-300 bg-white px-2 py-0.5 disabled:opacity-40"
           >
@@ -1278,7 +1281,7 @@ export const JobsTable = ({
             onRate={onRate}
             onDelete={onDelete}
             anchorRef={popoverAnchorRef}
-            onClose={() => setPopoverState(null)}
+            onClose={() => { setPopoverState(null); }}
           />
         );
       })()}

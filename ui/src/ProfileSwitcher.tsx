@@ -69,8 +69,8 @@ export const ProfileSwitcher = ({ onActiveChange, extraActions }: Props) => {
   // Auto-clear toast after a beat.
   useEffect(() => {
     if (!toast) return;
-    const id = window.setTimeout(() => setToast(null), 2500);
-    return () => window.clearTimeout(id);
+    const id = window.setTimeout(() => { setToast(null); }, 2500);
+    return () => { window.clearTimeout(id); };
   }, [toast]);
 
   const triggerActiveChange = useCallback(() => {
@@ -90,7 +90,7 @@ export const ProfileSwitcher = ({ onActiveChange, extraActions }: Props) => {
       await refresh();
       triggerActiveChange();
     } else {
-      setToast(`✗ ${r.error || 'switch failed'}`);
+      setToast(`✗ ${r.error ?? 'switch failed'}`);
     }
   }, [data.active, refresh, triggerActiveChange]);
 
@@ -125,7 +125,7 @@ export const ProfileSwitcher = ({ onActiveChange, extraActions }: Props) => {
       await refresh();
       triggerActiveChange();
     } else {
-      setToast(`✗ ${r.error || 'failed'}`);
+      setToast(`✗ ${r.error ?? 'failed'}`);
     }
   }, [action, draft, data.active, refresh, triggerActiveChange]);
 
@@ -190,7 +190,7 @@ export const ProfileSwitcher = ({ onActiveChange, extraActions }: Props) => {
           <button
             type="button"
             disabled={busy || profiles.length <= 1}
-            onClick={() => setAction({ kind: 'confirmDelete' })}
+            onClick={() => { setAction({ kind: 'confirmDelete' }); }}
             className="rounded border border-red-200 bg-white px-2.5 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
             title={profiles.length <= 1 ? 'Cannot delete the only profile' : `Delete "${active}"`}
           >
@@ -206,7 +206,7 @@ export const ProfileSwitcher = ({ onActiveChange, extraActions }: Props) => {
             type="text"
             autoFocus
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => { setDraft(e.target.value); }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') void submit();
               if (e.key === 'Escape') cancel();
