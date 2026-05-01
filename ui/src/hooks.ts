@@ -88,7 +88,13 @@ export const useCorpusActions = () => {
   // job's description and re-runs Claude scoring (falling back to regex
   // on Claude errors). Slow — caller should show a progress indicator.
   const rescoreJobs = useCallback(
-    async (ids: string[]): Promise<CorpusActionsResult & { rescored?: number; failed?: number; missing?: string[] }> => {
+    async (ids: string[]): Promise<CorpusActionsResult & {
+      rescored?: number;
+      claude_rescored?: number;
+      regex_fallback?: number;
+      failed?: number;
+      missing?: string[];
+    }> => {
       if (ids.length === 0) return { ok: true, rescored: 0 };
       try {
         const res = await fetch('/api/corpus/rescore', {
@@ -98,13 +104,16 @@ export const useCorpusActions = () => {
         });
         const body = (await res.json()) as {
           ok?: boolean; error?: string;
-          rescored?: number; failed?: number; missing?: string[];
+          rescored?: number; claude_rescored?: number;
+          regex_fallback?: number; failed?: number; missing?: string[];
         };
         if (!body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
         fireStale();
         return {
           ok: true,
           rescored: body.rescored,
+          claude_rescored: body.claude_rescored,
+          regex_fallback: body.regex_fallback,
           failed: body.failed,
           missing: body.missing,
         };

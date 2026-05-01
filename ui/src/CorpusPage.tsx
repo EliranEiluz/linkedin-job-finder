@@ -750,11 +750,29 @@ export const CorpusPage = () => {
                   const r = await rescoreJobs(ids);
                   if (!r.ok) {
                     window.alert(`Re-score failed: ${r.error}`);
-                  } else if (r.failed && r.failed > 0) {
-                    window.alert(
-                      `Re-scored ${r.rescored ?? 0} of ${ids.length}. ` +
-                      `${r.failed} failed (likely Claude timeout — try again or check run.log).`,
-                    );
+                  } else {
+                    const claude = r.claude_rescored ?? r.rescored ?? 0;
+                    const regex = r.regex_fallback ?? 0;
+                    const failed = r.failed ?? 0;
+                    const parts: string[] = [];
+                    if (claude > 0) parts.push(`${claude} re-scored by Claude`);
+                    if (regex > 0) {
+                      parts.push(
+                        `${regex} unchanged (Claude unavailable — kept regex score)`,
+                      );
+                    }
+                    if (failed > 0) parts.push(`${failed} failed`);
+                    // Only nag with an alert when something went wrong or
+                    // partially. A clean "all by Claude" run stays silent.
+                    if (regex > 0 || failed > 0) {
+                      window.alert(
+                        `Re-score of ${ids.length} job(s):\n  ` +
+                          parts.join('\n  ') +
+                          (regex > 0
+                            ? '\n\nTry again in a few minutes — check run.log if it persists.'
+                            : ''),
+                      );
+                    }
                   }
                 } finally {
                   setRescoreBusy(false);
