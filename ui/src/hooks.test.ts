@@ -324,7 +324,7 @@ describe('useAppStatus', () => {
   it('setAppStatus omits `note` when undefined', async () => {
     let captured: Record<string, unknown> | null = null;
     server.use(
-      http.post('*/api/corpus/app-status', async ({ request }) => {
+      http.post('*/api/corpus/app-status', async ({ request }: { request: Request }) => {
         captured = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({ ok: true });
       }),
@@ -338,7 +338,7 @@ describe('useAppStatus', () => {
   it('setAppStatus forwards `note: null` to clear the field', async () => {
     let captured: Record<string, unknown> | null = null;
     server.use(
-      http.post('*/api/corpus/app-status', async ({ request }) => {
+      http.post('*/api/corpus/app-status', async ({ request }: { request: Request }) => {
         captured = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({ ok: true });
       }),
@@ -351,7 +351,7 @@ describe('useAppStatus', () => {
   it('setAppStatus forwards a string note verbatim and fires stale event', async () => {
     let captured: Record<string, unknown> | null = null;
     server.use(
-      http.post('*/api/corpus/app-status', async ({ request }) => {
+      http.post('*/api/corpus/app-status', async ({ request }: { request: Request }) => {
         captured = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({ ok: true });
       }),
