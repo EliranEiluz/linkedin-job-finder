@@ -43,7 +43,8 @@ cd ui && npx eslint .                     # TypeScript lint
 ## Project structure
 
 `backend/` holds the Python code: `search.py` is the scraper + LLM scoring
-entry point, `send_email.py` builds the digest, and `ctl/*_ctl.py` are the
+entry point, `send_digest.py` builds the digest and dispatches it to every
+configured notification channel (email, Telegram), and `ctl/*_ctl.py` are the
 JSON-CLI control surfaces that the UI shells to (one per concern:
 scheduler, profile, onboarding, corpus mutations, config suggester). The
 UI lives under `ui/` (React + Vite). Backend access from the browser goes

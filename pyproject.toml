@@ -149,7 +149,8 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# CLI entrypoints (backend/ctl/, backend/tools/, backend/run.py, backend/send_email.py).
+# CLI entrypoints (backend/ctl/, backend/tools/, backend/run.py,
+# backend/send_digest.py + the deprecated backend/send_email.py shim).
 # Their public surface is JSON envelopes on stdout, not typed function signatures —
 # argparse-driven cmd_* handlers all return None and don't benefit from explicit
 # annotation. Library code (backend/search.py, backend/llm/*) keeps strict mode.
@@ -162,6 +163,7 @@ module = [
     "backend.tools.*",
     "backend.run",
     "backend.send_email",
+    "backend.send_digest",
     "scheduler_ctl",
     "onboarding_ctl",
     "profile_ctl",

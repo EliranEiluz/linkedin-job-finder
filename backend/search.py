@@ -2817,26 +2817,37 @@ def _print_run_summary(
 
 
 def _write_digest_html(new_jobs: list[dict]) -> None:
-    """Render and write the polished HTML digest so the user can `open
-    digest.html` after a manual run. Best-effort — never raises.
+    """Render the HTML digest and fan it out to every configured channel.
+
+    Best-effort — never raises. `dispatch_digest` always writes ROOT/digest.html
+    (so the user can `open digest.html` after a manual run) and then sends to
+    each channel returned by `enabled_channels()` (subset of {email, telegram};
+    empty on a fresh clone, in which case only the file write happens).
 
     Like every other persistent state file (results.json, seen_jobs.json,
     run_history.json), digest.html lives at the project ROOT — NOT under
-    backend/. send_email.py reads ROOT/digest.html; writing it under HERE
+    backend/. The dispatcher reads ROOT/digest.html so writing it under HERE
     would silently de-sync the manual-run path from the scheduled-run path.
     """
     try:
-        # `send_email` is a sibling module in backend/ (not installed); both
-        # the bare-name and `backend.send_email` paths work because we insert
+        # `send_digest` is a sibling module in backend/ (not installed); both
+        # the bare-name and `backend.send_digest` paths work because we insert
         # repo root and backend/ at module-load time. Import here is lazy
         # because the digest is best-effort.
-        from backend.send_email import build_digest_html
+        from backend.send_digest import dispatch_digest, enabled_channels
 
         digest_jobs = [j for j in new_jobs if j.get("fit") != "skip"]
-        html = build_digest_html(digest_jobs)
+        channels = enabled_channels()
+        outcomes = dispatch_digest(digest_jobs, channels=channels)
         digest_path = ROOT / "digest.html"
-        digest_path.write_text(html, encoding="utf-8")
         print(f"Digest written: file://{digest_path}  ({len(digest_jobs)} jobs)")
+        for ch, (ok, msg) in outcomes.items():
+            if ch == "digest_write":
+                # Only surfaces when the file write itself failed.
+                print(f"⚠ digest write: {msg}")
+                continue
+            prefix = "OK" if ok else "FAIL"
+            print(f"[{prefix}] notify {ch}: {msg}")
     except Exception as e:
         print(f"Digest generation failed: {str(e)[:200]}")
 
@@ -2986,13 +2997,13 @@ def main() -> None:
     # safe (otherwise the second writer would overwrite the first's additions).
     save_results_merge(new_jobs)
 
-    # Record the IDs that were new this run so send_email.py can pick them up.
-    # Path MUST be ROOT — that's where send_email.py:NEW_IDS_FILE reads from,
+    # Record the IDs that were new this run so send_digest.py can pick them up.
+    # Path MUST be ROOT — that's where send_digest.py:NEW_IDS_FILE reads from,
     # and it matches the convention for every other persistent state file
     # (results.json, seen_jobs.json, run_history.json, etc.). Writing to
     # `HERE / new_ids.json` (which lives under backend/) silently dropped
     # all post-Apr-24 daily digests on the floor — the scrape produced fresh
-    # IDs, but the email kept reading the stale ROOT file.
+    # IDs, but the dispatcher kept reading the stale ROOT file.
     (ROOT / "new_ids.json").write_text(json.dumps([j["id"] for j in new_jobs], indent=2))
 
     _print_run_summary(

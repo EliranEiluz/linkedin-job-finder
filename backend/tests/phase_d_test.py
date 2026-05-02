@@ -36,7 +36,7 @@ sys.path.insert(0, str(BACKEND / "tools"))
 
 # Convenience paths used as `cwd=` when shelling to the various CLIs.
 SEARCH_PY = BACKEND / "search.py"
-SEND_EMAIL_PY = BACKEND / "send_email.py"
+SEND_DIGEST_PY = BACKEND / "send_digest.py"
 SCHEDULER_PY = BACKEND / "ctl" / "scheduler_ctl.py"
 ONBOARDING_PY = BACKEND / "ctl" / "onboarding_ctl.py"
 PROFILE_PY = BACKEND / "ctl" / "profile_ctl.py"
@@ -106,8 +106,8 @@ def i_onboarding():
     import onboarding_ctl  # noqa
 
 
-def i_send_email():
-    import send_email  # noqa
+def i_send_digest():
+    import send_digest  # noqa
 
 
 def i_rescue():
@@ -130,7 +130,7 @@ for fn, label in [
     (i_search, "search.py"),
     (i_scheduler, "scheduler_ctl.py"),
     (i_onboarding, "onboarding_ctl.py"),
-    (i_send_email, "send_email.py"),
+    (i_send_digest, "send_digest.py"),
     (i_rescue, "rescue_unscored.py"),
     (i_debug, "debug_query.py"),
     (i_probe_api, "probe_guest_api.py"),
@@ -362,7 +362,7 @@ section("6. Email pipeline")
 
 def t_email_renders():
     # Render-only: no SMTP. Covers the HTML generation path.
-    from send_email import _select_jobs, build_digest_html
+    from send_digest import _select_jobs, build_digest_html
 
     class Args:
         all_today = True
@@ -385,15 +385,18 @@ def t_email_smtp_live():
             k, v = line.split("=", 1)
             env[k.strip()] = v.strip()
     p = subprocess.run(
-        ["python3", str(SEND_EMAIL_PY), "--all-today"],
+        ["python3", str(SEND_DIGEST_PY), "--all-today"],
         env=env,
         capture_output=True,
         text=True,
         timeout=60,
         cwd=str(ROOT),
     )
-    assert p.returncode == 0, f"send_email exit {p.returncode}: {p.stderr[-200:]}"
-    assert "Sent to" in p.stdout, p.stdout[-300:]
+    assert p.returncode == 0, f"send_digest exit {p.returncode}: {p.stderr[-200:]}"
+    # send_digest emits "[OK] email: sent to ..." per channel; previously the
+    # standalone send_email path emitted just "Sent to ...". Accept either
+    # token to ride out the transition cleanly.
+    assert ("[OK] email:" in p.stdout) or ("Sent to" in p.stdout), p.stdout[-300:]
     return p.stdout.strip().splitlines()[-1][:80]
 
 
