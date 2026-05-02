@@ -1,0 +1,20 @@
+name: Question
+description: Ask how something works (Discussions are preferred)
+title: "[question] "
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For open-ended questions, **[GitHub Discussions](https://github.com/EliranEiluz/linkedin-job-finder/discussions)** is usually a better home — questions get more eyes there and answers stay searchable. This template is for cases where it's clearly a question against a specific code path, or Discussions isn't enabled yet.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What you've tried / where you've looked
+      description: Helps the next reader who has the same question.

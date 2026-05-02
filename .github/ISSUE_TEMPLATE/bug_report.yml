@@ -1,0 +1,92 @@
+name: Bug report
+description: Something isn't working as expected
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The more specific you are, the faster it can be fixed.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: A clear description of what you observed.
+      placeholder: When I clicked X, the UI showed Y instead of Z.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps so anyone can recreate the bug.
+      placeholder: |
+        1. Run the wizard with a fresh clone
+        2. Pick the guest mode
+        3. Click "Run scraper" in Crawler Config
+        4. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior (logs, screenshots welcome)
+      description: Paste any stack traces, console output, or screenshots inline.
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit SHA / version
+      placeholder: "git rev-parse HEAD"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "python3 --version"
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      placeholder: "node --version"
+  - type: input
+    id: browser
+    attributes:
+      label: Browser (if a UI bug)
+      placeholder: "Chrome 131 / Safari 18 / Firefox 132 / ..."
+  - type: dropdown
+    id: llm
+    attributes:
+      label: LLM provider in use
+      options:
+        - claude_cli
+        - claude_sdk
+        - gemini
+        - openai
+        - openrouter
+        - ollama
+        - not relevant
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Config snippets, env quirks, prior workaround attempts, etc.
