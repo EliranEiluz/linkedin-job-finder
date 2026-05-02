@@ -69,4 +69,26 @@ export default defineConfig([
       'react-hooks/incompatible-library': 'warn',
     },
   },
+  // Vitest test files + test setup live in src/** but aren't part of the
+  // app's tsconfig project, so type-aware rules can't resolve their
+  // vitest / RTL / MSW types and would explode with hundreds of bogus
+  // unsafe-* errors. Disable the type-aware checks for test files only —
+  // runtime safety on `any`-typed values isn't a meaningful concern in
+  // tests, and the tests themselves still type-check via vitest's own
+  // type pipeline.
+  {
+    files: [
+      'src/**/*.test.{ts,tsx}',
+      'src/__tests__/**/*.{ts,tsx}',
+    ],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-misused-promises': 'off',
+      '@typescript-eslint/unbound-method': 'off',
+    },
+  },
 ])
