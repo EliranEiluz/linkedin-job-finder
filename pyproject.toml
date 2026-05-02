@@ -143,6 +143,9 @@ module = [
     # mypy can't follow the runtime path manipulation. The `backend.search`
     # alias still gets full type checking via the strict global config.
     "search",
+    # Same story for `send_digest` — notifications_ctl.py imports it bare via
+    # the same sys.path dance, so mypy needs to know it's a real module.
+    "send_digest",
     # Same story for the local `scheduler` package (backend/ctl/scheduler/).
     "scheduler",
 ]

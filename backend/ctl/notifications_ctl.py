@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """
-Notifications CLI for the welcome wizard. Three commands:
+Notifications CLI for the welcome wizard. Five commands:
 
-  status     — no stdin → returns SMTP config presence (never the password).
-  save-smtp  — {host, port, user, password, email_to?, use_ssl?} on stdin →
-               atomic-writes SMTP_* vars into ~/.linkedin-jobs.env (chmod 600).
-  test-smtp  — no stdin → reads creds from env, sends a one-paragraph test
-               email to EMAIL_TO. Reuses backend.send_email's SMTP path.
+  status         — no stdin → returns per-channel config presence (never
+                   the password / bot_token). Envelope shape:
+                     {ok, channels: {email: {...}, telegram: {...}}}
+  save-smtp      — {host, port, user, password, email_to?, use_ssl?} on
+                   stdin → atomic-writes SMTP_* vars into ~/.linkedin-jobs.env
+  test-smtp      — no stdin → reads creds from env, sends a one-paragraph
+                   test email to EMAIL_TO. Reuses backend.send_digest's
+                   SMTP path.
+  save-telegram  — {bot_token, chat_id} on stdin → atomic-writes
+                   TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID into the env file.
+  test-telegram  — no stdin → posts a one-line message via the saved
+                   bot creds to verify the chat is reachable.
 
 Same JSON CLI conventions as llm_ctl.py: read JSON from stdin, emit one JSON
-envelope on stdout, exit 0/1. NEVER logs the password (not even on error) —
-error messages reference env-var names only.
+envelope on stdout, exit 0/1. NEVER logs the password or bot_token (not even
+on error) — error messages reference env-var names only.
 """
 
 from __future__ import annotations
@@ -40,11 +47,15 @@ ENV_FILE = Path.home() / ".linkedin-jobs.env"
 # button is interactive — anything beyond ~30s feels broken to the user. The
 # vite middleware also enforces its own outer cap; this is the inner-loop bound.
 SMTP_TIMEOUT_S = 30
+# Telegram sendMessage is a single HTTPS POST — same SLA as SMTP so the wizard
+# UX is uniform across channels.
+TELEGRAM_TIMEOUT_S = 30
 
-# Names of the env vars we manage. Single source of truth so save-smtp and
+# Names of the env vars we manage. Single source of truth so save-* and
 # status agree on the exact keys (the typo-bug magnet of repeating string
 # literals across two files).
 SMTP_VARS = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "EMAIL_TO", "SMTP_USE_SSL")
+TELEGRAM_VARS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 
 
 def _read_env_vars() -> dict[str, str]:
@@ -76,8 +87,25 @@ def _read_env_vars() -> dict[str, str]:
 
 
 def cmd_status() -> None:
-    """Report SMTP configuration without ever leaking the password."""
+    """Report per-channel configuration without ever leaking secrets.
+
+    Envelope:
+      {
+        ok: true,
+        channels: {
+          email:    {configured, host, port, user, email_to, ssl},
+          telegram: {configured, chat_id}
+        },
+        env_file: <path>
+      }
+
+    `configured` is the only "is this enabled?" signal the UI needs; the
+    rest are the visible-in-UI fields the user typed. SMTP_PASS and
+    TELEGRAM_BOT_TOKEN are NEVER included.
+    """
     env = _read_env_vars()
+
+    # Email channel summary.
     has_pass = bool(env.get("SMTP_PASS", "").strip())
     host = env.get("SMTP_HOST", "")
     port_raw = env.get("SMTP_PORT", "").strip()
@@ -85,21 +113,34 @@ def cmd_status() -> None:
     email_to = env.get("EMAIL_TO", "") or user
     ssl_raw = env.get("SMTP_USE_SSL", "").strip().lower()
     use_ssl = ssl_raw in ("1", "true", "yes")
-    # Configured = at minimum host+user+password. Port has a default (587).
     smtp_configured = bool(host and user and has_pass)
     try:
         port: int | None = int(port_raw) if port_raw else None
     except ValueError:
         port = None
+
+    # Telegram channel summary.
+    bot_token = env.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = env.get("TELEGRAM_CHAT_ID", "").strip()
+    telegram_configured = bool(bot_token and chat_id)
+
     _emit(
         {
             "ok": True,
-            "smtp_configured": smtp_configured,
-            "host": host,
-            "port": port,
-            "user": user,
-            "email_to": email_to,
-            "ssl": use_ssl,
+            "channels": {
+                "email": {
+                    "configured": smtp_configured,
+                    "host": host,
+                    "port": port,
+                    "user": user,
+                    "email_to": email_to,
+                    "ssl": use_ssl,
+                },
+                "telegram": {
+                    "configured": telegram_configured,
+                    "chat_id": chat_id,
+                },
+            },
             "env_file": str(ENV_FILE),
         }
     )
@@ -242,7 +283,7 @@ def _build_test_message(user: str, to_addr: str) -> EmailMessage:
 def cmd_test_smtp() -> None:
     """Send a one-paragraph test email via the saved SMTP creds.
 
-    Reuses the same SMTPS-vs-STARTTLS branching as backend.send_email so the
+    Reuses the same SMTPS-vs-STARTTLS branching as backend.send_digest so the
     test result faithfully predicts what the digest send will do.
     """
     # Pull the just-saved env vars off disk (the wizard does save → test in
@@ -316,12 +357,151 @@ def cmd_test_smtp() -> None:
     )
 
 
+# ---------- Telegram ----------
+
+
+def _validate_telegram_payload(body: dict) -> tuple[str, str]:
+    """Validate the save-telegram payload. Returns (bot_token, chat_id).
+
+    Empty bot_token is OK only when there's already one on disk — same
+    "leave blank to keep" UX as the SMTP password. The caller resolves
+    the fallback.
+    """
+    token_raw = body.get("bot_token", "")
+    if not isinstance(token_raw, str):
+        raise TypeError("bot_token must be a string")
+    chat_raw = body.get("chat_id", "")
+    # chat_id may legitimately be a number in JSON — coerce to string.
+    if isinstance(chat_raw, int) and not isinstance(chat_raw, bool):
+        chat_raw = str(chat_raw)
+    if not isinstance(chat_raw, str):
+        raise TypeError("chat_id must be a string or integer")
+    chat = chat_raw.strip()
+    if not chat:
+        raise ValueError("chat_id must be non-empty")
+    return token_raw, chat
+
+
+def cmd_save_telegram() -> None:
+    """Persist TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID to ~/.linkedin-jobs.env.
+
+    Empty bot_token = keep the saved one. NEVER echoes the token back.
+    Errors reference env var names only — same hygiene policy as the SMTP
+    save path.
+    """
+    try:
+        body = read_stdin_json()
+    except Exception as e:
+        _emit({"ok": False, "error": f"bad stdin: {e}"}, code=1)
+    try:
+        bot_token, chat_id = _validate_telegram_payload(body)
+    except (TypeError, ValueError) as e:
+        _emit({"ok": False, "error": str(e)}, code=1)
+
+    if not bot_token.strip():
+        existing = _read_env_vars()
+        bot_token = existing.get("TELEGRAM_BOT_TOKEN", "")
+        if not bot_token:
+            _emit(
+                {
+                    "ok": False,
+                    "error": ("bot_token missing — no saved TELEGRAM_BOT_TOKEN to fall back to"),
+                },
+                code=1,
+            )
+
+    try:
+        atomic_write_env_var(ENV_FILE, "TELEGRAM_BOT_TOKEN", bot_token)
+        atomic_write_env_var(ENV_FILE, "TELEGRAM_CHAT_ID", chat_id)
+    except Exception as e:
+        # Error message refers to the env-var names, NEVER the bot_token value.
+        _emit(
+            {
+                "ok": False,
+                "error": (f"failed to write {ENV_FILE} (TELEGRAM_*): {type(e).__name__}: {e}"),
+            },
+            code=1,
+        )
+    # Expose to the in-process test-telegram that may follow.
+    os.environ["TELEGRAM_BOT_TOKEN"] = bot_token
+    os.environ["TELEGRAM_CHAT_ID"] = chat_id
+    _emit(
+        {
+            "ok": True,
+            "env_file": str(ENV_FILE),
+            "vars_written": list(TELEGRAM_VARS),
+        }
+    )
+
+
+def cmd_test_telegram() -> None:
+    """POST a one-line test message via the saved Telegram bot creds.
+
+    Reuses backend.send_digest.send_via_telegram so the test outcome
+    faithfully predicts what the digest dispatch will do. The bot_token
+    is NEVER included in any returned error message — send_via_telegram
+    sanitizes its own exception strings.
+    """
+    load_env_file(ENV_FILE)
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not bot_token or not chat_id:
+        _emit(
+            {
+                "ok": False,
+                "error": (
+                    "Telegram not configured — set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID first"
+                ),
+            },
+            code=1,
+        )
+
+    # Late-import so the `status` and `save-*` paths don't pay the cost.
+    # The send_digest module lives one level up from backend/ctl/ — the
+    # sys.path shim at module import time already inserted both backend/ and
+    # the repo root, so either spelling resolves.
+    from send_digest import send_via_telegram
+
+    test_message = (
+        "<b>linkedin-job-finder</b> — Telegram test\n\n"
+        "If you can read this, your Telegram bot credentials are wired up "
+        "correctly and future scrape digests will arrive here."
+    )
+    ok, msg = send_via_telegram(
+        test_message,
+        bot_token=bot_token,
+        chat_id=chat_id,
+    )
+    if not ok:
+        # send_via_telegram already redacts the bot_token from its error
+        # messages; we still belt-and-suspenders strip it here in case a
+        # future code path forgets.
+        safe_msg = msg.replace(bot_token, "<redacted>")
+        _emit(
+            {
+                "ok": False,
+                "error": safe_msg,
+                "chat_id": chat_id,
+            },
+            code=1,
+        )
+    _emit(
+        {
+            "ok": True,
+            "message": msg,
+            "chat_id": chat_id,
+        }
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("status")
     sub.add_parser("save-smtp")
     sub.add_parser("test-smtp")
+    sub.add_parser("save-telegram")
+    sub.add_parser("test-telegram")
     args = parser.parse_args()
     if args.cmd == "status":
         cmd_status()
@@ -329,6 +509,10 @@ def main() -> int:
         cmd_save_smtp()
     if args.cmd == "test-smtp":
         cmd_test_smtp()
+    if args.cmd == "save-telegram":
+        cmd_save_telegram()
+    if args.cmd == "test-telegram":
+        cmd_test_telegram()
     parser.print_help()
     return 2
 
