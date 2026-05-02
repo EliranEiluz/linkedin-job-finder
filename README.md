@@ -1,9 +1,37 @@
 # linkedin-job-finder
 
-A LinkedIn job-hunt automation that scrapes postings, scores them against
-your CV with Claude, and surfaces the matches in a React dashboard with a
-kanban application tracker. Cross-platform (macOS / Linux / Windows).
-Multi-profile so one repo can drive several parallel searches.
+> Scrape LinkedIn jobs, score them against your CV with any LLM, track applications on a kanban.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Node 18+](https://img.shields.io/badge/node-18%2B-339933.svg)](https://nodejs.org/)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+
+![30-second tour: scrape, score, apply](docs/assets/hero.gif)
+
+*30-second tour: scrape, score, apply.*
+
+## What it does
+
+- **Scrapes LinkedIn at scale** in two modes: a no-account guest crawler and a Playwright-backed logged-in crawler that catches jobs the guest endpoint hides.
+- **Scores every posting against your CV** through a provider-agnostic LLM layer (Claude, Gemini, OpenAI, OpenRouter, Ollama) with a few-shot loop that picks up your most recent positive and negative ratings.
+- **Tracks applications on a kanban** (New / Applied / Screening / Interview / Take-home / Offer / Rejected / Withdrew) with per-card notes and a status history.
+- **Onboards through a wizard.** Paste your CV plus one paragraph of intent and the LLM proposes a starter config (queries, target companies, scoring prompt) you review and save.
+
+## Quickstart
+
+Under 30 seconds to your first scrape:
+
+```bash
+git clone https://github.com/EliranEiluz/linkedin-job-finder.git
+cd linkedin-job-finder
+python3 -m pip install -r backend/requirements.txt
+cd ui && npm install && npm run dev
+```
+
+Open <http://localhost:5173>, walk the Setup wizard (preflight checks, LLM provider, paste CV + intent), then hit **Run scraper** in the Crawler Config tab. The Corpus tab fills with scored jobs as the run progresses.
+
+## How it works
 
 ```
                      ┌─────────────── React UI (Vite, port 5173) ──────────────┐
@@ -26,8 +54,8 @@ Multi-profile so one repo can drive several parallel searches.
    └──────────────┘         │             │                  │             │
                             ▼             ▼                  ▼             ▼
                   ┌──────────────┐  ┌──────────┐    ┌──────────────┐ ┌──────────┐
-                  │ /jobs-guest  │  │  Claude  │    │ results.json │ │   SMTP   │
-                  │  HTTP API    │  │  CLI/SDK │    │ seen_jobs    │ │  digest  │
+                  │ /jobs-guest  │  │   LLM    │    │ results.json │ │   SMTP   │
+                  │  HTTP API    │  │ provider │    │ seen_jobs    │ │  digest  │
                   │  (no auth)   │  └──────────┘    │ run_history  │ └──────────┘
                   └──────────────┘                  │ configs/*    │
                           OR                        └──────────────┘
@@ -36,6 +64,9 @@ Multi-profile so one repo can drive several parallel searches.
                   │  + session   │
                   └──────────────┘
 ```
+
+Cross-platform (macOS / Linux / Windows). Multi-profile so one repo can
+drive several parallel searches.
 
 ## Highlights
 
