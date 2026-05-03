@@ -100,8 +100,11 @@ def run_ctl(tmp_path: Path):
     fake_ctl = fake_backend / "ctl"
     if not fake_ctl.exists():
         shutil.copytree(BACKEND / "ctl", fake_ctl)
-    # Copy single files (search.py + send_email.py) and the llm package.
-    for fname in ("search.py", "send_email.py", "run.py"):
+    # Copy single files (search.py + send_digest.py + back-compat shim) and
+    # the llm package. Both send_email.py (deprecated shim) and send_digest.py
+    # are copied so any test that still imports `backend.send_email` keeps
+    # resolving via the shim.
+    for fname in ("search.py", "send_digest.py", "send_email.py", "run.py"):
         src = BACKEND / fname
         if src.exists() and not (fake_backend / fname).exists():
             shutil.copy2(src, fake_backend / fname)

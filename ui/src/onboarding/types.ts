@@ -9,23 +9,39 @@ import type { LLMProviderName } from '../configTypes';
 // email-digest option without having to hand-edit ~/.linkedin-jobs.env.
 export type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
-// Shape returned by GET /api/notifications/status. NEVER includes the
-// password — only smtp_configured signals whether one is on disk.
-export interface NotificationsStatusResponse {
-  ok: boolean;
-  smtp_configured: boolean;
+// Per-channel summary surfaced by GET /api/notifications/status. The
+// `configured` boolean is the only "is this enabled?" signal — secrets
+// (SMTP password, Telegram bot token) are NEVER round-tripped to the UI.
+export interface EmailChannelStatus {
+  configured: boolean;
   host: string;
   port: number | null;
   user: string;
   email_to: string;
   ssl: boolean;
+}
+
+export interface TelegramChannelStatus {
+  configured: boolean;
+  chat_id: string;
+}
+
+// Shape returned by GET /api/notifications/status. Phase-2 multi-channel
+// envelope — Phase 1 used a flat smtp_configured + fields. Both channels
+// always appear; .configured tells the UI which expanded form to pre-fill.
+export interface NotificationsStatusResponse {
+  ok: boolean;
+  channels: {
+    email: EmailChannelStatus;
+    telegram: TelegramChannelStatus;
+  };
   env_file?: string;
   error?: string;
 }
 
-// Shape of POST /api/notifications/save-smtp + /api/notifications/test-smtp.
-// Both share the success/error envelope — `message` only appears for
-// test-smtp success; save-smtp returns `vars_written`.
+// Shape of POST /api/notifications/{save-smtp,test-smtp,save-telegram,test-telegram}.
+// All four share the success/error envelope — `message` only appears for
+// test-* success; save-* returns `vars_written`.
 export interface NotificationsActionResponse {
   ok: boolean;
   message?: string;
@@ -34,6 +50,7 @@ export interface NotificationsActionResponse {
   host?: string;
   port?: number;
   ssl?: boolean;
+  chat_id?: string;
 }
 
 export interface GenerateResponse {

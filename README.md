@@ -54,8 +54,8 @@ Open <http://localhost:5173>, walk the Setup wizard (preflight checks, LLM provi
    └──────────────┘         │             │                  │             │
                             ▼             ▼                  ▼             ▼
                   ┌──────────────┐  ┌──────────┐    ┌──────────────┐ ┌──────────┐
-                  │ /jobs-guest  │  │   LLM    │    │ results.json │ │   SMTP   │
-                  │  HTTP API    │  │ provider │    │ seen_jobs    │ │  digest  │
+                  │ /jobs-guest  │  │   LLM    │    │ results.json │ │ Email +  │
+                  │  HTTP API    │  │ provider │    │ seen_jobs    │ │ Telegram │
                   │  (no auth)   │  └──────────┘    │ run_history  │ └──────────┘
                   └──────────────┘                  │ configs/*    │
                           OR                        └──────────────┘
@@ -99,8 +99,10 @@ drive several parallel searches.
 - **Cross-platform scheduler.** `launchd` (macOS), `systemd --user`
   (Linux), `schtasks` (Windows). Same UI control surface across all
   three; the right backend is picked at runtime via `platform.system()`.
-- **Email digest.** Each scheduled run sends a polished HTML digest of
-  new jobs to your inbox. Opt-in via SMTP env file.
+- **Notifications.** Each scheduled run always writes `digest.html` to the
+  repo root. Optionally fan out to email (SMTP) and/or Telegram (Bot API);
+  both can be on at once. Configure in the Setup wizard's Notifications
+  step or hand-edit `~/.linkedin-jobs.env`.
 - **Multi-profile.** Different profiles = different queries, target
   companies, scoring rules. Switch with one dropdown. The corpus is
   shared so the feedback loop sees signals from any profile's runs.
@@ -160,18 +162,28 @@ python3 backend/search.py --test-llm           # auto-resolve
 python3 backend/search.py --test-llm gemini    # specific provider
 ```
 
-### Optional: SMTP for the email digest
+### Optional: notifications
 
-Configure SMTP via the Setup wizard's Notifications step, or hand-edit
+`digest.html` is always written to the repo root after every scrape — open
+it in a browser (or click "View latest digest" in the Run History tab) and
+you don't need any setup. Two opt-in channels on top of that:
+
+- **Email (SMTP)** — Gmail / iCloud / Fastmail / Outlook / custom. Needs an
+  SMTP host + app password.
+- **Telegram** — needs a bot token (from `@BotFather`) and your chat ID.
+  No account, no SMTP, no app password.
+
+Both can run at once (each checked independently in the wizard). Configure
+either via the Setup wizard's **Notifications** step, or by hand-editing
 `~/.linkedin-jobs.env` (see `.linkedin-jobs.env.example`).
 
 ```bash
 cp .linkedin-jobs.env.example ~/.linkedin-jobs.env
-$EDITOR ~/.linkedin-jobs.env       # paste in Gmail app password etc.
+$EDITOR ~/.linkedin-jobs.env       # paste in app password / bot token
 chmod 600 ~/.linkedin-jobs.env
 ```
 
-Skip if you only want the UI.
+Skip if you only want `digest.html` on disk.
 
 ## First run
 

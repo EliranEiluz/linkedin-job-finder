@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Cross-platform launcher invoked by the scheduler (launchd / systemd /
-schtasks). Loads ~/.linkedin-jobs.env, runs search.py, then send_email.py
+schtasks). Loads ~/.linkedin-jobs.env, runs search.py, then send_digest.py
 — same behavior on macOS, Linux, and Windows.
 
 The scheduler backends pass `[sys.executable, "<root>/backend/run.py"]`
@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent  # project root
 LOG = ROOT / "run.log"
 ENV_FILE = Path.home() / ".linkedin-jobs.env"
 SEARCH = ROOT / "backend" / "search.py"
-SEND_EMAIL = ROOT / "backend" / "send_email.py"
+SEND_DIGEST = ROOT / "backend" / "send_digest.py"
 
 LOG_ROTATE_BYTES = 2_000_000  # 2 MB
 
@@ -75,15 +75,15 @@ def main() -> int:
     ).returncode
     _log(f"search.py exit={rc}")
     if rc != 0:
-        _log("search failed, skipping email")
+        _log("search failed, skipping notification dispatch")
         _log("=== run end ===")
         return rc
 
     rc = subprocess.run(
-        [sys.executable, str(SEND_EMAIL)],
+        [sys.executable, str(SEND_DIGEST)],
         cwd=ROOT,
     ).returncode
-    _log(f"send_email.py exit={rc}")
+    _log(f"send_digest.py exit={rc}")
     _log("=== run end ===")
     return rc
 
