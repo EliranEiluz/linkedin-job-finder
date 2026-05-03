@@ -1,0 +1,53 @@
+# pre-commit hooks — fast local feedback before pushing.
+#
+# Install once:
+#   pip install pre-commit
+#   pre-commit install
+#   pre-commit install --hook-type commit-msg   # for the commit-msg gate
+#
+# Run on every file (e.g. after a fresh clone):
+#   pre-commit run --all-files
+#
+# Slower gates (mypy, tsc, vitest) deliberately live in CI rather than here —
+# this config aims to stay sub-second on a typical commit so it doesn't
+# break the developer flow.
+
+repos:
+  # ---- ruff: lint + format Python sources ------------------------------
+  # The official Astral repo. Pinned to a specific tag rather than `master`
+  # so a silent upstream rule reshuffle can't break local commits.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^backend/.*\.py$
+      - id: ruff-format
+        files: ^backend/.*\.py$
+
+  # ---- pre-commit-hooks: tiny universal cleanups -----------------------
+  # trailing-whitespace + end-of-file-fixer are scoped to Python + YAML +
+  # Markdown so they don't churn UI-side svg/tsx files that pre-date this
+  # config (some carry trailing spaces or missing EOFs from upstream tools
+  # — fixing them is out of scope for the OSS-roadmap config tier).
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        types_or: [python, yaml, markdown]
+      - id: end-of-file-fixer
+        types_or: [python, yaml, markdown]
+      - id: check-yaml
+      - id: check-merge-conflict
+
+  # ---- local: reject Co-Authored-By: Claude in commit messages ---------
+  # Eliran is sole author of record on this repo — no LLM attribution lands
+  # on history. The commit-msg hook receives the message file as $1; we grep
+  # for the forbidden trailer (case-insensitive) and exit non-zero on a hit.
+  - repo: local
+    hooks:
+      - id: no-claude-coauthor
+        name: reject Co-Authored-By Claude in commit message
+        entry: scripts/check_no_claude_coauthor.sh
+        language: script
+        stages: [commit-msg]

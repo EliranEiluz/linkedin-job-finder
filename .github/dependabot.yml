@@ -1,0 +1,66 @@
+# Dependabot configuration.
+#
+# Three ecosystems: pip (backend), npm (UI), and github-actions (workflow
+# files). Minor + patch updates are grouped per-ecosystem so a routine bump
+# wave lands as a single PR; major updates stay individual so we can review
+# breaking changes one at a time.
+#
+# Security alerts are ALWAYS opened individually regardless of grouping —
+# Dependabot's security pipeline ignores `groups`.
+
+version: 2
+updates:
+  # ---- Python runtime deps (backend/requirements.txt) ------------------
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    target-branch: main
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+      - python
+    groups:
+      pip-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ---- UI deps (ui/package.json) ---------------------------------------
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    target-branch: main
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+      - javascript
+    groups:
+      npm-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ---- GitHub Actions workflow files -----------------------------------
+  # Workflow updates are rare; monthly cadence is plenty.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    target-branch: main
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      gha-minor-and-patch:
+        update-types:
+          - minor
+          - patch
