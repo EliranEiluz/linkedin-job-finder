@@ -198,6 +198,10 @@ export const SchedulerCard = () => {
       if (configureTimer.current !== null) {
         window.clearTimeout(configureTimer.current);
       }
+      // setTimeout fires-and-forgets by definition; the async closure's
+       // rejection has nowhere meaningful to propagate to. The handler
+       // catches its own errors below.
+       // eslint-disable-next-line @typescript-eslint/no-misused-promises
       configureTimer.current = window.setTimeout(async () => {
         const seq = ++configureSeq.current;
         setSaving(true);
