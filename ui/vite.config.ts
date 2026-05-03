@@ -1147,11 +1147,12 @@ const configApiPlugin = (): Plugin => ({
         }
 
         // ---- notifications endpoints --------------------------------------
-        // Mirrors /api/llm/* — three thin pass-through handlers around
-        // notifications_ctl.py. Same SENSITIVE-body hygiene as the LLM
-        // save-credential path: never log the request body (it carries the
-        // SMTP app-password). The script's own envelope is surfaced verbatim
-        // so the UI can show the structured `error` field on failure.
+        // Mirrors /api/llm/* — five thin pass-through handlers around
+        // notifications_ctl.py (status + save/test for SMTP + save/test for
+        // Telegram). Same SENSITIVE-body hygiene as the LLM save-credential
+        // path: never log the request body (it carries the SMTP app-password
+        // or the Telegram bot token). The script's own envelope is surfaced
+        // verbatim so the UI can show the structured `error` field on failure.
         if (url.startsWith('/api/notifications/status') && req.method === 'GET') {
           const result = await runCtl(
             NOTIFICATIONS_CTL, ['status'], null, NOTIFICATIONS_STATUS_TIMEOUT_MS,
@@ -1224,6 +1225,70 @@ const configApiPlugin = (): Plugin => ({
           }
           if (result.timedOut) {
             sendJson(res, 504, { ok: false, error: 'notifications_ctl test-smtp timed out' }); return;
+          }
+          try {
+            const parsed = JSON.parse(result.stdout) as { ok?: boolean };
+            sendJson(res, parsed.ok ? 200 : 400, parsed); return;
+          } catch {
+            sendJson(res, 500, {
+              ok: false, error: 'notifications_ctl emitted non-JSON',
+              raw_stderr: result.stderr.slice(0, 500),
+            }); return;
+          }
+        }
+
+        if (url.startsWith('/api/notifications/save-telegram') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          // *** SENSITIVE *** never log raw — it carries the Telegram bot token. ***
+          let body: { bot_token?: unknown; chat_id?: unknown };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return; }
+          // Empty bot_token is allowed (preserve-saved); chat_id is the only
+          // hard requirement at this layer. The python ctl re-validates and
+          // owns the canonical schema — keep this shim minimal so the rules
+          // live in exactly one place.
+          if (typeof body.bot_token !== 'string') {
+            sendJson(res, 400, { ok: false, error: 'bot_token must be a string' }); return;
+          }
+          if ((typeof body.chat_id !== 'string' && typeof body.chat_id !== 'number')
+              || (typeof body.chat_id === 'string' && !body.chat_id.trim())) {
+            sendJson(res, 400, { ok: false, error: 'chat_id must be a non-empty string or number' });
+            return;
+          }
+          const result = await runCtl(
+            NOTIFICATIONS_CTL, ['save-telegram'],
+            JSON.stringify(body),
+            NOTIFICATIONS_SAVE_TIMEOUT_MS,
+          );
+          if (result.spawnError) {
+            sendJson(res, 500, { ok: false, error: result.spawnError }); return;
+          }
+          if (result.timedOut) {
+            sendJson(res, 504, { ok: false, error: 'notifications_ctl save-telegram timed out' }); return;
+          }
+          try {
+            const parsed = JSON.parse(result.stdout) as { ok?: boolean };
+            sendJson(res, parsed.ok ? 200 : 400, parsed); return;
+          } catch {
+            sendJson(res, 500, {
+              ok: false, error: 'notifications_ctl emitted non-JSON',
+              raw_stderr: result.stderr.slice(0, 500),
+            }); return;
+          }
+        }
+
+        if (url.startsWith('/api/notifications/test-telegram') && req.method === 'POST') {
+          // No body required — the script reads creds from disk. Same outer
+          // cap as test-smtp (35s) since both round-trip a single network
+          // call with a 30s inner timeout.
+          const result = await runCtl(
+            NOTIFICATIONS_CTL, ['test-telegram'], null, NOTIFICATIONS_TEST_TIMEOUT_MS,
+          );
+          if (result.spawnError) {
+            sendJson(res, 500, { ok: false, error: result.spawnError }); return;
+          }
+          if (result.timedOut) {
+            sendJson(res, 504, { ok: false, error: 'notifications_ctl test-telegram timed out' }); return;
           }
           try {
             const parsed = JSON.parse(result.stdout) as { ok?: boolean };
