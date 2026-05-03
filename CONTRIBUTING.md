@@ -40,6 +40,20 @@ cd ui && npx tsc --noEmit                 # TypeScript type-check
 cd ui && npx eslint .                     # TypeScript lint
 ```
 
+## Pre-commit hooks (optional but recommended)
+
+A `.pre-commit-config.yaml` is included so you get fast lint feedback before
+each commit (ruff lint + format on Python, trailing whitespace + EOF fixes,
+and a guard that rejects accidental `Co-Authored-By: Claude` trailers).
+Slower checks (mypy, tsc, vitest) stay in CI to keep commits snappy.
+
+```bash
+pip install pre-commit
+pre-commit install                        # one-time, sets up the git hook
+pre-commit install --hook-type commit-msg # enables the commit-msg gate
+pre-commit run --all-files                # lint everything once
+```
+
 ## Project structure
 
 `backend/` holds the Python code: `search.py` is the scraper + LLM scoring
