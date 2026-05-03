@@ -5,5 +5,5 @@ certifi
 defusedxml
 lxml
 anthropic
-filelock>=3.13
+filelock>=3.29.0
 pypdf>=4.0
