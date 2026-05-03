@@ -100,7 +100,8 @@ describe('useUrlSync', () => {
     const params = new URLSearchParams('foo=bar&baz=qux');
     renderHook(() => { useUrlSync(params); });
     expect(spy).toHaveBeenCalled();
-    const lastArgs = spy.mock.calls[spy.mock.calls.length - 1];
+    const lastArgs = spy.mock.calls.at(-1);
+    if (!lastArgs) throw new Error('replaceState was not called');
     expect(lastArgs[2]).toMatch(/foo=bar/);
     expect(lastArgs[2]).toMatch(/baz=qux/);
     spy.mockRestore();
@@ -118,7 +119,8 @@ describe('useUrlSync', () => {
       { initialProps: { p: new URLSearchParams('a=1') } },
     );
     rerender({ p: new URLSearchParams('') });
-    const lastArgs = spy.mock.calls[spy.mock.calls.length - 1];
+    const lastArgs = spy.mock.calls.at(-1);
+    if (!lastArgs) throw new Error('replaceState was not called');
     expect(lastArgs[2]).not.toContain('?');
     spy.mockRestore();
   });

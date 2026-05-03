@@ -137,7 +137,7 @@ describe('api.ts — postJson', () => {
 
     expect(res.status).toBe(200);
     expect(captured).not.toBeNull();
-    const c = captured as { contentType: string | null; body: unknown };
+    const c = captured as unknown as { contentType: string | null; body: unknown };
     expect(c.contentType).toMatch(/application\/json/);
     expect(c.body).toEqual({ id: 'job-1', rating: 5 });
   });
