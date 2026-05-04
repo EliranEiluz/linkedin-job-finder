@@ -205,6 +205,14 @@ chmod 600 ~/.linkedin-jobs.env
 
 Skip if you only want `digest.html` on disk.
 
+### Optional: access from anywhere
+
+The dashboard binds to localhost by default. To reach it from your phone
+or off-network, see [docs/remote-access.md](docs/remote-access.md). Two
+free paths: Tailscale (mesh VPN, private) and Cloudflare Tunnel +
+Cloudflare Access (clean public URL with auth gate). The dashboard
+ships zero local auth — public exposure requires an auth gate.
+
 ## First run
 
 A fresh clone ships domain-neutral — no hardcoded queries, no target
