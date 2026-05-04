@@ -268,7 +268,7 @@ python3 backend/search.py --mode=guest --no-enrich      # skip description fetch
 python3 backend/search.py --mode=guest --all-time       # drop the 7-day window
 python3 backend/search.py --print-defaults              # dump hardcoded defaults
 
-python3 backend/send_email.py                           # build digest + send (needs SMTP env)
+python3 backend/send_digest.py                          # build digest + send (SMTP / Telegram env)
 python3 backend/ctl/scheduler_ctl.py status             # JSON status of the OS scheduler job
 python3 backend/ctl/profile_ctl.py list                 # show profiles + active
 python3 backend/ctl/corpus_ctl.py rate < /dev/null      # show CLI usage
@@ -284,10 +284,16 @@ sign in once; the session is cached in `linkedin_session.json`.
 ```
 backend/                          all Python — scraper, control CLIs, tests
 ├── requirements.txt
-├── search.py                     scraper + Claude scoring (CLI + SDK fallback)
-├── send_email.py                 digest builder + SMTP send
+├── search.py                     scraper + LLM scoring dispatch (parallel batches)
+├── send_digest.py                digest HTML builder + SMTP / Telegram delivery
+├── send_email.py                 deprecation shim re-exporting send_digest
 ├── run.py                        cross-platform scheduler entry point
+├── llm/                          provider abstraction (claude_cli, claude_sdk,
+│   │                             gemini, openai, openrouter, ollama)
+│   ├── base.py                   ABC + score_batch / complete contract
+│   └── <provider>.py             one file per concrete provider
 ├── ctl/                          control CLIs the UI shells to
+│   ├── _common.py                shared JSON-CLI helpers (emit, read_stdin_json)
 │   ├── scheduler/                cross-platform scheduler abstraction
 │   │   ├── base.py               ABC
 │   │   ├── launchd.py            macOS
@@ -295,24 +301,32 @@ backend/                          all Python — scraper, control CLIs, tests
 │   │   └── schtasks.py           Windows
 │   ├── scheduler_ctl.py          install/uninstall/configure the schedule
 │   ├── profile_ctl.py            multi-profile management
-│   ├── onboarding_ctl.py         CV → config.json generator
+│   ├── onboarding_ctl.py         CV → config.json wizard generator
 │   ├── corpus_ctl.py             per-job mutations (rate, delete, app-status, manual-add)
-│   └── config_suggest_ctl.py     Claude-powered config suggester
+│   ├── config_suggest_ctl.py     LLM-powered config suggester
+│   ├── notifications_ctl.py      SMTP + Telegram channel config / status / test
+│   ├── llm_ctl.py                provider listing, status, test, env-var save
+│   ├── preflight_ctl.py          environment / dep / browser readiness checks
+│   ├── cv_extract_ctl.py         PDF / DOCX → cv.txt extraction
+│   └── remote_access_ctl.py      Tailscale + Cloudflare Tunnel state introspection
 ├── probes/                       diagnostic / debug tools
 │   ├── debug_query.py
 │   ├── probe_guest_api.py
 │   └── probe_guest_detail.py
 ├── tools/
 │   └── rescue_unscored.py        re-fetch + score any unscored corpus rows
-└── tests/
-    └── phase_d_test.py           end-to-end regression suite
+└── tests/                        13+ pytest files covering ctl scripts, the LLM
+                                  provider layer, scheduler backends, search.py
+                                  helpers, and corpus mutations. The legacy
+                                  phase_d_test.py integration script remains as
+                                  a smoke harness, excluded from CI.
 
 ui/                               React + Vite app
 ├── vite.config.ts                dev middleware — shells to backend/ctl/* scripts
 └── src/                          components: 5 tabs (Corpus, Tracker, Crawler Config,
                                   Run History, Setup) + reusable atoms
 
-.linkedin-jobs.env.example        SMTP creds template
+.linkedin-jobs.env.example        SMTP / Telegram creds template
 ```
 
 The platform-specific scheduler artefact (plist on macOS, unit on Linux,
