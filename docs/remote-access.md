@@ -84,16 +84,32 @@ devices and 3 users — no credit card.
 1. **Sign up** at <https://tailscale.com>. OAuth via Google, GitHub,
    Microsoft, or Apple — no card, no email confirmation dance.
 
-2. **Install on the Mac running the dashboard**. Either:
+2. **Install on the machine running the dashboard.** The package
+   command varies by OS; the `tailscale up` step that follows is the
+   same everywhere. The CLI prints a one-time login URL the first time
+   you run `tailscale up`.
 
-   ```bash
-   brew install tailscale
-   sudo tailscale up
-   ```
-
-   or download the menu-bar app from <https://tailscale.com/download>
-   (which gives you a GUI and handles login for you). The CLI prints
-   a one-time login URL the first time.
+   - **macOS:**
+     ```bash
+     brew install tailscale
+     sudo tailscale up
+     ```
+     Or download the menu-bar app from <https://tailscale.com/download>
+     for a GUI that handles login for you.
+   - **Linux:**
+     ```bash
+     curl -fsSL https://tailscale.com/install.sh | sh
+     sudo tailscale up
+     # or your distro package manager:
+     # sudo apt install tailscale       # Debian / Ubuntu
+     # sudo dnf install tailscale       # Fedora / RHEL
+     ```
+   - **Windows:**
+     ```powershell
+     winget install --id Tailscale.Tailscale
+     tailscale up
+     ```
+     Or download the installer at <https://tailscale.com/download/windows>.
 
 3. **Install on your phone.** Tailscale app from the App Store
    (iOS) or Play Store (Android). Sign in with the same account.
@@ -195,17 +211,36 @@ flow is the same.
    "Cloudflared" as the connector type. Give it a name
    (`linkedin-jobs-mac` works).
 
-4. **Install `cloudflared` on your Mac.** The dashboard hands you a
-   one-line install command with a baked-in token, e.g.:
+4. **Install `cloudflared` on the machine running the dashboard.** The
+   Cloudflare dashboard hands you a baked-in token to pass to
+   `cloudflared service install` after the package is on disk; the
+   package install step itself varies by OS:
 
-   ```bash
-   brew install cloudflared
-   sudo cloudflared service install eyJhIjoi...    # token from the dashboard
-   ```
+   - **macOS:**
+     ```bash
+     brew install cloudflared
+     sudo cloudflared service install eyJhIjoi...    # token from the dashboard
+     ```
+   - **Linux (Debian / Ubuntu, amd64):**
+     ```bash
+     curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+     sudo dpkg -i cloudflared.deb
+     sudo cloudflared service install eyJhIjoi...    # token from the dashboard
+     ```
+     For other distros / arm64, grab the matching artifact from
+     <https://github.com/cloudflare/cloudflared/releases>.
+   - **Windows:**
+     ```powershell
+     winget install --id Cloudflare.cloudflared
+     cloudflared service install eyJhIjoi...    # token from the dashboard
+     ```
+     Or download the .msi from
+     <https://github.com/cloudflare/cloudflared/releases>.
 
-   Run it. The tunnel will appear as **HEALTHY** in the dashboard
-   within ~30 seconds. If it doesn't, check `cloudflared` logs at
-   `/Library/Logs/com.cloudflare.cloudflared.err.log`.
+   Run it. The tunnel will appear as **HEALTHY** in the Cloudflare
+   dashboard within ~30 seconds. If it doesn't, check `cloudflared`
+   logs (macOS: `/Library/Logs/com.cloudflare.cloudflared.err.log`;
+   Linux: `journalctl -u cloudflared`; Windows: Event Viewer).
 
 5. **Map the tunnel to a hostname.** Still in the tunnel's config
    page, **Public Hostname → Add a public hostname**:
