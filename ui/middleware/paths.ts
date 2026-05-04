@@ -30,6 +30,7 @@ export const PREFLIGHT_CTL = path.join(BACKEND_DIR, 'ctl', 'preflight_ctl.py');
 export const LLM_CTL = path.join(BACKEND_DIR, 'ctl', 'llm_ctl.py');
 export const CV_EXTRACT_CTL = path.join(BACKEND_DIR, 'ctl', 'cv_extract_ctl.py');
 export const NOTIFICATIONS_CTL = path.join(BACKEND_DIR, 'ctl', 'notifications_ctl.py');
+export const REMOTE_ACCESS_CTL = path.join(BACKEND_DIR, 'ctl', 'remote_access_ctl.py');
 
 // Repo-root rendered HTML files served by the dev middleware (so the
 // wizard's "View latest digest" affordance can open /digest.html in a
@@ -62,3 +63,9 @@ export const CV_EXTRACT_MAX_BYTES = 10 * 1024 * 1024;
 export const NOTIFICATIONS_STATUS_TIMEOUT_MS = 5_000;
 export const NOTIFICATIONS_SAVE_TIMEOUT_MS = 10_000;
 export const NOTIFICATIONS_TEST_TIMEOUT_MS = 35_000;
+// remote_access_ctl: shells to two optional CLIs (`tailscale` + `cloudflared`)
+// each capped at 5s in the script. 8s outer cap covers spawn slack + the
+// case where both CLIs are present and both run their own 5s timeout
+// budget back-to-back (worst case: ~10s before fallback). 8s is the
+// "give up and report nothing" threshold for the panel's status fetch.
+export const REMOTE_ACCESS_STATUS_TIMEOUT_MS = 8_000;

@@ -22,6 +22,7 @@ import {
   LLM_CTL,
   CV_EXTRACT_CTL,
   NOTIFICATIONS_CTL,
+  REMOTE_ACCESS_CTL,
   DIGEST_HTML_PATH,
   SCHEDULER_TIMEOUT_MS,
   ONBOARDING_GENERATE_TIMEOUT_MS,
@@ -38,6 +39,7 @@ import {
   NOTIFICATIONS_STATUS_TIMEOUT_MS,
   NOTIFICATIONS_SAVE_TIMEOUT_MS,
   NOTIFICATIONS_TEST_TIMEOUT_MS,
+  REMOTE_ACCESS_STATUS_TIMEOUT_MS,
 } from './middleware/paths';
 import { runCtl, type CtlResult as SchedulerCtlResult } from './middleware/runCtl';
 import { readJsonBody, sendJson } from './middleware/http';
@@ -1296,6 +1298,32 @@ const configApiPlugin = (): Plugin => ({
           } catch {
             sendJson(res, 500, {
               ok: false, error: 'notifications_ctl emitted non-JSON',
+              raw_stderr: result.stderr.slice(0, 500),
+            }); return;
+          }
+        }
+
+        // ---- remote-access endpoint --------------------------------------
+        // Surfaces Tailscale + Cloudflare Tunnel install/run state for the
+        // Crawler Config "Access from anywhere" panel. Read-only — the panel
+        // never installs or configures anything; the user runs the actual
+        // commands themselves. Pass-through to remote_access_ctl.py status,
+        // 8s outer cap (matches REMOTE_ACCESS_STATUS_TIMEOUT_MS in paths.ts).
+        if (url.startsWith('/api/remote-access/status') && req.method === 'GET') {
+          const result = await runCtl(
+            REMOTE_ACCESS_CTL, ['status'], null, REMOTE_ACCESS_STATUS_TIMEOUT_MS,
+          );
+          if (result.spawnError) {
+            sendJson(res, 500, { ok: false, error: result.spawnError }); return;
+          }
+          if (result.timedOut) {
+            sendJson(res, 504, { ok: false, error: 'remote_access_ctl status timed out' }); return;
+          }
+          try {
+            sendJson(res, 200, JSON.parse(result.stdout)); return;
+          } catch {
+            sendJson(res, 500, {
+              ok: false, error: 'remote_access_ctl emitted non-JSON',
               raw_stderr: result.stderr.slice(0, 500),
             }); return;
           }
