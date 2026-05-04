@@ -12,6 +12,7 @@ One command:
   python3 remote_access_ctl.py status
       -> {
            ok: bool,
+           host_os: "darwin" | "linux" | "windows" | "other",
            tailscale: { installed, running?, hostname?, ipv4?, url?, error? },
            cloudflare: { installed, tunnels?: [{name, status}], error? },
            vite_host_binding: { all_interfaces: bool, note: str },
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import re
 import shutil
 import subprocess
@@ -56,6 +58,21 @@ VITE_DEFAULT_PORT = 5173
 # Path to ui/package.json — used by the host-binding heuristic. Computed
 # once at import time so tests can monkeypatch.
 PACKAGE_JSON_PATH = ROOT / "ui" / "package.json"
+
+
+def _detect_host_os() -> str:
+    """Return a normalized lowercase OS family string.
+
+    The UI keys its install-command lookup off this value, so the four
+    enumerated buckets must stay stable: "darwin" (macOS), "linux",
+    "windows", and "other" (BSDs, Solaris, etc — anything we don't have
+    a curated install line for). `platform.system()` already returns
+    these names case-formatted; we just lowercase and bucket.
+    """
+    raw = (platform.system() or "").strip().lower()
+    if raw in ("darwin", "linux", "windows"):
+        return raw
+    return "other"
 
 
 def _detect_tailscale() -> dict[str, Any]:
@@ -294,10 +311,18 @@ def cmd_status() -> None:
             "all_interfaces": False,
             "note": f"detector crashed: {type(e).__name__}: {e}",
         }
+    # OS detection is a single platform.system() call; if even that throws
+    # (it shouldn't), fall back to "other" so the UI still has a defined
+    # key to look up.
+    try:
+        host_os = _detect_host_os()
+    except Exception:
+        host_os = "other"
 
     _emit(
         {
             "ok": True,
+            "host_os": host_os,
             "tailscale": tailscale,
             "cloudflare": cloudflare,
             "vite_host_binding": host_binding,
