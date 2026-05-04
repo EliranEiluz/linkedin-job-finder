@@ -611,10 +611,10 @@ export const ConfigPage = () => {
           <CollapsibleCard title="Scoring & filtering">
             <div className="mb-4">
               <label className="mb-1 block text-xs font-semibold text-slate-700">
-                Claude scoring prompt
+                LLM scoring prompt
               </label>
               <p className="mb-1.5 text-[11px] text-slate-500">
-                Sent to Claude with your CV and a batch of jobs. Use{' '}
+                Sent to the LLM with your CV and a batch of jobs. Use{' '}
                 <code className="rounded bg-slate-100 px-1 font-mono">{'{cv}'}</code>{' '}
                 and{' '}
                 <code className="rounded bg-slate-100 px-1 font-mono">{'{jobs_json}'}</code>{' '}
@@ -642,7 +642,7 @@ export const ConfigPage = () => {
                 className="flex w-full items-center justify-between bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-600 hover:bg-slate-100"
                 aria-expanded={showRegexFallback}
               >
-                <span>Regex fallback (only used when Claude scoring is unavailable)</span>
+                <span>Regex fallback (only used when LLM scoring is unavailable)</span>
                 <span className="text-slate-400">{showRegexFallback ? '▼' : '▶'}</span>
               </button>
               {showRegexFallback && (

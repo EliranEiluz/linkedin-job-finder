@@ -220,7 +220,7 @@ export const RatingCommentEditor = ({
           </div>
           {!compact && (
             <p className="mt-1 text-[10px] text-slate-400">
-              Used to personalize future Claude scoring.
+              Used to personalize future LLM scoring.
             </p>
           )}
         </div>

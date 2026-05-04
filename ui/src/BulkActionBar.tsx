@@ -151,7 +151,7 @@ export const BulkActionBar = ({
             title={
               rescoreBusy
                 ? 'Re-scoring in progress…'
-                : `Re-fetch each description and re-run Claude scoring on ${selectedCount} selected`
+                : `Re-fetch each description and re-run LLM scoring on ${selectedCount} selected`
             }
           >
             {rescoreBusy ? (

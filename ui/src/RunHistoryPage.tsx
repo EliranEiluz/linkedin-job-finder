@@ -298,7 +298,7 @@ const RunRow = ({ run }: { run: RunRecord }) => {
                 Scoring & enrichment
               </h3>
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-700">
-                <dt className="text-slate-500">Scored by Claude</dt>
+                <dt className="text-slate-500">Scored by the LLM</dt>
                 <dd className="tabular-nums">{run.totals.scored_claude}</dd>
                 <dt className="text-slate-500">Scored by regex</dt>
                 <dd className="tabular-nums">{run.totals.scored_regex}</dd>
