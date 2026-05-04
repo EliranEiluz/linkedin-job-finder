@@ -25,6 +25,7 @@ Pass --no-enrich to skip description fetching (faster).
 """
 
 import argparse
+import concurrent.futures
 import contextlib
 import json
 import os
@@ -529,8 +530,8 @@ def claude_batch_score(cv_text: str, batch: list[dict]) -> dict | None:
     """Return {job_id: scoring_dict}. None = caller should use regex fallback.
 
     Stage 2: delegates to the LLM provider abstraction in backend/llm/.
-    Resolves the active provider (claude_cli, claude_sdk, gemini, openrouter,
-    or ollama) from config.llm_provider; defaults to 'auto'."""
+    Resolves the active provider (claude_cli, claude_sdk, gemini, openai,
+    openrouter, or ollama) from config.llm_provider; defaults to 'auto'."""
     if not cv_text or not batch:
         return None
     from backend.llm import score_batch as _llm_score_batch
@@ -822,9 +823,9 @@ def _hardcoded_defaults() -> dict:
         "offtopic_title_patterns": list(OFFTOPIC_TITLE_PATTERNS),
         "feedback_examples_max": FEEDBACK_EXAMPLES_MAX_DEFAULT,
         # Stage 2 LLM provider abstraction. "auto" = resolver picks the first
-        # working provider (claude_cli -> claude_sdk -> gemini -> openrouter
-        # -> ollama). Specific names use only that provider. Optional `model`
-        # field overrides the provider's default.
+        # working provider (claude_cli -> claude_sdk -> gemini -> openai ->
+        # openrouter -> ollama). Specific names use only that provider.
+        # Optional `model` field overrides the provider's default.
         "llm_provider": {"name": "auto"},
         # Stage 3 — wizard picks this; used as the scheduler / scrape default.
         # "guest" if missing so existing configs without the field stay unchanged.
@@ -890,6 +891,7 @@ _VALID_LLM_PROVIDER_NAMES = {
     "claude_cli",
     "claude_sdk",
     "gemini",
+    "openai",
     "openrouter",
     "ollama",
 }
@@ -2167,19 +2169,147 @@ def _apply_claude_scoring(job: dict, scored: dict) -> None:
     job["scored_at"] = datetime.now().isoformat()
 
 
+# Parallel-batch tuning. Up to 4 batches in flight at once — empirically the
+# sweet spot for Anthropic's Tier-1 rate limit and for the local subprocess
+# `claude` CLI. If the active provider is rate-limited the retry layer below
+# absorbs it transparently.
+_BATCH_MAX_WORKERS = 4
+_BATCH_MAX_RETRIES = 3
+_BATCH_BACKOFF_BASE_SECONDS = 1.0  # 1s -> 4s -> 16s (4^attempt)
+
+
+def _is_permanent_llm_error(exc: BaseException) -> bool:
+    """Best-effort classifier — when an LLM call raises, decide if retrying
+    would help. Permanent (auth / forbidden) errors should surface immediately
+    so the caller drops to regex fallback instead of waiting through the full
+    backoff schedule. We sniff a couple of common shapes:
+      - Anthropic / httpx exceptions expose `.status_code` directly.
+      - Some SDKs nest the status under `.response.status_code`.
+      - As a last resort we scan `str(exc)` for the canonical 401/403 tokens.
+    Anything we can't classify is treated as transient (retry-eligible) — the
+    retry budget is bounded, so worst-case we waste a couple of backoffs."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        resp = getattr(exc, "response", None)
+        status = getattr(resp, "status_code", None) if resp is not None else None
+    if isinstance(status, int) and status in (401, 403):
+        return True
+    msg = str(exc)
+    # Match 401/403 only when adjacent to a status-line marker so a stray
+    # number inside a long stack trace can't trigger a false positive.
+    return bool(
+        re.search(r"\b(?:status[_ ]code\s*[:=]?\s*)?(?:401|403)\b", msg)
+        and re.search(r"unauthor|forbidden|invalid[_ ]?api[_ ]?key|401|403", msg, re.IGNORECASE)
+    )
+
+
+def _retry_score_batch(
+    cv_text: str,
+    batch: list[dict],
+    *,
+    max_retries: int = _BATCH_MAX_RETRIES,
+    base_backoff: float = _BATCH_BACKOFF_BASE_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict | None:
+    """Wrap `claude_batch_score` in retry-with-exponential-backoff.
+
+    Returns whatever `claude_batch_score` returns on success (dict or None).
+    On a transient exception we sleep `base_backoff * 4**attempt` seconds and
+    retry up to `max_retries` times. On a permanent-looking error (401/403)
+    we surface immediately as `None` — the caller's regex fallback will fill
+    the gap. Honors `Retry-After` if the exception carries one (Anthropic SDK
+    rate-limit errors expose it via `.response.headers`).
+
+    Provider-agnostic: every provider's `score_batch` already swallows its
+    own internal exceptions and returns `None`, so in practice this layer
+    only fires when something escapes the provider envelope (e.g. an
+    unexpected error before the provider's own try/except). Tests inject
+    raises directly into `claude_batch_score` to exercise the retry logic."""
+    last_exc: BaseException | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return claude_batch_score(cv_text, batch)
+        except Exception as exc:
+            last_exc = exc
+            if _is_permanent_llm_error(exc):
+                print(f"    LLM permanent error — not retrying ({type(exc).__name__})")
+                return None
+            if attempt >= max_retries:
+                break
+            # Honor server-supplied Retry-After (in seconds) when available.
+            retry_after = None
+            resp = getattr(exc, "response", None)
+            headers = getattr(resp, "headers", None) if resp is not None else None
+            if headers is not None:
+                ra_raw = headers.get("retry-after") if hasattr(headers, "get") else None
+                try:
+                    retry_after = float(ra_raw) if ra_raw is not None else None
+                except (TypeError, ValueError):
+                    retry_after = None
+            wait = retry_after if retry_after and retry_after > 0 else base_backoff * (4**attempt)
+            print(
+                f"    LLM transient error ({type(exc).__name__}) — "
+                f"retry {attempt + 1}/{max_retries} in {wait:.1f}s"
+            )
+            sleep(wait)
+    if last_exc is not None:
+        print(f"    LLM gave up after {max_retries} retries: {type(last_exc).__name__}")
+    return None
+
+
 def score_jobs_in_batches(jobs: list[dict], cv_text: str) -> bool | None:
-    """Send jobs to Claude in batches. Mutates each job in-place. Falls back
-    to regex for any job Claude didn't score."""
+    """Send jobs to the active LLM provider in parallel batches. Mutates each
+    job in-place. Falls back to regex for any job the LLM didn't score.
+
+    Concurrency lives here (provider-agnostic): we submit every batch up
+    front to a `ThreadPoolExecutor(max_workers=_BATCH_MAX_WORKERS)` and
+    process them as they complete. Each batch operates on a disjoint slice
+    of `jobs` so in-place mutation is safe across threads.
+
+    Each batch's underlying call is wrapped in retry-with-backoff
+    (`_retry_score_batch`) so transient rate-limit / 5xx / network errors
+    don't kill the whole run — at worst that batch silently degrades to
+    regex fallback after exhausting its retry budget."""
     if not jobs:
         return None
 
-    scored_anything = False
+    total_batches = (len(jobs) + BATCH_SIZE - 1) // BATCH_SIZE
+    batches: list[tuple[int, list[dict]]] = []
     for i in range(0, len(jobs), BATCH_SIZE):
-        batch = jobs[i : i + BATCH_SIZE]
-        batch_num = i // BATCH_SIZE + 1
-        total_batches = (len(jobs) + BATCH_SIZE - 1) // BATCH_SIZE
+        batches.append((i // BATCH_SIZE + 1, jobs[i : i + BATCH_SIZE]))
+
+    scored_anything = False
+    # `score_map_by_batch[batch_num]` -> (batch, scored_map_or_None).
+    # We collect first, apply scoring after all futures settle, so an
+    # interleaved print order (parallel) doesn't make us miss a batch.
+    results: dict[int, tuple[list[dict], dict | None]] = {}
+
+    def _run_one(batch_num: int, batch: list[dict]) -> tuple[int, list[dict], dict | None]:
         print(f"  Scoring batch {batch_num}/{total_batches} ({len(batch)} jobs)...")
-        scored_map = claude_batch_score(cv_text, batch) if cv_text else None
+        if not cv_text:
+            return batch_num, batch, None
+        scored_map = _retry_score_batch(cv_text, batch)
+        return batch_num, batch, scored_map
+
+    # ThreadPoolExecutor is fine for both subprocess-based providers
+    # (claude_cli) and HTTP/SDK-based providers (everything else). The GIL
+    # is released during subprocess.run / urllib reads, so we get real
+    # parallelism for the wall-clock-bound wait on the LLM round-trip.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_BATCH_MAX_WORKERS) as executor:
+        futures = [executor.submit(_run_one, num, b) for num, b in batches]
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                batch_num, batch, scored_map = fut.result()
+            except Exception as e:
+                # _retry_score_batch already swallows and returns None on
+                # provider failure; reaching here means something deeply
+                # unexpected escaped. Treat the batch as unscored and keep
+                # the run alive — regex fallback still runs below.
+                print(f"  Batch failed unexpectedly: {type(e).__name__}: {e}")
+                continue
+            results[batch_num] = (batch, scored_map)
+
+    for _batch_num, (batch, scored_map) in results.items():
         if scored_map:
             scored_anything = True
             for job in batch:
@@ -2709,7 +2839,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PROVIDER",
         help="Test the LLM scoring backend and exit. Optional "
-        "PROVIDER ∈ {auto, claude_cli, claude_sdk, gemini, "
+        "PROVIDER ∈ {auto, claude_cli, claude_sdk, gemini, openai, "
         "openrouter, ollama}. Default: auto.",
     )
     return parser

@@ -710,21 +710,45 @@ def test_normalize_categories_falls_back_when_all_invalid() -> None:
             {"name": "claude_cli", "model": "sonnet-4-5"},
         ),
         ({"name": "  GEMINI "}, {"name": "gemini"}),  # case + whitespace tolerant
+        # All six concrete providers must round-trip without coercion.
+        ({"name": "claude_cli"}, {"name": "claude_cli"}),
+        ({"name": "claude_sdk"}, {"name": "claude_sdk"}),
+        ({"name": "gemini"}, {"name": "gemini"}),
+        ({"name": "openai"}, {"name": "openai"}),
+        ({"name": "openrouter"}, {"name": "openrouter"}),
+        ({"name": "ollama"}, {"name": "ollama"}),
         # Unknown provider name -> fallback
         ({"name": "fake"}, {"name": "auto"}),
         # Non-dict -> fallback
         ("junk", {"name": "auto"}),
         ({}, {"name": "auto"}),
-        # Empty model is dropped (gemini is in _VALID_LLM_PROVIDER_NAMES;
-        # NOTE: 'openai' is NOT — see search.py:890 _VALID_LLM_PROVIDER_NAMES.
-        # That set omits openai while llm/__init__.py PROVIDERS includes it,
-        # so an openai config is silently downgraded to {"name": "auto"}.
-        # Bug noted in final report — backend/search.py:890.
+        # Whitespace-only model is dropped, name is kept.
         ({"name": "gemini", "model": "  "}, {"name": "gemini"}),
     ],
 )
 def test_normalize_llm_provider(raw: object, expected: dict) -> None:
     assert search._normalize_llm_provider(raw, fallback={"name": "auto"}) == expected
+
+
+def test_normalize_llm_provider_openai_round_trips_with_model() -> None:
+    """Regression: pre-2026-05 the validator omitted 'openai' from
+    _VALID_LLM_PROVIDER_NAMES, so wizard-saved openai configs were silently
+    coerced to {'name': 'auto'} on every load_config(). Locks the fix in."""
+    raw = {"name": "openai", "model": "gpt-4o"}
+    assert search._normalize_llm_provider(raw, fallback={"name": "auto"}) == raw
+
+
+def test_load_config_preserves_openai_provider(tmp_repo: Path) -> None:
+    """End-to-end: write a config.json with llm_provider.name='openai',
+    call load_config(), confirm it isn't coerced to 'auto'. The wizard's
+    save path is now safe."""
+    cfg_payload = {
+        "categories": [],
+        "llm_provider": {"name": "openai", "model": "gpt-4o-mini"},
+    }
+    (tmp_repo / "config.json").write_text(json.dumps(cfg_payload))
+    loaded = search.load_config()
+    assert loaded["llm_provider"] == {"name": "openai", "model": "gpt-4o-mini"}
 
 
 # ---------------------------------------------------------------------------
@@ -901,3 +925,208 @@ def test_detect_system_locale(env: dict, expected: str, monkeypatch: pytest.Monk
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     assert search._detect_system_locale() == expected
+
+
+# ---------------------------------------------------------------------------
+# Parallel batch scoring — _retry_score_batch + score_jobs_in_batches.
+# Validates the ThreadPoolExecutor wiring + retry-with-backoff added in
+# 2026-05 to bring scoring wall-clock from ~5-11min sequential to ~90-180s.
+# ---------------------------------------------------------------------------
+
+
+def _stub_jobs(n: int) -> list[dict]:
+    """Cheap synthetic batch-shaped jobs. Just need an `id` field plus the
+    couple of keys _apply_*_fallback / _apply_claude_scoring touch."""
+    return [
+        {"id": f"job{i}", "title": "Engineer", "_desc": "python role", "company": "Co"}
+        for i in range(n)
+    ]
+
+
+def test_retry_score_batch_retries_on_transient_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First two attempts raise, third returns a valid scoring map. Helper
+    must end up with exactly three calls and the success result, sleeping
+    twice with the documented exponential schedule."""
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def fake_score(cv: str, batch: list[dict]) -> dict:
+        calls.append(len(calls))
+        if len(calls) <= 2:
+            raise ConnectionError("transient")
+        return {"job0": {"fit": "good", "score": 9}}
+
+    monkeypatch.setattr(search, "claude_batch_score", fake_score)
+    out = search._retry_score_batch(
+        "cv",
+        [{"id": "job0"}],
+        sleep=lambda s: sleeps.append(s),
+    )
+    assert out == {"job0": {"fit": "good", "score": 9}}
+    assert len(calls) == 3
+    # Default backoff: base=1.0, factor=4 -> [1.0, 4.0]
+    assert sleeps == [1.0, 4.0]
+
+
+def test_retry_score_batch_gives_up_after_max_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All four attempts raise — helper returns None and the caller's regex
+    fallback handles the miss. We must see exactly max_retries+1 calls."""
+    calls: list[int] = []
+
+    def always_raise(cv: str, batch: list[dict]) -> dict:
+        calls.append(0)
+        raise TimeoutError("rate limited")
+
+    monkeypatch.setattr(search, "claude_batch_score", always_raise)
+    out = search._retry_score_batch("cv", [{"id": "j"}], sleep=lambda s: None)
+    assert out is None
+    # 1 initial + max_retries (3) retries = 4 total calls.
+    assert len(calls) == search._BATCH_MAX_RETRIES + 1
+
+
+def test_retry_score_batch_skips_retry_on_permanent_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """401/403 surfaces as None on the first failed attempt — no point in
+    burning the full retry budget on a bad API key."""
+    calls: list[int] = []
+
+    class _AuthError(Exception):
+        status_code = 401
+
+    def auth_fail(cv: str, batch: list[dict]) -> dict:
+        calls.append(0)
+        raise _AuthError("Unauthorized")
+
+    monkeypatch.setattr(search, "claude_batch_score", auth_fail)
+    out = search._retry_score_batch("cv", [{"id": "j"}], sleep=lambda s: None)
+    assert out is None
+    assert len(calls) == 1  # bailed immediately
+
+
+def test_retry_score_batch_skips_retry_on_permanent_403(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same as 401 but via response.status_code (httpx-style nested attr)."""
+
+    class _Resp:
+        status_code = 403
+        headers = {}
+
+    class _ForbiddenError(Exception):
+        def __init__(self) -> None:
+            super().__init__("Forbidden")
+            self.response = _Resp()
+
+    calls: list[int] = []
+
+    def forbid(cv: str, batch: list[dict]) -> dict:
+        calls.append(0)
+        raise _ForbiddenError()
+
+    monkeypatch.setattr(search, "claude_batch_score", forbid)
+    out = search._retry_score_batch("cv", [{"id": "j"}], sleep=lambda s: None)
+    assert out is None
+    assert len(calls) == 1
+
+
+def test_retry_score_batch_honors_retry_after_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the exception carries a Retry-After header, we sleep for that
+    interval instead of the exponential default. Anthropic + OpenAI rate
+    limit responses include this and we must obey it."""
+    sleeps: list[float] = []
+
+    class _Resp:
+        status_code = 429
+        headers = {"retry-after": "7"}
+
+    class _RateLimitError(Exception):
+        def __init__(self) -> None:
+            super().__init__("rate limited")
+            self.response = _Resp()
+
+    state = {"n": 0}
+
+    def maybe_succeed(cv: str, batch: list[dict]) -> dict:
+        state["n"] += 1
+        if state["n"] == 1:
+            raise _RateLimitError()
+        return {"j": {"fit": "ok", "score": 5}}
+
+    monkeypatch.setattr(search, "claude_batch_score", maybe_succeed)
+    out = search._retry_score_batch("cv", [{"id": "j"}], sleep=lambda s: sleeps.append(s))
+    assert out == {"j": {"fit": "ok", "score": 5}}
+    assert sleeps == [7.0]
+
+
+def test_score_jobs_in_batches_continues_when_one_batch_fails_repeatedly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: many jobs split into >2 batches; one batch raises every
+    attempt, the rest succeed. After the parallel run, every job ends up
+    scored — the failed batch via regex fallback, the rest via claude.
+    No exception escapes."""
+    jobs = _stub_jobs(search.BATCH_SIZE * 3)  # exactly 3 batches
+    bad_idx = 1  # second batch
+
+    def variable_score(cv: str, batch: list[dict]) -> dict:
+        if any(j["id"] == jobs[bad_idx * search.BATCH_SIZE]["id"] for j in batch):
+            raise ConnectionError("network blip")
+        return {j["id"]: {"fit": "good", "score": 8, "reasons": ["match"]} for j in batch}
+
+    monkeypatch.setattr(search, "claude_batch_score", variable_score)
+    # Skip the real backoff sleep so the test runs fast.
+    monkeypatch.setattr(search.time, "sleep", lambda s: None)
+
+    out = search.score_jobs_in_batches(jobs, "cv")
+    assert out is True  # at least one batch succeeded
+    # Bad batch -> regex fallback applied.
+    bad_batch = jobs[bad_idx * search.BATCH_SIZE : (bad_idx + 1) * search.BATCH_SIZE]
+    for j in bad_batch:
+        assert j["scored_by"] == "regex"
+    # Other batches -> claude scoring applied.
+    other = jobs[: search.BATCH_SIZE] + jobs[2 * search.BATCH_SIZE :]
+    for j in other:
+        assert j["scored_by"] == "claude"
+        assert j["score"] == 8
+
+
+def test_score_jobs_in_batches_runs_batches_in_parallel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Crude concurrency check: if all batches sleep 0.3s and there are 4 of
+    them, sequential would take 1.2s; parallel (max_workers=4) should finish
+    in well under 0.6s. We assert <0.9s to leave generous headroom for slow
+    CI machines while still catching a regression to sequential."""
+    import threading
+    import time as time_mod
+
+    jobs = _stub_jobs(search.BATCH_SIZE * 4)
+    in_flight: list[int] = []
+    max_concurrent = {"v": 0}
+    lock = threading.Lock()
+
+    def slow_score(cv: str, batch: list[dict]) -> dict:
+        with lock:
+            in_flight.append(1)
+            if len(in_flight) > max_concurrent["v"]:
+                max_concurrent["v"] = len(in_flight)
+        time_mod.sleep(0.3)
+        with lock:
+            in_flight.pop()
+        return {j["id"]: {"fit": "ok", "score": 5, "reasons": []} for j in batch}
+
+    monkeypatch.setattr(search, "claude_batch_score", slow_score)
+    t0 = time_mod.monotonic()
+    search.score_jobs_in_batches(jobs, "cv")
+    elapsed = time_mod.monotonic() - t0
+    # 4 batches * 0.3s sequential = 1.2s; parallel should be ~0.3s.
+    assert elapsed < 0.9, f"score_jobs_in_batches ran sequentially: {elapsed:.2f}s"
+    # And we observed real concurrency (>=2 batches in flight at once).
+    assert max_concurrent["v"] >= 2
