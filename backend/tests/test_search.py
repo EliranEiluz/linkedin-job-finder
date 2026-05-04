@@ -213,7 +213,7 @@ def test_detect_system_timezone_from_etc_localtime_symlink(
             return _FakeLink()
         return real_path(arg)
 
-    monkeypatch.setattr(pathlib, "Path", _patched_path)
+    monkeypatch.setattr(search, "Path", _patched_path)
     # Make sure TZ env doesn't short-circuit before our patched symlink is consulted.
     monkeypatch.delenv("TZ", raising=False)
     assert search._detect_system_timezone() == "Asia/Jerusalem"
@@ -242,7 +242,7 @@ def test_detect_system_timezone_from_tz_env(monkeypatch: pytest.MonkeyPatch) -> 
             return _Missing()
         return real_path(arg)
 
-    monkeypatch.setattr(pathlib, "Path", _patched_path)
+    monkeypatch.setattr(search, "Path", _patched_path)
     monkeypatch.setenv("TZ", "Europe/Berlin")
     # Non-IANA Windows fallback should NOT be hit on darwin / linux.
     monkeypatch.setattr(search, "_detect_windows_timezone", lambda: None)
@@ -273,7 +273,7 @@ def test_detect_system_timezone_falls_through_to_utc(
             return _Missing()
         return real_path(arg)
 
-    monkeypatch.setattr(pathlib, "Path", _patched_path)
+    monkeypatch.setattr(search, "Path", _patched_path)
     monkeypatch.delenv("TZ", raising=False)
     monkeypatch.setattr(search, "_detect_windows_timezone", lambda: None)
 

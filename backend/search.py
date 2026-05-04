@@ -688,8 +688,6 @@ def _detect_system_timezone() -> str:
       5) UTC."""
     # 1) /etc/localtime symlink → IANA name
     try:
-        from pathlib import Path
-
         link = Path("/etc/localtime")
         if link.exists():
             target = str(link.resolve())
