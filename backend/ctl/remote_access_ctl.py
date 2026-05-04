@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -202,46 +203,70 @@ def _detect_cloudflare() -> dict[str, Any]:
     return {"installed": True, "tunnels": tunnels}
 
 
-def _detect_vite_host_binding() -> dict[str, Any]:
-    """Best-effort heuristic on whether `npm run dev` binds to all interfaces.
+# Match `server: { host: true }` or `server: { host: '0.0.0.0' }` etc.
+# Permissive: we only care that the user opted into all-interfaces somewhere.
+_VITE_HOST_RE = re.compile(
+    r"server\s*:\s*\{[^}]*\bhost\s*:\s*(?:true|['\"](?:0\.0\.0\.0|true)['\"])",
+    re.MULTILINE | re.DOTALL,
+)
 
-    Reads `ui/package.json`'s `dev` script. If it contains `--host` (or
-    `--host=...`), we assume vite is bound to 0.0.0.0 — non-localhost
-    devices on the LAN / Tailscale net can reach it. Otherwise vite's
-    default of 127.0.0.1 means a remote URL would 404.
+
+def _vite_config_has_host_true() -> bool:
+    """Return True iff ui/vite.config.ts sets server.host to a value that
+    binds vite to all interfaces. False on any read/parse failure.
+
+    Path is derived from PACKAGE_JSON_PATH at call time so that tests
+    monkeypatching PACKAGE_JSON_PATH also redirect this lookup.
     """
-    if not PACKAGE_JSON_PATH.exists():
-        return {
-            "all_interfaces": False,
-            "note": (
-                f"could not read {PACKAGE_JSON_PATH} — assuming default vite bind (localhost only)"
-            ),
-        }
+    try:
+        text = (PACKAGE_JSON_PATH.parent / "vite.config.ts").read_text()
+    except OSError:
+        return False
+    return bool(_VITE_HOST_RE.search(text))
+
+
+def _dev_script_has_host_flag() -> bool:
+    """Return True iff ui/package.json's `dev` script passes --host."""
     try:
         pkg = json.loads(PACKAGE_JSON_PATH.read_text())
-    except (json.JSONDecodeError, OSError) as e:
-        return {
-            "all_interfaces": False,
-            "note": f"failed to parse {PACKAGE_JSON_PATH}: {e}",
-        }
+    except (json.JSONDecodeError, OSError):
+        return False
     scripts = pkg.get("scripts") if isinstance(pkg, dict) else None
     dev_script = scripts.get("dev") if isinstance(scripts, dict) else None
-    if not isinstance(dev_script, str):
-        return {
-            "all_interfaces": False,
-            "note": "ui/package.json has no `dev` script — cannot determine bind",
-        }
-    if "--host" in dev_script:
+    return isinstance(dev_script, str) and "--host" in dev_script
+
+
+def _detect_vite_host_binding() -> dict[str, Any]:
+    """Best-effort heuristic on whether vite binds to all interfaces.
+
+    Two equivalent ways the user can opt in:
+      1. `server: { host: true }` (or `'0.0.0.0'`) in ui/vite.config.ts
+         — this repo's default.
+      2. `--host` flag in ui/package.json's `dev` script.
+
+    Either is sufficient. The vite.config.ts approach is preferred because
+    it's the project default; the `--host` flag is a per-invocation override
+    forks may use.
+    """
+    via_config = _vite_config_has_host_true()
+    via_script = _dev_script_has_host_flag()
+    if via_config or via_script:
+        source = (
+            "ui/vite.config.ts sets server.host"
+            if via_config
+            else "ui/package.json `dev` script includes --host"
+        )
         return {
             "all_interfaces": True,
-            "note": "ui/package.json `dev` script includes --host; vite binds to all interfaces.",
+            "note": f"{source}; vite binds to all interfaces.",
         }
     return {
         "all_interfaces": False,
         "note": (
-            "ui/package.json `dev` script does NOT include --host. Vite binds to "
-            "127.0.0.1 by default; remote devices will not reach it. Add `--host` "
-            "to the `dev` script to bind to all interfaces."
+            "Neither ui/vite.config.ts (server.host) nor ui/package.json "
+            "(`dev` script --host) opts vite into all-interfaces binding. "
+            "Vite defaults to 127.0.0.1; remote devices will not reach it. "
+            "Add `server: { host: true }` to vite.config.ts."
         ),
     }
 
