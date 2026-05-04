@@ -1921,4 +1921,10 @@ const configApiPlugin = (): Plugin => ({
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), configApiPlugin()],
+  // Bind to all interfaces (0.0.0.0) instead of vite's default localhost-only.
+  // Lets a phone on the same wifi or a Tailscale-connected device reach the
+  // dashboard at http://<mac-hostname>:5173. The dashboard ships with zero
+  // local auth — see docs/remote-access.md for the auth-gate options
+  // (Tailscale gives implicit gating; Cloudflare Tunnel + Access for public).
+  server: { host: true },
 });
