@@ -11,6 +11,26 @@
 
 *30-second tour: scrape, score, apply.*
 
+### TL;DR setup
+
+Five minutes from clone to first scored job, no LinkedIn account, no
+LLM API key (Gemini's free tier is fine).
+
+```bash
+git clone https://github.com/EliranEiluz/linkedin-job-finder.git
+cd linkedin-job-finder
+python3 -m pip install -r backend/requirements.txt
+cd ui && npm install && npm run dev
+# open http://localhost:5173 → Setup tab → walk the wizard
+# Crawler Config tab → Run scraper (mode: guest)
+```
+
+The Setup wizard handles preflight checks, LLM provider pick + test,
+CV paste, and starter-config generation. First scrape in `guest` mode
+takes 5–15 min and starts populating the Corpus tab live. Full setup
+notes (logged-in mode, scheduling, notifications, multi-profile) are
+below.
+
 ## What it does
 
 - **Scrapes LinkedIn at scale** in two modes: a no-account guest crawler and a Playwright-backed logged-in crawler that catches jobs the guest endpoint hides.
