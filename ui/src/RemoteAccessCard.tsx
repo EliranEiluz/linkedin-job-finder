@@ -60,12 +60,51 @@ interface ViteHostBinding {
   note: string;
 }
 
+// The four buckets the backend reports via `host_os`. Mirrors
+// `_detect_host_os` in backend/ctl/remote_access_ctl.py — keep in sync.
+type HostOs = 'darwin' | 'linux' | 'windows' | 'other';
+
 export interface RemoteAccessStatus {
   ok: boolean;
+  host_os: HostOs;
   tailscale: TailscaleStatus;
   cloudflare: CloudflareStatus;
   vite_host_binding: ViteHostBinding;
 }
+
+// Per-OS install commands for Tailscale. The Tailscale CLI ships in
+// every package — `tailscale up`, `tailscale status --json` work
+// identically across all three. The macOS line uses `brew install
+// tailscale` (CLI-only) to match the doc; the cask install pulls in a
+// menu-bar app that's optional.
+const TAILSCALE_INSTALL: Record<HostOs, { cmd: string; note?: string }> = {
+  darwin: { cmd: 'brew install tailscale' },
+  linux: {
+    cmd: 'curl -fsSL https://tailscale.com/install.sh | sh',
+    note: 'Or use your distro package: apt install tailscale, dnf install tailscale, etc.',
+  },
+  windows: {
+    cmd: 'winget install --id Tailscale.Tailscale',
+    note: 'Or download the installer from https://tailscale.com/download',
+  },
+  other: { cmd: 'See https://tailscale.com/download for your platform' },
+};
+
+// Per-OS install commands for cloudflared. The Linux line targets the
+// most common case (.deb on amd64); the note points at the releases
+// page for other distros / arm64.
+const CLOUDFLARED_INSTALL: Record<HostOs, { cmd: string; note?: string }> = {
+  darwin: { cmd: 'brew install cloudflared' },
+  linux: {
+    cmd: 'curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && sudo dpkg -i cloudflared.deb',
+    note: 'For other distros / arm64: see https://github.com/cloudflare/cloudflared/releases',
+  },
+  windows: {
+    cmd: 'winget install --id Cloudflare.cloudflared',
+    note: 'Or download the .msi from https://github.com/cloudflare/cloudflared/releases',
+  },
+  other: { cmd: 'See https://github.com/cloudflare/cloudflared/releases for your platform' },
+};
 
 // Small label+dot status chip — same neutral chip + semantic dot pattern
 // as SchedulerCard's StatusBadge.
@@ -131,8 +170,15 @@ const CopyButton = ({ text }: { text: string }) => {
 //   - not installed → setup steps expanded by default + "Not installed" badge
 //   - installed but not running → "Tailscale installed but not connected"
 //   - running → URL row with copy + status chip
-const TailscaleSection = ({ status }: { status: TailscaleStatus }) => {
+const TailscaleSection = ({
+  status,
+  hostOs,
+}: {
+  status: TailscaleStatus;
+  hostOs: HostOs;
+}) => {
   const [setupOpen, setSetupOpen] = useState(!status.installed);
+  const install = TAILSCALE_INSTALL[hostOs];
 
   let chip: React.ReactNode;
   if (!status.installed) {
@@ -191,8 +237,16 @@ const TailscaleSection = ({ status }: { status: TailscaleStatus }) => {
         </summary>
         <div className="border-t border-slate-200 px-3 py-2 text-xs text-slate-700">
           <ol className="ml-4 list-decimal space-y-1">
-            <li>Install: <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">brew install --cask tailscale</code> (or download from tailscale.com).</li>
-            <li>Sign in via the menu-bar icon (Google / GitHub / email — your choice).</li>
+            <li>
+              Install:{' '}
+              <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">
+                {install.cmd}
+              </code>
+              {install.note && (
+                <div className="mt-0.5 text-[11px] text-slate-500">{install.note}</div>
+              )}
+            </li>
+            <li>Sign in (menu-bar icon on macOS, system tray on Windows, or <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">tailscale up</code> on Linux). Auth via Google / GitHub / email — your choice.</li>
             <li>Install Tailscale on your phone too and sign in to the same account.</li>
             <li>From your terminal, confirm the connection: <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">tailscale status</code>.</li>
             <li>Make sure the Vite dev server binds to all interfaces — set <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">"dev": "vite --host"</code> in <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">ui/package.json</code>, then restart <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">npm run dev</code>.</li>
@@ -216,8 +270,15 @@ const TailscaleSection = ({ status }: { status: TailscaleStatus }) => {
 //   - not installed → "Not installed" badge + setup expanded
 //   - installed, no tunnels yet → "No tunnels configured"
 //   - installed, tunnels list → per-tunnel chips + healthy summary
-const CloudflareSection = ({ status }: { status: CloudflareStatus }) => {
+const CloudflareSection = ({
+  status,
+  hostOs,
+}: {
+  status: CloudflareStatus;
+  hostOs: HostOs;
+}) => {
   const [setupOpen, setSetupOpen] = useState(!status.installed);
+  const install = CLOUDFLARED_INSTALL[hostOs];
 
   const tunnels = status.tunnels ?? [];
   const healthyCount = tunnels.filter(
@@ -299,7 +360,15 @@ const CloudflareSection = ({ status }: { status: CloudflareStatus }) => {
         </summary>
         <div className="border-t border-slate-200 px-3 py-2 text-xs text-slate-700">
           <ol className="ml-4 list-decimal space-y-1">
-            <li>Install: <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">brew install cloudflared</code>.</li>
+            <li>
+              Install:{' '}
+              <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">
+                {install.cmd}
+              </code>
+              {install.note && (
+                <div className="mt-0.5 text-[11px] text-slate-500">{install.note}</div>
+              )}
+            </li>
             <li>Authenticate: <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">cloudflared tunnel login</code> (opens a browser; pick a domain you own on Cloudflare).</li>
             <li>Create the tunnel: <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">cloudflared tunnel create linkedin-jobs</code>.</li>
             <li>Add a config file at <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">~/.cloudflared/config.yml</code> mapping a hostname to <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">http://localhost:5173</code>.</li>
@@ -402,8 +471,14 @@ export const RemoteAccessCard = () => {
 
       {state.kind === 'ready' && (
         <div className="space-y-3">
-          <TailscaleSection status={state.data.tailscale} />
-          <CloudflareSection status={state.data.cloudflare} />
+          <TailscaleSection
+            status={state.data.tailscale}
+            hostOs={state.data.host_os}
+          />
+          <CloudflareSection
+            status={state.data.cloudflare}
+            hostOs={state.data.host_os}
+          />
 
           {!state.data.vite_host_binding.all_interfaces && (
             <div

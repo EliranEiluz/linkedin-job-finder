@@ -121,6 +121,10 @@ def test_status_happy_path_both_clis_installed(
     pkg = tmp_path / "package.json"
     pkg.write_text(json.dumps({"scripts": {"dev": "vite --host"}}))
     monkeypatch.setattr(remote_access_ctl, "PACKAGE_JSON_PATH", pkg)
+    # Pin the OS so this test is deterministic across platforms — the
+    # UI looks up the install command by `host_os`, so the value must be
+    # one of the four enumerated buckets even when the CI runner is Linux.
+    monkeypatch.setattr(remote_access_ctl.platform, "system", lambda: "Darwin")
 
     monkeypatch.setattr(
         remote_access_ctl.shutil,
@@ -142,6 +146,7 @@ def test_status_happy_path_both_clis_installed(
         remote_access_ctl.cmd_status()
     out = captured["obj"]
     assert out["ok"] is True
+    assert out["host_os"] == "darwin"
 
     ts = out["tailscale"]
     assert ts["installed"] is True
@@ -164,6 +169,7 @@ def test_status_only_tailscale_installed(monkeypatch: pytest.MonkeyPatch, tmp_pa
     import remote_access_ctl
 
     monkeypatch.setattr(remote_access_ctl, "PACKAGE_JSON_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(remote_access_ctl.platform, "system", lambda: "Linux")
 
     def _which(name: str) -> str | None:
         return "/usr/local/bin/tailscale" if name == "tailscale" else None
@@ -181,6 +187,7 @@ def test_status_only_tailscale_installed(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert out["tailscale"]["installed"] is True
     assert out["tailscale"]["running"] is True
     assert out["cloudflare"] == {"installed": False}
+    assert out["host_os"] == "linux"
     # missing package.json → all_interfaces:false with a note
     assert out["vite_host_binding"]["all_interfaces"] is False
     assert "note" in out["vite_host_binding"]
@@ -193,6 +200,7 @@ def test_status_neither_cli_installed(monkeypatch: pytest.MonkeyPatch, tmp_path:
     import remote_access_ctl
 
     monkeypatch.setattr(remote_access_ctl, "PACKAGE_JSON_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(remote_access_ctl.platform, "system", lambda: "Windows")
     monkeypatch.setattr(remote_access_ctl.shutil, "which", lambda _name: None)
 
     def _no_subprocess(*_a, **_kw):
@@ -204,6 +212,7 @@ def test_status_neither_cli_installed(monkeypatch: pytest.MonkeyPatch, tmp_path:
         remote_access_ctl.cmd_status()
     out = captured["obj"]
     assert out["ok"] is True
+    assert out["host_os"] == "windows"
     assert out["tailscale"] == {"installed": False}
     assert out["cloudflare"] == {"installed": False}
 
@@ -218,6 +227,7 @@ def test_status_tailscale_timeout_does_not_break_cloudflare(
     import remote_access_ctl
 
     monkeypatch.setattr(remote_access_ctl, "PACKAGE_JSON_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(remote_access_ctl.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(
         remote_access_ctl.shutil,
         "which",
@@ -254,6 +264,7 @@ def test_status_cloudflared_not_logged_in(monkeypatch: pytest.MonkeyPatch, tmp_p
     import remote_access_ctl
 
     monkeypatch.setattr(remote_access_ctl, "PACKAGE_JSON_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(remote_access_ctl.platform, "system", lambda: "Darwin")
 
     def _which(name: str) -> str | None:
         return "/usr/local/bin/cloudflared" if name == "cloudflared" else None
@@ -279,3 +290,25 @@ def test_status_cloudflared_not_logged_in(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert out["cloudflare"]["installed"] is True
     assert out["cloudflare"]["tunnels"] == []
     assert "log in" in out["cloudflare"]["error"]
+
+
+@pytest.mark.parametrize(
+    ("system_value", "expected"),
+    [
+        ("Darwin", "darwin"),
+        ("Linux", "linux"),
+        ("Windows", "windows"),
+        ("FreeBSD", "other"),
+        ("", "other"),
+    ],
+)
+def test_detect_host_os_buckets(
+    monkeypatch: pytest.MonkeyPatch, system_value: str, expected: str
+) -> None:
+    """`_detect_host_os` normalizes platform.system() into the four
+    enumerated buckets the UI install-command lookup depends on. Anything
+    outside the three known families falls into "other"."""
+    import remote_access_ctl
+
+    monkeypatch.setattr(remote_access_ctl.platform, "system", lambda: system_value)
+    assert remote_access_ctl._detect_host_os() == expected

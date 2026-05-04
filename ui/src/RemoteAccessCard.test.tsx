@@ -28,6 +28,7 @@ afterAll(() => { server.close(); });
 
 const happyStatus: RemoteAccessStatus = {
   ok: true,
+  host_os: 'darwin',
   tailscale: {
     installed: true,
     running: true,
@@ -47,6 +48,7 @@ const happyStatus: RemoteAccessStatus = {
 
 const noneInstalledStatus: RemoteAccessStatus = {
   ok: true,
+  host_os: 'darwin',
   tailscale: { installed: false },
   cloudflare: { installed: false },
   vite_host_binding: {
@@ -144,6 +146,36 @@ describe('RemoteAccessCard', () => {
       'href',
       'https://github.com/EliranEiluz/linkedin-job-finder/blob/main/docs/remote-access.md',
     );
+  });
+
+  it('keys the install commands off host_os — Linux maps to the install.sh + .deb lines', async () => {
+    // Same fixture as noneInstalled (so the setup-steps <details> are open
+    // by default), but with host_os flipped to linux. The lookup map should
+    // emit the install.sh line for tailscale and the dpkg line for
+    // cloudflared, NOT the macOS brew variants.
+    const linuxStatus: RemoteAccessStatus = {
+      ...noneInstalledStatus,
+      host_os: 'linux',
+    };
+    server.use(
+      http.get('/api/remote-access/status', () => HttpResponse.json(linuxStatus)),
+    );
+    render(<RemoteAccessCard />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('curl -fsSL https://tailscale.com/install.sh | sh'),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(
+        /curl -L --output cloudflared\.deb https:\/\/github\.com\/cloudflare\/cloudflared/,
+      ),
+    ).toBeInTheDocument();
+
+    // The macOS brew lines must NOT appear in the linux render path.
+    expect(screen.queryByText('brew install tailscale')).not.toBeInTheDocument();
+    expect(screen.queryByText('brew install cloudflared')).not.toBeInTheDocument();
   });
 
   it('renders an error banner when the API returns non-200', async () => {
