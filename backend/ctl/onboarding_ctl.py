@@ -3,8 +3,9 @@
 Onboarding CLI for the LinkedIn jobs scraper. Wraps the LLM provider
 abstraction (backend.llm) to bootstrap a personalized config.json from a CV
 + a free-text intent paragraph. Works with any provider the user has
-configured (claude_cli / claude_sdk / gemini / openrouter / ollama). Same
-stable JSON CLI style as scheduler_ctl.py — the Vite middleware shells to it.
+configured (claude_cli / claude_sdk / gemini / openai / openrouter / ollama).
+Same stable JSON CLI style as scheduler_ctl.py — the Vite middleware shells
+to it.
 
 Commands (each reads JSON from stdin, emits a single JSON object on stdout):
 
@@ -188,7 +189,7 @@ def _call_llm(prompt: str) -> tuple[int, str, str]:
     same (rc, stdout, stderr) shape the CLI/SDK helpers used to so callers
     don't change. rc=0 on success, rc=1 on any failure. The provider is
     auto-resolved from config.json's `llm_provider` block (defaults to auto:
-    claude_cli -> claude_sdk -> gemini -> openrouter -> ollama)."""
+    claude_cli -> claude_sdk -> gemini -> openai -> openrouter -> ollama)."""
     provider = get_provider()
     if provider is None:
         return (

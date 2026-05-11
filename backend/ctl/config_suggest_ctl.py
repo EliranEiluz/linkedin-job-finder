@@ -25,8 +25,8 @@ stdout):
 Failures always emit a JSON envelope — never a traceback.
 
 Routes through the backend.llm provider abstraction so any configured
-provider (claude_cli / claude_sdk / gemini / openrouter / ollama) works.
-If no provider is set up we surface a structured error.
+provider (claude_cli / claude_sdk / gemini / openai / openrouter / ollama)
+works. If no provider is set up we surface a structured error.
 """
 
 from __future__ import annotations
@@ -278,8 +278,9 @@ def _build_prompt(pos: list[dict], neg: list[dict], cfg_summary: dict) -> str:
 
 def _call_llm(prompt: str) -> tuple[int, str, str]:
     """Route through backend.llm.complete so any configured provider works
-    (claude_cli / claude_sdk / gemini / openrouter / ollama). Same (rc, out,
-    err) shape callers already expect. rc=0 success, rc=1 any failure."""
+    (claude_cli / claude_sdk / gemini / openai / openrouter / ollama). Same
+    (rc, out, err) shape callers already expect. rc=0 success, rc=1 any
+    failure."""
     provider = get_provider()
     if provider is None:
         return (

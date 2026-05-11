@@ -781,15 +781,15 @@ export const CorpusPage = () => {
                     const regex = r.regex_fallback ?? 0;
                     const failed = r.failed ?? 0;
                     const parts: string[] = [];
-                    if (claude > 0) parts.push(`${claude} re-scored by Claude`);
+                    if (claude > 0) parts.push(`${claude} re-scored by the LLM`);
                     if (regex > 0) {
                       parts.push(
-                        `${regex} unchanged (Claude unavailable — kept regex score)`,
+                        `${regex} unchanged (LLM unavailable — kept regex score)`,
                       );
                     }
                     if (failed > 0) parts.push(`${failed} failed`);
                     // Only nag with an alert when something went wrong or
-                    // partially. A clean "all by Claude" run stays silent.
+                    // partially. A clean "all by LLM" run stays silent.
                     if (regex > 0 || failed > 0) {
                       window.alert(
                         `Re-score of ${ids.length} job(s):\n  ` +

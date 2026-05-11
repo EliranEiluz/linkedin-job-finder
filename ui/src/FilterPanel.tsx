@@ -353,17 +353,17 @@ const fitMeta: Record<FitKey, { label: string; dot: DotColor; tooltip: string }>
   good: {
     label: 'Good',
     dot: 'good',
-    tooltip: 'Strong CV match — Claude scored "good" fit (typically score 7+)',
+    tooltip: 'Strong CV match — the LLM scored "good" fit (typically score 7+)',
   },
   ok: {
     label: 'OK',
     dot: 'warn',
-    tooltip: 'Borderline match — Claude scored "ok" fit (typically score 4–6)',
+    tooltip: 'Borderline match — the LLM scored "ok" fit (typically score 4–6)',
   },
   skip: {
     label: 'Skip',
     dot: 'neutral',
-    tooltip: 'Poor match — Claude scored "skip" (typically score ≤3)',
+    tooltip: 'Poor match — the LLM scored "skip" (typically score ≤3)',
   },
   unscored: {
     label: 'Unscored',
@@ -383,19 +383,19 @@ const catLabel = (id: string): string =>
 
 const byMeta: Record<ScoredByKey, { label: string; dot: DotColor; tooltip: string }> = {
   claude: {
-    label: 'Claude',
+    label: 'LLM',
     dot: 'brand',
-    tooltip: 'Scored by Claude — ranked your CV vs the job description',
+    tooltip: 'Scored by the LLM — ranked your CV vs the job description',
   },
   regex: {
     label: 'Regex',
     dot: 'neutral',
-    tooltip: 'Scored by the regex fallback (when Claude was unavailable)',
+    tooltip: 'Scored by the regex fallback (when the LLM was unavailable)',
   },
   'title-filter': {
     label: 'Title-filter',
     dot: 'warn',
-    tooltip: 'Dropped by the off-topic title pre-filter — never sent to Claude',
+    tooltip: 'Dropped by the off-topic title pre-filter — never sent to the LLM',
   },
   none: {
     label: 'Not scored',

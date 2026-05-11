@@ -32,43 +32,13 @@ whole stack on a small VPS — is sketched at the end.
 Most readers want **Tailscale**. Skip down to "Path B" only if you
 specifically need a shareable HTTPS URL.
 
-## Before either path: let Vite listen on the network
+## Before either path: confirm Vite is bound network-wide
 
-Vite's dev server binds to `localhost` by default, which means even a
-tunnel pointing at `localhost:5173` won't reach it from the right
-network namespace. Bind it to all interfaces by either:
-
-- starting the dev server with the `--host` flag:
-
-  ```bash
-  cd ui
-  npm run dev -- --host
-  ```
-
-  On startup you should now see two URLs printed, e.g.:
-
-  ```
-    Local:   http://localhost:5173/
-    Network: http://192.168.1.42:5173/
-  ```
-
-  The `Network:` line confirms Vite is reachable from off-host (Vite
-  prints both lines once `--host` is set; the leading arrow glyph is
-  omitted here for plain-text portability).
-
-- or, if you want this to be the default, edit `ui/vite.config.ts` and
-  add a `server` block at the top level of the exported config:
-
-  ```ts
-  export default defineConfig({
-    server: { host: true },
-    // ...rest of your config
-  });
-  ```
-
-Either is fine. The `--host` flag is non-invasive (no committed change);
-the config edit is sticky across restarts but it's a small local diff
-on top of the upstream repo.
+The dev server already binds to all interfaces by default
+(`server: { host: true }` in `ui/vite.config.ts`), so `npm run dev` is
+enough — no extra flag needed. On startup you should see both a `Local:`
+and a `Network:` URL; the latter is what tunnels and other devices on
+your LAN reach.
 
 ## Path A — Tailscale (recommended)
 

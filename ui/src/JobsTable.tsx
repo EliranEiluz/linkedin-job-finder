@@ -61,7 +61,7 @@ export const isHotJob = (j: Pick<Job, 'hot'>): boolean => j.hot === true;
 const HotPill = () => (
   <span
     className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
-    title="Hot match — Claude scored 'Good' fit at high score, or it's a priority-list company with a 'Good' fit"
+    title="Hot match — the LLM scored 'Good' fit at high score, or it's a priority-list company with a 'Good' fit"
   >
     Hot
   </span>
@@ -115,9 +115,9 @@ export const TOOLTIPS = {
   sourceGuest: 'Job scraped via the unauthenticated /jobs-guest API',
   sourceUnknown: 'Scraped before mode-tagging existed (mid-April 2026)',
   priority: 'Company is on your priority_companies list (Crawler Config)',
-  scoredClaude: 'Scored by Claude — ranked your CV vs the job description',
-  scoredRegex: 'Scored by the regex fallback (when Claude was unavailable)',
-  scoredTitleFilter: 'Dropped by the off-topic title pre-filter — never sent to Claude',
+  scoredClaude: 'Scored by the LLM — ranked your CV vs the job description',
+  scoredRegex: 'Scored by the regex fallback (when the LLM was unavailable)',
+  scoredTitleFilter: 'Dropped by the off-topic title pre-filter — never sent to the LLM',
   scoredNone: 'Not scored yet — ran with --no-enrich or fetch failed',
 } as const;
 
@@ -348,7 +348,7 @@ export const JobsTable = ({
       columnHelper.accessor('priority', {
         header: () => (
           <span
-            title={'Hot match — Claude scored "Good" fit at high score, or it\'s a priority-list company with a "Good" fit.'}
+            title={'Hot match — the LLM scored "Good" fit at high score, or it\'s a priority-list company with a "Good" fit.'}
             className="cursor-help"
           >
             Hot
