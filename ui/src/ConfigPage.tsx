@@ -367,6 +367,105 @@ export const ConfigPage = () => {
     return !configsEqual(draft, state.config);
   }, [state, draft]);
 
+  // Per-section dirty state — used to render a small unsaved-changes
+  // dot on the desktop sub-nav row and the mobile accordion header for
+  // each section. Granular dirty saves no API calls (the bottom Save
+  // button still posts the whole config) — this is purely a UX hint
+  // so the user sees WHICH section they edited.
+  //
+  // Buckets must match the visual grouping below. Run & Infra has no
+  // dirty-trackable fields in the config shape (the cards inside it
+  // own their own state — scheduler config, notifications creds — and
+  // call their own endpoints), so `run` is always false here. We
+  // intentionally don't surface a "saving in another card" indicator —
+  // each card already has its own toast / saving state.
+  const sectionDirty = useMemo<
+    Partial<Record<'run' | 'pipeline' | 'search', boolean>>
+  >(() => {
+    if (state.kind !== 'ready' || !draft) {
+      return { run: false, pipeline: false, search: false };
+    }
+    const a = draft;
+    const b = state.config;
+    // AI Pipeline: llm_provider + corpus_filter + scoring/regex blocks.
+    const pp = (a.llm_provider?.name ?? null) !== (b.llm_provider?.name ?? null)
+      || (a.llm_provider?.model ?? null) !== (b.llm_provider?.model ?? null)
+      || (a.llm_provider?.reasoning_effort ?? null)
+        !== (b.llm_provider?.reasoning_effort ?? null)
+      || (a.corpus_filter?.min_fit ?? null) !== (b.corpus_filter?.min_fit ?? null)
+      || (a.corpus_filter?.min_score ?? null)
+        !== (b.corpus_filter?.min_score ?? null)
+      || (a.claude_scoring_prompt ?? '') !== (b.claude_scoring_prompt ?? '')
+      || JSON.stringify(a.fit_positive_patterns ?? [])
+        !== JSON.stringify(b.fit_positive_patterns ?? [])
+      || JSON.stringify(a.fit_negative_patterns ?? [])
+        !== JSON.stringify(b.fit_negative_patterns ?? [])
+      || JSON.stringify(a.offtopic_title_patterns ?? [])
+        !== JSON.stringify(b.offtopic_title_patterns ?? []);
+    // Search Shape: categories + priority + geo/date/location/max_pages.
+    const sd = JSON.stringify(a.categories) !== JSON.stringify(b.categories)
+      || JSON.stringify(a.priority_companies) !== JSON.stringify(b.priority_companies)
+      || a.date_filter !== b.date_filter
+      || a.geo_id !== b.geo_id
+      || a.location !== b.location
+      || a.max_pages !== b.max_pages
+      || (a.feedback_examples_max ?? null) !== (b.feedback_examples_max ?? null);
+    return { run: false, pipeline: pp, search: sd };
+  }, [state, draft]);
+
+  // Summary chips for each sub-section — rendered next to the section
+  // title (left rail on desktop, collapsed accordion on mobile). Short
+  // and information-dense; they help the user know what's set without
+  // expanding the section.
+  const sectionSummaries = useMemo<
+    Partial<Record<'run' | 'pipeline' | 'search', React.ReactNode>>
+  >(() => {
+    if (!draft) return {};
+    // Run & Infra: each card owns its own status. Skip a chip here —
+    // the per-card status badges (Scheduler "Active", Notifications
+    // "Configured" etc.) are the right level of detail and live inside
+    // the section.
+    const run: React.ReactNode = null;
+
+    // AI Pipeline: provider label + model (if explicit). Keep it short.
+    const providerName = draft.llm_provider?.name ?? 'auto';
+    const providerLabels: Record<string, string> = {
+      auto: 'Auto',
+      claude_cli: 'Claude CLI',
+      claude_sdk: 'Claude',
+      gemini: 'Gemini',
+      openai: 'OpenAI',
+      openrouter: 'OpenRouter',
+      ollama: 'Ollama',
+    };
+    const pipeline = (
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+        {providerLabels[providerName] ?? providerName}
+        {draft.llm_provider?.model && (
+          <span className="text-slate-500">· {draft.llm_provider.model}</span>
+        )}
+      </span>
+    );
+
+    // Search Shape: categories + priority count.
+    const catCount = draft.categories.length;
+    const priCount = draft.priority_companies.length;
+    const search = (
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+        <span className="tabular-nums">{catCount}</span>
+        <span className="text-slate-500">
+          {catCount === 1 ? 'category' : 'categories'}
+        </span>
+        {priCount > 0 && (
+          <span className="ml-1 text-slate-500">
+            · <span className="tabular-nums text-slate-700">{priCount}</span> priority
+          </span>
+        )}
+      </span>
+    );
+    return { run, pipeline, search };
+  }, [draft]);
+
   // saveConfig is the shared write path. Pass `override` to bypass `draft`
   // — the suggester does this so it can write the merged config without
   // round-tripping through the user's potentially-dirty edits. The override
@@ -490,6 +589,8 @@ export const ConfigPage = () => {
             <ConfigSubNav
               active={activeSection}
               onChange={onSectionChange}
+              summaries={sectionSummaries}
+              dirty={sectionDirty}
             />
           )}
 
@@ -532,6 +633,8 @@ export const ConfigPage = () => {
             meta={CONFIG_SECTIONS[0]}
             mobile={isMobile}
             active={activeSection === 'run'}
+            summary={sectionSummaries.run}
+            dirty={sectionDirty.run}
           >
             <ScrapeRunPanel />
             <SchedulerCard />
@@ -544,6 +647,8 @@ export const ConfigPage = () => {
             meta={CONFIG_SECTIONS[1]}
             mobile={isMobile}
             active={activeSection === 'pipeline'}
+            summary={sectionSummaries.pipeline}
+            dirty={sectionDirty.pipeline}
           >
             {/* LLM provider card — lets the user change the active LLM
                 after onboarding. The Step1LLM wizard step is the same UX,
@@ -664,6 +769,8 @@ export const ConfigPage = () => {
             meta={CONFIG_SECTIONS[2]}
             mobile={isMobile}
             active={activeSection === 'search'}
+            summary={sectionSummaries.search}
+            dirty={sectionDirty.search}
           >
             <CategoryManager
               categories={draft.categories}
