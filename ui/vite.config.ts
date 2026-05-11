@@ -32,6 +32,7 @@ import {
   CORPUS_TIMEOUT_MS,
   PREFLIGHT_TIMEOUT_MS,
   LLM_LIST_TIMEOUT_MS,
+  LLM_MODELS_TIMEOUT_MS,
   LLM_SAVE_TIMEOUT_MS,
   LLM_TEST_TIMEOUT_MS,
   CV_EXTRACT_TIMEOUT_MS,
@@ -1109,6 +1110,44 @@ const configApiPlugin = (): Plugin => ({
           } catch {
             sendJson(res, 500, {
               ok: false, error: 'llm_ctl emitted non-JSON',
+              raw_stderr: result.stderr.slice(0, 500),
+            }); return;
+          }
+        }
+
+        // Task #114 — model catalog. Provider is on the query string so
+        // GET /api/llm/models?provider=gemini is cache-friendly. The ctl
+        // takes the provider on argv (positional), NOT stdin.
+        if (url.startsWith('/api/llm/models') && req.method === 'GET') {
+          // url is the request path + querystring; parse without an
+          // explicit URL base since startsWith would have failed if the
+          // path didn't begin with /api/llm/models.
+          const qIndex = url.indexOf('?');
+          const query = qIndex >= 0 ? url.slice(qIndex + 1) : '';
+          const params = new URLSearchParams(query);
+          const provider = (params.get('provider') ?? '').trim();
+          if (!provider) {
+            sendJson(res, 400, { ok: false, error: 'provider query param required' });
+            return;
+          }
+          const result = await runCtl(
+            LLM_CTL,
+            ['models', provider],
+            null,
+            LLM_MODELS_TIMEOUT_MS,
+          );
+          if (result.spawnError) {
+            sendJson(res, 500, { ok: false, error: result.spawnError }); return;
+          }
+          if (result.timedOut) {
+            sendJson(res, 504, { ok: false, error: 'llm_ctl models timed out' }); return;
+          }
+          try {
+            const parsed = JSON.parse(result.stdout) as { ok?: boolean };
+            sendJson(res, parsed.ok ? 200 : 400, parsed); return;
+          } catch {
+            sendJson(res, 500, {
+              ok: false, error: 'llm_ctl models emitted non-JSON',
               raw_stderr: result.stderr.slice(0, 500),
             }); return;
           }
