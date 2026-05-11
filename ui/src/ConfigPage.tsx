@@ -12,6 +12,7 @@ import { normalizeConfig, serializeConfig } from './configMigrate';
 import { ScrapeRunPanel } from './ScrapeRunPanel';
 import { SchedulerCard } from './SchedulerCard';
 import { RemoteAccessCard } from './RemoteAccessCard';
+import { NotificationsCard } from './NotificationsCard';
 import { CategoryManager } from './CategoryManager';
 import { ChipInput } from './ChipInput';
 import { ProfileSwitcher } from './ProfileSwitcher';
@@ -480,6 +481,8 @@ export const ConfigPage = () => {
           <SchedulerCard />
 
           <RemoteAccessCard />
+
+          <NotificationsCard />
 
           <CategoryManager
             categories={draft.categories}
