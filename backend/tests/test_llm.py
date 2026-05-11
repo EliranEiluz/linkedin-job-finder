@@ -554,3 +554,405 @@ def test_read_cfg_returns_empty_for_missing_key(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(bsearch, "_ACTIVE_CONFIG", {})
     assert llm_pkg._read_cfg() == {}
+
+
+# ---------------------------------------------------------------------------
+# Task #114 — list_models() per provider. Each test mocks the underlying
+# transport (HTTP / SDK / subprocess) so no real network call happens.
+# ---------------------------------------------------------------------------
+
+
+def test_claude_sdk_list_models_maps_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Anthropic SDK exposes a rich `capabilities.effort` block on each
+    model. We map every supported level into ReasoningCapability.levels."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+
+    class _LvlFlag:
+        def __init__(self, supported: bool) -> None:
+            self.supported = supported
+
+    class _Effort:
+        # Anthropic surfaces every level explicitly. Only the supported=True
+        # ones land in our ReasoningCapability.levels tuple.
+        low = _LvlFlag(True)
+        medium = _LvlFlag(True)
+        high = _LvlFlag(True)
+        max = _LvlFlag(False)
+        xhigh = _LvlFlag(False)
+
+    class _Caps:
+        effort = _Effort()
+
+    class _Model:
+        id = "claude-opus-4-7"
+        display_name = "Claude Opus 4.7"
+        max_input_tokens = 200_000
+        max_output_tokens = 8_192
+        capabilities = _Caps()
+
+    class _Page:
+        data = [_Model()]
+
+    class _Models:
+        @staticmethod
+        def list(**_kw: Any) -> _Page:
+            return _Page()
+
+    class _Client:
+        models = _Models()
+        messages: Any = None
+
+    p = ClaudeSDKProvider()
+    monkeypatch.setattr(p, "_ensure_client", lambda: _Client())
+    out = p.list_models()
+    assert len(out) == 1
+    m = out[0]
+    assert m.id == "claude-opus-4-7"
+    assert m.max_input_tokens == 200_000
+    assert m.reasoning.supported is True
+    assert m.reasoning.shape == "levels"
+    assert m.reasoning.levels == ("low", "medium", "high")
+
+
+def test_claude_sdk_list_models_no_key_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert ClaudeSDKProvider().list_models() == []
+
+
+@responses.activate
+def test_openai_list_models_uses_capability_map(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OpenAI's `/v1/models` response is sparse — capability lookup comes
+    from `_openai_capabilities.capability_for`. Verify gpt-5 + gpt-4o get
+    different shapes (levels vs none)."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    responses.add(
+        responses.GET,
+        "https://api.openai.com/v1/models",
+        json={
+            "data": [
+                {"id": "gpt-5", "owned_by": "openai"},
+                {"id": "gpt-4o-mini", "owned_by": "openai"},
+                {"id": "o3-mini", "owned_by": "openai"},
+            ]
+        },
+        status=200,
+    )
+    models = OpenAIProvider().list_models()
+    by_id = {m.id: m for m in models}
+    assert by_id["gpt-5"].reasoning.shape == "levels"
+    assert by_id["gpt-5"].reasoning.levels == ("low", "medium", "high", "xhigh")
+    assert by_id["gpt-4o-mini"].reasoning.shape == "none"
+    assert by_id["o3-mini"].reasoning.shape == "levels"
+
+
+def test_openai_list_models_no_key_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert OpenAIProvider().list_models() == []
+
+
+@responses.activate
+def test_gemini_list_models_per_family_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """gemini-3 → levels, gemini-2.5-pro → budget(128..32768),
+    gemini-2.5-flash → budget(0..24576), others → none."""
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    responses.add(
+        responses.GET,
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        json={
+            "models": [
+                {
+                    "name": "models/gemini-3-pro",
+                    "displayName": "Gemini 3 Pro",
+                    "inputTokenLimit": 2_000_000,
+                    "outputTokenLimit": 32_000,
+                    "supportedGenerationMethods": ["generateContent"],
+                },
+                {
+                    "name": "models/gemini-2.5-pro",
+                    "supportedGenerationMethods": ["generateContent"],
+                },
+                {
+                    "name": "models/gemini-2.5-flash",
+                    "supportedGenerationMethods": ["generateContent"],
+                },
+                {
+                    "name": "models/gemini-1.5-flash",
+                    "supportedGenerationMethods": ["generateContent"],
+                },
+                # Filtered out — doesn't support generateContent.
+                {
+                    "name": "models/embedding-001",
+                    "supportedGenerationMethods": ["embedContent"],
+                },
+            ]
+        },
+        status=200,
+    )
+    out = GeminiProvider().list_models()
+    by_id = {m.id: m for m in out}
+    assert "embedding-001" not in by_id
+    assert by_id["gemini-3-pro"].reasoning.shape == "levels"
+    assert by_id["gemini-3-pro"].reasoning.levels == (
+        "minimal",
+        "low",
+        "medium",
+        "high",
+    )
+    assert by_id["gemini-2.5-pro"].reasoning.shape == "budget"
+    assert by_id["gemini-2.5-pro"].reasoning.budget_range == (128, 32_768)
+    assert by_id["gemini-2.5-flash"].reasoning.shape == "budget"
+    assert by_id["gemini-2.5-flash"].reasoning.budget_range == (0, 24_576)
+    assert by_id["gemini-1.5-flash"].reasoning.shape == "none"
+
+
+@responses.activate
+def test_openrouter_list_models_no_auth_needed() -> None:
+    """The OpenRouter catalog endpoint is public — no Authorization header
+    sent on the GET."""
+    responses.add(
+        responses.GET,
+        "https://openrouter.ai/api/v1/models",
+        json={
+            "data": [
+                {
+                    "id": "anthropic/claude-sonnet-4-6",
+                    "name": "Claude Sonnet 4.6",
+                    "context_length": 200_000,
+                    "top_provider": {"max_completion_tokens": 8192},
+                    "supported_parameters": ["reasoning", "tools"],
+                },
+                {
+                    "id": "meta-llama/llama-3.3-70b-instruct:free",
+                    "name": "Llama 3.3 70B (free)",
+                    "context_length": 128_000,
+                    "supported_parameters": ["tools"],  # no reasoning
+                },
+            ]
+        },
+        status=200,
+    )
+    out = OpenRouterProvider().list_models()
+    by_id = {m.id: m for m in out}
+    claude = by_id["anthropic/claude-sonnet-4-6"]
+    assert claude.reasoning.supported is True
+    assert claude.reasoning.shape == "levels"
+    assert claude.reasoning.levels == ("low", "medium", "high")
+    assert claude.max_input_tokens == 200_000
+    llama = by_id["meta-llama/llama-3.3-70b-instruct:free"]
+    assert llama.reasoning.supported is False
+    assert llama.reasoning.shape == "none"
+
+
+@responses.activate
+def test_ollama_list_models_detects_thinking_family() -> None:
+    """Known thinking families (deepseek-r1, qwen3, qwq) declare the
+    boolean shape; other locally-pulled models stay shape=none."""
+    responses.add(
+        responses.GET,
+        "http://localhost:11434/api/tags",
+        json={
+            "models": [
+                {"name": "deepseek-r1:14b"},
+                {"name": "qwen3:32b"},
+                {"name": "llama3.2:8b"},
+            ]
+        },
+        status=200,
+    )
+    out = OllamaProvider().list_models()
+    by_id = {m.id: m for m in out}
+    assert by_id["deepseek-r1:14b"].reasoning.shape == "boolean"
+    assert by_id["deepseek-r1:14b"].reasoning.supported is True
+    assert by_id["qwen3:32b"].reasoning.shape == "boolean"
+    assert by_id["llama3.2:8b"].reasoning.shape == "none"
+
+
+def test_claude_cli_list_models_is_hardcoded() -> None:
+    """CLI has no models endpoint — we return a fixed list. Every entry
+    declares the full effort spectrum."""
+    out = ClaudeCLIProvider().list_models()
+    ids = [m.id for m in out]
+    # Verify the four spec'd models are present.
+    assert "opus-4-7" in ids
+    assert "opus-4-6" in ids
+    assert "sonnet-4-6" in ids
+    assert "haiku-4-5" in ids
+    # All entries declare the canonical effort levels.
+    for m in out:
+        assert m.reasoning.supported is True
+        assert m.reasoning.shape == "levels"
+        assert m.reasoning.levels == ("low", "medium", "high", "max", "xhigh")
+
+
+# ---------------------------------------------------------------------------
+# Top-level llm.list_models() — delegates to the named provider, returns []
+# on an unknown name.
+# ---------------------------------------------------------------------------
+
+
+def test_top_level_list_models_unknown_provider() -> None:
+    assert llm_pkg.list_models("definitely-not-a-provider") == []
+
+
+def test_top_level_list_models_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The package-level helper instantiates the named provider and calls
+    its `list_models()`."""
+    from backend.llm.base import ModelInfo, ReasoningCapability
+
+    fake_models = [
+        ModelInfo(
+            id="fake-1",
+            display_name="Fake",
+            max_input_tokens=1024,
+            max_output_tokens=512,
+            reasoning=ReasoningCapability(supported=False, shape="none"),
+        )
+    ]
+    monkeypatch.setattr("backend.llm.gemini.GeminiProvider.list_models", lambda self: fake_models)
+    out = llm_pkg.list_models("gemini")
+    assert out == fake_models
+
+
+# ---------------------------------------------------------------------------
+# reasoning_effort plumbing — config-level → provider-level → request body.
+# ---------------------------------------------------------------------------
+
+
+def test_openai_complete_includes_reasoning_effort_when_model_supports_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end plumbing: a config with reasoning_effort='low' on a
+    capability-mapped model (gpt-5) lands in the chat-completions body
+    as `reasoning_effort: low`."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    captured: dict = {}
+
+    @responses.activate
+    def _run() -> str | None:
+        responses.add(
+            responses.POST,
+            "https://api.openai.com/v1/chat/completions",
+            json={"choices": [{"message": {"content": "ok"}}]},
+            status=200,
+        )
+        p = OpenAIProvider(model="gpt-5", reasoning_effort="low")
+        result = p.complete("hello")
+        # responses 0.25 stores the matched request on the registered match.
+        # responses.calls is a list of (req, resp) tuples — grab body json.
+        captured["body"] = json.loads(responses.calls[0].request.body or "{}")
+        return result
+
+    out = _run()
+    assert out == "ok"
+    assert captured["body"].get("reasoning_effort") == "low"
+
+
+def test_openai_complete_omits_reasoning_effort_when_model_does_not_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """User configured 'low' but is on gpt-4o-mini — capability map says
+    none. The request body must NOT carry reasoning_effort."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    captured: dict = {}
+
+    @responses.activate
+    def _run() -> str | None:
+        responses.add(
+            responses.POST,
+            "https://api.openai.com/v1/chat/completions",
+            json={"choices": [{"message": {"content": "ok"}}]},
+            status=200,
+        )
+        p = OpenAIProvider(model="gpt-4o-mini", reasoning_effort="low")
+        result = p.complete("hello")
+        captured["body"] = json.loads(responses.calls[0].request.body or "{}")
+        return result
+
+    out = _run()
+    assert out == "ok"
+    assert "reasoning_effort" not in captured["body"]
+
+
+def test_openai_score_batch_never_carries_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default policy: scoring loop deliberately omits reasoning_effort
+    even when the user has it set on a supporting model. Inflating
+    bounded-JSON latency 3-10x for marginal accuracy is the bad trade."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    captured: dict = {}
+
+    @responses.activate
+    def _run() -> Any:
+        responses.add(
+            responses.POST,
+            "https://api.openai.com/v1/chat/completions",
+            json={"choices": [{"message": {"content": "[]"}}]},
+            status=200,
+        )
+        p = OpenAIProvider(model="gpt-5", reasoning_effort="high")
+        result = p.score_batch("cv", [{"id": "1", "title": "X", "company": "Y"}])
+        captured["body"] = json.loads(responses.calls[0].request.body or "{}")
+        return result
+
+    _run()
+    assert "reasoning_effort" not in captured["body"]
+
+
+def test_get_provider_forwards_reasoning_effort_from_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`get_provider` reads `reasoning_effort` from the active config and
+    passes it through to the provider constructor."""
+    monkeypatch.setattr(llm_pkg, "_cached", None)
+    monkeypatch.setattr(
+        llm_pkg,
+        "_read_cfg",
+        lambda: {"name": "openai", "model": "gpt-5", "reasoning_effort": "medium"},
+    )
+    p = llm_pkg.get_provider(force=True)
+    assert p is not None
+    assert p.name == "openai"
+    assert getattr(p, "reasoning_effort", None) == "medium"
+    assert getattr(p, "model", None) == "gpt-5"
+
+
+def test_legacy_config_without_model_or_effort_round_trips_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-#114 config (just {name: 'gemini'}) must produce a provider
+    instance whose reasoning_effort is None and whose model is the
+    provider's hardcoded default — i.e. no parameter drift compared to
+    before this branch."""
+    monkeypatch.setattr(llm_pkg, "_cached", None)
+    monkeypatch.setattr(llm_pkg, "_read_cfg", lambda: {"name": "gemini"})
+    p = llm_pkg.get_provider(force=True)
+    assert p is not None
+    assert p.name == "gemini"
+    assert getattr(p, "reasoning_effort", None) is None
+    assert getattr(p, "model", None) == "gemini-2.5-flash"
+
+
+def test_normalize_llm_provider_accepts_string_int_bool_for_effort() -> None:
+    """search._normalize_llm_provider keeps every supported shape: string
+    (levels), int (gemini budget), bool (ollama think)."""
+    from backend.search import _normalize_llm_provider
+
+    fb = {"name": "auto"}
+    for raw, expected in [
+        ({"name": "openai", "reasoning_effort": "low"}, "low"),
+        ({"name": "gemini", "reasoning_effort": 4096}, 4096),
+        ({"name": "ollama", "reasoning_effort": True}, True),
+        ({"name": "ollama", "reasoning_effort": False}, False),
+    ]:
+        out = _normalize_llm_provider(raw, fb)
+        assert out["reasoning_effort"] == expected
+
+
+def test_normalize_llm_provider_drops_unsupported_effort_types() -> None:
+    from backend.search import _normalize_llm_provider
+
+    out = _normalize_llm_provider({"name": "openai", "reasoning_effort": ["low"]}, {"name": "auto"})
+    assert "reasoning_effort" not in out
