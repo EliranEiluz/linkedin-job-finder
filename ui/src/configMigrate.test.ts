@@ -127,6 +127,68 @@ describe('normalizeConfig — llm_provider', () => {
   it('drops non-object providers', () => {
     expect(normalizeConfig({ llm_provider: 'auto' }).llm_provider).toBeUndefined();
   });
+
+  // --- task #114: reasoning_effort shape coverage ----------------------
+
+  it('keeps a string reasoning_effort (levels shape)', () => {
+    const cfg = normalizeConfig({
+      llm_provider: { name: 'openai', model: 'gpt-5', reasoning_effort: 'low' },
+    });
+    expect(cfg.llm_provider?.reasoning_effort).toBe('low');
+  });
+
+  it('keeps a numeric reasoning_effort (gemini budget shape)', () => {
+    const cfg = normalizeConfig({
+      llm_provider: {
+        name: 'gemini',
+        model: 'gemini-2.5-flash',
+        reasoning_effort: 4096,
+      },
+    });
+    expect(cfg.llm_provider?.reasoning_effort).toBe(4096);
+  });
+
+  it('keeps a boolean reasoning_effort (ollama think shape)', () => {
+    const cfg = normalizeConfig({
+      llm_provider: { name: 'ollama', model: 'qwen3:32b', reasoning_effort: true },
+    });
+    expect(cfg.llm_provider?.reasoning_effort).toBe(true);
+  });
+
+  it('drops malformed reasoning_effort types', () => {
+    const cfg = normalizeConfig({
+      llm_provider: { name: 'openai', reasoning_effort: ['low'] },
+    });
+    expect(cfg.llm_provider?.reasoning_effort).toBeUndefined();
+  });
+
+  it('round-trips the {model, reasoning_effort} pair through serialize', () => {
+    const cfg = normalizeConfig({
+      llm_provider: {
+        name: 'openrouter',
+        model: 'anthropic/claude-sonnet-4-6',
+        reasoning_effort: 'high',
+      },
+    });
+    const out = serializeConfig(cfg);
+    expect(out.llm_provider).toEqual({
+      name: 'openrouter',
+      model: 'anthropic/claude-sonnet-4-6',
+      reasoning_effort: 'high',
+    });
+    // And re-normalizing produces the same shape (idempotent round-trip).
+    expect(normalizeConfig(out).llm_provider).toEqual(cfg.llm_provider);
+  });
+
+  it('legacy config without reasoning_effort round-trips unchanged', () => {
+    const cfg = normalizeConfig({
+      llm_provider: { name: 'claude_cli', model: 'sonnet-4-6' },
+    });
+    const out = serializeConfig(cfg);
+    // No reasoning_effort key on the serialized output — keeps the json
+    // minimal and matches pre-#114 behavior exactly.
+    expect((out.llm_provider as Record<string, unknown>).reasoning_effort).toBeUndefined();
+  });
 });
 
 describe('normalizeConfig — default_mode', () => {
