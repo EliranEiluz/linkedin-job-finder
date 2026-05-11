@@ -164,6 +164,39 @@ const sourceChip = (source: Job['source']) => {
 
 const columnHelper = createColumnHelper<Job>();
 
+// Default sort: applied first (asc — open jobs above applied), then the user's
+// three "good defaults" beneath it. Single source of truth shared between the
+// initial-state path (when no localStorage entry exists) and the
+// fallback-from-corrupt-storage path (see `readStoredSort`).
+const DEFAULT_SORTING: SortingState = [
+  { id: 'applied', desc: false },
+  { id: 'priority', desc: true },
+  { id: 'score', desc: true },
+  { id: 'found_at', desc: true },
+];
+
+// Persisted across full page reloads so the user's sort choice survives a
+// browser restart. Scoped to the corpus table (other tables keep their own
+// in-memory sort) and prefixed `corpus_` so the key is greppable.
+const SORT_STORAGE_KEY = 'corpus_jobs_table_sort';
+
+// Read the persisted sort. Always re-prepends the applied pin: if storage is
+// corrupt, unreadable, or someone wrote a sort without an `applied` entry,
+// fall through to DEFAULT_SORTING; if storage is well-formed but missing the
+// pin (e.g. older write before this code shipped), re-attach it.
+const readStoredSort = (): SortingState => {
+  try {
+    const raw = localStorage.getItem(SORT_STORAGE_KEY);
+    if (!raw) return DEFAULT_SORTING;
+    const parsed = JSON.parse(raw) as SortingState;
+    if (!Array.isArray(parsed)) return DEFAULT_SORTING;
+    const withoutPin = parsed.filter((s) => s.id !== 'applied');
+    return [{ id: 'applied', desc: false }, ...withoutPin];
+  } catch {
+    return DEFAULT_SORTING;
+  }
+};
+
 interface Props {
   data: Job[];
   applied: Set<string>;
@@ -295,13 +328,16 @@ export const JobsTable = ({
   // so it stays as the primary key even when the user clicks a different
   // column header. See bug fix 2026-04-23: the previous data-pre-sort was
   // overridden by TanStack's column sort the moment the user re-sorted.
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: 'applied', desc: false },
-    { id: 'priority', desc: true },
-    { id: 'score', desc: true },
-    { id: 'found_at', desc: true },
-  ]);
-  // Wraps setSorting so the applied pin is preserved across user re-sorts.
+  //
+  // Lazy init from localStorage so the user's sort choice survives a full
+  // page reload (closes the "sort resets after marking applied" bug; the
+  // in-data-reload half of that is handled by `autoResetAll: false` on the
+  // useReactTable config below).
+  const [sorting, setSorting] = useState<SortingState>(readStoredSort);
+  // Wraps setSorting so the applied pin is preserved across user re-sorts
+  // AND persists the result to localStorage. Persist failures (Safari
+  // private mode, full quota, disabled storage) silently degrade — the
+  // in-memory sort still works for the current session.
   const setSortingPinned: React.Dispatch<React.SetStateAction<SortingState>> =
     useCallback((updater) => {
       setSorting((prev) => {
@@ -309,7 +345,13 @@ export const JobsTable = ({
           ? (updater)(prev)
           : updater;
         const withoutPin = next.filter((s) => s.id !== 'applied');
-        return [{ id: 'applied', desc: false }, ...withoutPin];
+        const pinned = [{ id: 'applied', desc: false }, ...withoutPin];
+        try {
+          localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(pinned));
+        } catch {
+          // localStorage full or disabled — silently degrade.
+        }
+        return pinned;
       });
     }, []);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
