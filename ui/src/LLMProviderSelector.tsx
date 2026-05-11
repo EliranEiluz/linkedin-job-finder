@@ -8,6 +8,9 @@
 //   - credential input for providers where needs_key=true
 //   - "Test connection" (no-key path) or "Save & test" (key path)
 //   - inline status (✓ / ✗) under the selected provider's panel
+//   - the embedded <LLMModelPicker /> (task #114) wired into the
+//     model-picker slot so the user can override model + effort once a
+//     credential is in place.
 //
 // Does NOT own:
 //   - auto-detect flow (wizard-only; lives in Step1LLM wrapper)
@@ -15,15 +18,11 @@
 //   - config save (the parent decides what to do once a provider tests
 //     green; wizard sets `draft.llm_provider`, the card writes through
 //     the existing `/api/config` save path)
-//
-// Model selection is intentionally NOT here — that's a separate task
-// (#114). A `<div data-slot="model-picker" />` placeholder is left in
-// the selected-provider panel so the model dropdown can slot in later
-// without re-flowing the layout.
 
 import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
-import type { LLMProviderName } from './configTypes';
+import type { LLMProviderName, ReasoningEffort } from './configTypes';
+import { LLMModelPicker } from './LLMModelPicker';
 import {
   LLM_LIST_URL,
   LLM_SAVE_CRED_URL,
@@ -45,10 +44,26 @@ export interface LLMProviderSelectorProps {
   // The wizard passes the draft's current value; the card passes the
   // active config's. Pass undefined to leave nothing selected initially.
   initialProviderName?: LLMProviderName;
+  // Currently-saved model id for the active provider (so the embedded
+  // model picker pre-selects it). Optional; undefined = provider default.
+  initialModel?: string;
+  // Currently-saved reasoning_effort. Shape must match the chosen
+  // model's surface; mismatched types are ignored by the picker and the
+  // backend.
+  initialReasoningEffort?: ReasoningEffort;
   // Called whenever a provider tests green. Parent decides what to do
   // with the change — wizard sets draft + auto-advances; card kicks the
   // parent's "save config" flow.
   onTestSuccess: (name: LLMProviderName) => void;
+  // Called when the user changes the model or effort on the embedded
+  // model picker. The selector forwards both fields together so the
+  // parent can persist a coherent {model, reasoning_effort} pair.
+  // Optional — wizard step doesn't currently wire this through; the
+  // card variant does.
+  onModelChange?: (next: {
+    model: string | undefined;
+    reasoning_effort: ReasoningEffort | undefined;
+  }) => void;
   // Optional callback when the list arrives — wizard uses this to know
   // when its lazy-load completed so it can stop showing a loading banner.
   onProvidersLoaded?: (providers: LLMProvider[]) => void;
@@ -62,7 +77,10 @@ export interface LLMProviderSelectorProps {
 // llmApi.ts so any future move is a one-line change.
 export const LLMProviderSelector = ({
   initialProviderName,
+  initialModel,
+  initialReasoningEffort,
   onTestSuccess,
+  onModelChange,
   onProvidersLoaded,
   clearStatusOnSuccess = false,
 }: LLMProviderSelectorProps) => {
@@ -72,6 +90,14 @@ export const LLMProviderSelector = ({
   const [selected, setSelected] = useState<LLMProvider | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [testState, setTestState] = useState<TestState>({ kind: 'idle' });
+  // Local mirror of model + effort so the embedded picker can pre-fill
+  // from `initialModel` / `initialReasoningEffort` and stay in sync
+  // with the parent on change. The actual persistence path lives in
+  // the parent (via onModelChange).
+  const [modelValue, setModelValue] = useState<string | undefined>(initialModel);
+  const [effortValue, setEffortValue] = useState<ReasoningEffort | undefined>(
+    initialReasoningEffort,
+  );
 
   // Fetch the provider catalog once on mount. Same endpoint Step1LLM
   // used; the catalog is small and stable.
@@ -118,7 +144,28 @@ export const LLMProviderSelector = ({
     setSelected(p);
     setTestState({ kind: 'idle' });
     setApiKey('');
-  }, []);
+    // Switching provider invalidates the previously-chosen model + effort
+    // — different providers have disjoint model catalogs.
+    if (p.name !== initialProviderName) {
+      setModelValue(undefined);
+      setEffortValue(undefined);
+    }
+  }, [initialProviderName]);
+
+  // Forward model + effort changes from the embedded picker. We update
+  // local state first so the picker's controlled inputs stay responsive,
+  // then bubble up so the parent can persist via its own save path.
+  const handleModelChange = useCallback(
+    (next: {
+      model: string | undefined;
+      reasoning_effort: ReasoningEffort | undefined;
+    }) => {
+      setModelValue(next.model);
+      setEffortValue(next.reasoning_effort);
+      onModelChange?.(next);
+    },
+    [onModelChange],
+  );
 
   // No-key path: hit /api/llm/test directly. claude_cli + ollama both
   // take this branch (needs_key=false). On success we surface the
@@ -250,10 +297,21 @@ export const LLMProviderSelector = ({
         <div className="mb-2 rounded border border-slate-200 bg-slate-50 p-3">
           <div className="mb-2 text-sm font-semibold text-slate-800">{selected.label}</div>
 
-          {/* Reserved slot for the model dropdown — task #114 will wire
-              it. Keeping the placeholder so the layout doesn't reflow
-              when the dropdown lands. */}
-          <div data-slot="model-picker" />
+          {/* Model + reasoning-effort picker (task #114). Gated on the
+              credential being in place — for needs_key providers we wait
+              until the user has tested green at least once; keyless
+              providers (claude_cli, ollama) show the picker straight
+              away. The data-slot attribute is preserved on the wrapper
+              for legacy tests that look it up. */}
+          <div data-slot="model-picker">
+            <LLMModelPicker
+              provider={selected.name}
+              value={modelValue}
+              reasoningEffort={effortValue}
+              onChange={handleModelChange}
+              enabled={!selected.needs_key || testState.kind === 'ok'}
+            />
+          </div>
 
           {selected.needs_key ? (
             <div className="space-y-2">

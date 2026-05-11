@@ -121,6 +121,45 @@ def test_llm_save_credential_provider_without_env_var(run_ctl, tmp_path: Path) -
     assert "does not need a key" in out["error"]
 
 
+def test_llm_models_unknown_provider_returns_empty_list(run_ctl, tmp_path: Path) -> None:  # noqa: ARG001
+    """Unknown provider names go through llm.list_models() which returns []
+    — the ctl envelope still reports ok=true with an empty models list.
+    The picker UI treats an empty array as "no models surfaced"."""
+    rc, out, _err = run_ctl("llm_ctl.py", ["models", "definitely-not-a-real-provider"])
+    assert rc == 0
+    assert isinstance(out, dict)
+    assert out["ok"] is True
+    assert out["models"] == []
+
+
+def test_llm_models_missing_provider_arg_errors(run_ctl, tmp_path: Path) -> None:  # noqa: ARG001
+    """The positional `provider` is optional in argparse but the handler
+    explicitly errors if it ends up empty. Catches a degenerate caller
+    that forgot to pass it."""
+    rc, out, _err = run_ctl("llm_ctl.py", ["models"])
+    assert rc == 1
+    assert isinstance(out, dict)
+    assert "provider name required" in out["error"]
+
+
+def test_llm_models_claude_cli_returns_hardcoded_catalog(run_ctl, tmp_path: Path) -> None:  # noqa: ARG001
+    """claude_cli is the only provider whose list_models() works without
+    any transport — verify the ctl envelope ferries it through."""
+    rc, out, _err = run_ctl("llm_ctl.py", ["models", "claude_cli"])
+    assert rc == 0
+    assert isinstance(out, dict)
+    assert out["ok"] is True
+    assert out["provider"] == "claude_cli"
+    ids = [m["id"] for m in out["models"]]
+    assert "opus-4-7" in ids
+    assert "sonnet-4-6" in ids
+    # Every entry carries a reasoning block with the levels shape.
+    for m in out["models"]:
+        assert m["reasoning"]["shape"] == "levels"
+        assert m["reasoning"]["supported"] is True
+        assert "levels" in m["reasoning"]
+
+
 def test_llm_test_unknown_provider_returns_clean_error(run_ctl, tmp_path: Path) -> None:  # noqa: ARG001
     """`test` with a name that's not in the registry — fast-path that
     doesn't trip the dev-machine's real `claude` CLI / API keys. The

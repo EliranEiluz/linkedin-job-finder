@@ -12,7 +12,11 @@
 
 import { useCallback, useState } from 'react';
 import clsx from 'clsx';
-import type { LLMProviderName, LLMProviderConfig } from './configTypes';
+import type {
+  LLMProviderName,
+  LLMProviderConfig,
+  ReasoningEffort,
+} from './configTypes';
 import { LLMProviderSelector } from './LLMProviderSelector';
 
 // Friendly labels for the header chip. Kept here (not in the selector)
@@ -51,15 +55,43 @@ export const LLMProviderCard = ({ current, onChange }: LLMProviderCardProps) => 
   const handleTestSuccess = useCallback(
     (name: LLMProviderName) => {
       setSavedName(name);
-      // model is intentionally NOT touched here — task #114 (model
-      // selection) will revisit this. For now we keep whatever model was
-      // on the previous LLMProviderConfig if the name matches, otherwise
-      // drop to provider default (undefined).
+      // Preserve the saved model + effort when the user re-tests the SAME
+      // provider — they're explicitly verifying their existing config.
+      // Switching to a different provider drops both fields to the new
+      // provider's defaults (undefined → backend picks its own default).
+      // The embedded model picker can still update them afterwards via
+      // handleModelChange, below.
       const next: LLMProviderConfig =
-        current?.name === name && current.model
-          ? { name, model: current.model }
+        current?.name === name
+          ? {
+              name,
+              ...(current.model ? { model: current.model } : {}),
+              ...(current.reasoning_effort !== undefined
+                ? { reasoning_effort: current.reasoning_effort }
+                : {}),
+            }
           : { name };
       onChange(next);
+    },
+    [current, onChange],
+  );
+
+  // Forward model + effort changes from the embedded picker through to
+  // the parent's save path. Selector-level model swaps fire after the
+  // user has already tested green; we rebuild the LLMProviderConfig from
+  // the latest `current.name` (still authoritative) plus the new fields.
+  const handleModelChange = useCallback(
+    (next: {
+      model: string | undefined;
+      reasoning_effort: ReasoningEffort | undefined;
+    }) => {
+      const baseName: LLMProviderName = current?.name ?? 'auto';
+      const cfg: LLMProviderConfig = { name: baseName };
+      if (next.model) cfg.model = next.model;
+      if (next.reasoning_effort !== undefined) {
+        cfg.reasoning_effort = next.reasoning_effort;
+      }
+      onChange(cfg);
     },
     [current, onChange],
   );
@@ -89,7 +121,10 @@ export const LLMProviderCard = ({ current, onChange }: LLMProviderCardProps) => 
 
       <LLMProviderSelector
         initialProviderName={current?.name}
+        initialModel={current?.model}
+        initialReasoningEffort={current?.reasoning_effort}
         onTestSuccess={handleTestSuccess}
+        onModelChange={handleModelChange}
       />
 
       {savedName && (

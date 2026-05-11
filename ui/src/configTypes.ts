@@ -17,9 +17,20 @@ export type LLMProviderName =
   | 'openrouter'
   | 'ollama';
 
+// Reasoning effort can take three shapes depending on the model's surface
+// (see backend/llm/base.py:ReasoningCapability):
+//   - string for "levels" shape (Anthropic, OpenAI, OpenRouter, claude_cli)
+//   - number for "budget" shape (Gemini 2.5 family thinkingBudget)
+//   - boolean for "boolean" shape (Ollama thinking models)
+//   - null / undefined = use provider default
+// The configMigrate normalizer accepts any of the three; the picker
+// emits a value matched to the chosen model's declared shape.
+export type ReasoningEffort = string | number | boolean | null;
+
 export interface LLMProviderConfig {
   name: LLMProviderName;
   model?: string; // optional — provider has a sensible default if omitted
+  reasoning_effort?: ReasoningEffort;
 }
 
 // Post-scoring corpus filter (issue #117). Both null = filter disabled =
@@ -141,6 +152,7 @@ export const configsEqual = (a: CrawlerConfig, b: CrawlerConfig): boolean => {
   const bp = b.llm_provider;
   if ((ap?.name ?? null) !== (bp?.name ?? null)) return false;
   if ((ap?.model ?? null) !== (bp?.model ?? null)) return false;
+  if ((ap?.reasoning_effort ?? null) !== (bp?.reasoning_effort ?? null)) return false;
   if ((a.default_mode ?? null) !== (b.default_mode ?? null)) return false;
   const af = a.corpus_filter ?? { min_fit: null, min_score: null };
   const bf = b.corpus_filter ?? { min_fit: null, min_score: null };

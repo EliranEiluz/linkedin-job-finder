@@ -69,6 +69,22 @@ const normalizeLLMProvider = (v: unknown): LLMProviderConfig | undefined => {
   if (typeof r.model === 'string' && r.model.trim()) {
     out.model = r.model.trim();
   }
+  // reasoning_effort (#114) is one of:
+  //   - string   ("low"/"medium"/"high"/"max"/"xhigh"/"off")
+  //   - number   (gemini-2.5 thinkingBudget; -1 means "dynamic")
+  //   - boolean  (ollama think flag)
+  //   - missing  (provider default)
+  // Anything else is dropped silently so a hand-edited config doesn't
+  // crash the load — same behavior the backend's _normalize_llm_provider
+  // gives.
+  const eff = r.reasoning_effort;
+  if (typeof eff === 'string' && eff.trim()) {
+    out.reasoning_effort = eff.trim();
+  } else if (typeof eff === 'boolean') {
+    out.reasoning_effort = eff;
+  } else if (typeof eff === 'number' && Number.isFinite(eff)) {
+    out.reasoning_effort = eff;
+  }
   return out;
 };
 
@@ -300,6 +316,12 @@ export const serializeConfig = (cfg: CrawlerConfig): Record<string, unknown> => 
   if (cfg.llm_provider?.name) {
     const lp: Record<string, unknown> = { name: cfg.llm_provider.name };
     if (cfg.llm_provider.model) lp.model = cfg.llm_provider.model;
+    // null is the explicit "use provider default" signal — round-trip
+    // it for transparency. undefined means the user never touched the
+    // field; we omit it so the json stays minimal.
+    if (cfg.llm_provider.reasoning_effort !== undefined) {
+      lp.reasoning_effort = cfg.llm_provider.reasoning_effort;
+    }
     out.llm_provider = lp;
   }
   if (cfg.default_mode === 'guest' || cfg.default_mode === 'loggedin') {

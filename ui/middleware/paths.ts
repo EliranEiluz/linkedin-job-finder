@@ -53,6 +53,12 @@ export const PREFLIGHT_TIMEOUT_MS = 30_000;
 export const LLM_LIST_TIMEOUT_MS = 10_000;
 export const LLM_SAVE_TIMEOUT_MS = 10_000;
 export const LLM_TEST_TIMEOUT_MS = 30_000;
+// /api/llm/models hits the chosen provider's catalog endpoint —
+// claude_sdk + openai + gemini + openrouter make a single HTTP call;
+// ollama hits the local /api/tags; claude_cli is hardcoded. 20s gives
+// plenty of slack for a sluggish remote catalog without leaving the
+// user staring at a spinner.
+export const LLM_MODELS_TIMEOUT_MS = 20_000;
 export const CV_EXTRACT_TIMEOUT_MS = 30_000;
 // Mirrors MAX_BYTES in cv_extract_ctl.py.
 export const CV_EXTRACT_MAX_BYTES = 10 * 1024 * 1024;
