@@ -564,7 +564,12 @@ def test_claude_batch_score_returns_none_when_provider_returns_none(
 
 
 def test_score_jobs_in_batches_no_jobs_returns_none() -> None:
-    assert search.score_jobs_in_batches([], "cv") is None
+    # Empty job list: scored_anything is None, all counters are 0.
+    scored, filtered_out, completed, failed = search.score_jobs_in_batches([], "cv")
+    assert scored is None
+    assert filtered_out == 0
+    assert completed == 0
+    assert failed == 0
 
 
 def test_score_jobs_in_batches_uses_batch_size(
@@ -580,9 +585,13 @@ def test_score_jobs_in_batches_uses_batch_size(
 
     monkeypatch.setattr(search, "claude_batch_score", _fake)
     jobs = [{"id": str(i), "_desc": "desc"} for i in range(17)]
-    result = search.score_jobs_in_batches(jobs, "cv text")
-    assert result is True
-    assert calls == [8, 8, 1]
+    scored, _filtered_out, completed, failed = search.score_jobs_in_batches(jobs, "cv text")
+    assert scored is True
+    assert completed == 3
+    assert failed == 0
+    # ThreadPoolExecutor.as_completed yields in finish-order, not submit-order,
+    # so the batches-of-8/8/1 may arrive in any sequence — sort to assert size.
+    assert sorted(calls) == [1, 8, 8]
     # All jobs scored, transient _desc cleaned up
     for j in jobs:
         assert j["fit"] == "ok"
@@ -598,8 +607,10 @@ def test_score_jobs_in_batches_falls_back_to_regex_per_batch(
     monkeypatch.setattr(search, "FIT_POSITIVE", [])
     monkeypatch.setattr(search, "FIT_NEGATIVE", [])
     jobs = [{"id": "a", "_desc": "x"}, {"id": "b", "_desc": "y"}]
-    result = search.score_jobs_in_batches(jobs, "cv text")
-    assert result is False  # never scored anything via Claude
+    scored, _filtered_out, completed, failed = search.score_jobs_in_batches(jobs, "cv text")
+    assert scored is False  # never scored anything via Claude
+    assert completed == 1
+    assert failed == 0
     for j in jobs:
         assert j["scored_by"] == "regex"
         assert j["fit"] == "ok"
@@ -1103,8 +1114,15 @@ def test_score_jobs_in_batches_continues_when_one_batch_fails_repeatedly(
     # Skip the real backoff sleep so the test runs fast.
     monkeypatch.setattr(search.time, "sleep", lambda s: None)
 
-    out = search.score_jobs_in_batches(jobs, "cv")
-    assert out is True  # at least one batch succeeded
+    scored, _filtered_out, completed, failed = search.score_jobs_in_batches(jobs, "cv")
+    assert scored is True  # at least one batch succeeded
+    # `_retry_score_batch` swallows the ConnectionError per its retry envelope
+    # and returns None — so the bad batch is "completed" from the executor's
+    # POV (no exception escaped) but its scoring map is None, hence regex
+    # fallback. `batches_failed` stays at 0 for this shape; it would only
+    # increment if something escaped the retry envelope.
+    assert completed == 3
+    assert failed == 0
     # Bad batch -> regex fallback applied.
     bad_batch = jobs[bad_idx * search.BATCH_SIZE : (bad_idx + 1) * search.BATCH_SIZE]
     for j in bad_batch:
