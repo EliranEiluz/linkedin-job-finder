@@ -11,6 +11,7 @@ import {
 import { normalizeConfig, serializeConfig } from './configMigrate';
 import { ScrapeRunPanel } from './ScrapeRunPanel';
 import { SchedulerCard } from './SchedulerCard';
+import { LLMProviderCard } from './LLMProviderCard';
 import { RemoteAccessCard } from './RemoteAccessCard';
 import { CategoryManager } from './CategoryManager';
 import { ChipInput } from './ChipInput';
@@ -478,6 +479,18 @@ export const ConfigPage = () => {
           <ScrapeRunPanel />
 
           <SchedulerCard />
+
+          {/* LLM provider card — lets the user change the active LLM
+              after onboarding. The Step1LLM wizard step is the same UX,
+              but the wizard variant adds auto-detect + Back/Continue
+              navigation around the shared <LLMProviderSelector />. Here
+              we just write `llm_provider` straight through saveConfig so
+              the change takes effect on the next scraper run without
+              forcing the user to click the bottom "Save" bar. */}
+          <LLMProviderCard
+            current={draft.llm_provider}
+            onChange={(next) => { void saveConfig({ ...draft, llm_provider: next }); }}
+          />
 
           <RemoteAccessCard />
 
