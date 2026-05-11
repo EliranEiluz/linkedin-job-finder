@@ -2352,7 +2352,12 @@ def _retry_score_batch(
     return None
 
 
-def score_jobs_in_batches(jobs: list[dict], cv_text: str) -> bool | None:
+def score_jobs_in_batches(
+    jobs: list[dict],
+    cv_text: str,
+    *,
+    persist_per_batch: bool = False,
+) -> tuple[bool | None, int, int, int]:
     """Send jobs to the active LLM provider in parallel batches. Mutates each
     job in-place. Falls back to regex for any job the LLM didn't score.
 
@@ -2364,9 +2369,34 @@ def score_jobs_in_batches(jobs: list[dict], cv_text: str) -> bool | None:
     Each batch's underlying call is wrapped in retry-with-backoff
     (`_retry_score_batch`) so transient rate-limit / 5xx / network errors
     don't kill the whole run — at worst that batch silently degrades to
-    regex fallback after exhausting its retry budget."""
+    regex fallback after exhausting its retry budget.
+
+    When `persist_per_batch=True`, each completed batch is written to
+    seen_jobs.json + results.json (with the post-scoring corpus filter
+    applied) immediately, as the future yields. This gives crash safety
+    (a run that dies at batch 3/8 preserves the first 3 batches' work) and
+    live UI progress (the run-from-UI panel polls corpus for live counts;
+    users see jobs land in waves instead of one big drop at end of run).
+    Default `False` keeps the in-memory-only behavior for callers that
+    manage their own atomic persistence (e.g. corpus_ctl rescore).
+
+    Returns a 4-tuple:
+      (scored_anything, filtered_out_total, batches_completed, batches_failed)
+
+      - scored_anything: True if at least one batch returned a Claude
+        scoring map, False if every batch fell back to regex, None when
+        the input job list was empty.
+      - filtered_out_total: number of jobs that were scored but dropped
+        from results.json by `_passes_corpus_filter`. Always 0 when
+        `persist_per_batch=False` (the filter only runs in the persist
+        path — non-persisting callers have no corpus write to gate).
+      - batches_completed: futures whose `.result()` returned normally.
+      - batches_failed: futures whose `.result()` re-raised (something
+        escaped `_retry_score_batch`'s envelope — rare). Failed batches
+        are skipped; the run keeps going so other batches still land.
+    """
     if not jobs:
-        return None
+        return None, 0, 0, 0
 
     total_batches = (len(jobs) + BATCH_SIZE - 1) // BATCH_SIZE
     batches: list[tuple[int, list[dict]]] = []
@@ -2374,10 +2404,9 @@ def score_jobs_in_batches(jobs: list[dict], cv_text: str) -> bool | None:
         batches.append((i // BATCH_SIZE + 1, jobs[i : i + BATCH_SIZE]))
 
     scored_anything = False
-    # `score_map_by_batch[batch_num]` -> (batch, scored_map_or_None).
-    # We collect first, apply scoring after all futures settle, so an
-    # interleaved print order (parallel) doesn't make us miss a batch.
-    results: dict[int, tuple[list[dict], dict | None]] = {}
+    filtered_out_total = 0
+    batches_completed = 0
+    batches_failed = 0
 
     def _run_one(batch_num: int, batch: list[dict]) -> tuple[int, list[dict], dict | None]:
         print(f"  Scoring batch {batch_num}/{total_batches} ({len(batch)} jobs)...")
@@ -2386,25 +2415,12 @@ def score_jobs_in_batches(jobs: list[dict], cv_text: str) -> bool | None:
         scored_map = _retry_score_batch(cv_text, batch)
         return batch_num, batch, scored_map
 
-    # ThreadPoolExecutor is fine for both subprocess-based providers
-    # (claude_cli) and HTTP/SDK-based providers (everything else). The GIL
-    # is released during subprocess.run / urllib reads, so we get real
-    # parallelism for the wall-clock-bound wait on the LLM round-trip.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=_BATCH_MAX_WORKERS) as executor:
-        futures = [executor.submit(_run_one, num, b) for num, b in batches]
-        for fut in concurrent.futures.as_completed(futures):
-            try:
-                batch_num, batch, scored_map = fut.result()
-            except Exception as e:
-                # _retry_score_batch already swallows and returns None on
-                # provider failure; reaching here means something deeply
-                # unexpected escaped. Treat the batch as unscored and keep
-                # the run alive — regex fallback still runs below.
-                print(f"  Batch failed unexpectedly: {type(e).__name__}: {e}")
-                continue
-            results[batch_num] = (batch, scored_map)
-
-    for _batch_num, (batch, scored_map) in results.items():
+    def _finalize_batch(batch: list[dict], scored_map: dict | None) -> None:
+        """Apply claude scoring or regex fallback to every job in this batch,
+        derive `hot`, and (when persisting) write to seen + results under
+        fcntl lock. Idempotent — same job dict passing through twice would
+        produce the same on-disk row."""
+        nonlocal scored_anything, filtered_out_total
         if scored_map:
             scored_anything = True
             for job in batch:
@@ -2417,11 +2433,67 @@ def score_jobs_in_batches(jobs: list[dict], cv_text: str) -> bool | None:
             for job in batch:
                 _apply_regex_fallback(job, job.get("_desc", ""))
 
+        if not persist_per_batch:
+            return
+
+        # Per-batch persistence path. Compute hot up-front so on-disk rows
+        # already carry it (same single-source-of-truth invariant as the
+        # post-scoring Stage 4 in _enrich_descriptions). Then apply the
+        # corpus filter — passing rows go to results.json; every scored id
+        # in this batch goes to seen_jobs.json regardless of filter outcome.
+        for job in batch:
+            job["hot"] = _compute_hot(job)
+        passes = [j for j in batch if _passes_corpus_filter(j)]
+        filtered_out_total += len(batch) - len(passes)
+        # save_seen merges under fcntl lock — load_seen() before save_seen()
+        # keeps the on-disk set monotonic even if a parallel scraper process
+        # is also writing.
+        seen_now = load_seen()
+        for job in batch:
+            seen_now.add(job["id"])
+        save_seen(seen_now)
+        if passes:
+            save_results_merge(passes)
+
+    # ThreadPoolExecutor is fine for both subprocess-based providers
+    # (claude_cli) and HTTP/SDK-based providers (everything else). The GIL
+    # is released during subprocess.run / urllib reads, so we get real
+    # parallelism for the wall-clock-bound wait on the LLM round-trip.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_BATCH_MAX_WORKERS) as executor:
+        futures = [executor.submit(_run_one, num, b) for num, b in batches]
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                _batch_num, batch, scored_map = fut.result()
+            except Exception as e:
+                # _retry_score_batch already swallows and returns None on
+                # provider failure; reaching here means something deeply
+                # unexpected escaped. Increment the failed counter so the
+                # run history captures it, and keep the loop alive — other
+                # batches still write through.
+                print(f"  Batch failed unexpectedly: {type(e).__name__}: {e}", file=sys.stderr)
+                batches_failed += 1
+                continue
+            try:
+                _finalize_batch(batch, scored_map)
+            except Exception as e:
+                # `_finalize_batch` shouldn't raise — scoring helpers swallow
+                # their own errors and the merge writers wrap fcntl. But disk
+                # full / permission flips / a parallel writer's lockfile gone
+                # rogue could still surface here. Don't let one bad write
+                # take down the rest of the run.
+                print(
+                    f"  Batch finalize failed: {type(e).__name__}: {e}",
+                    file=sys.stderr,
+                )
+                batches_failed += 1
+                continue
+            batches_completed += 1
+
     # Clean up transient desc fields.
     for job in jobs:
         job.pop("_desc", None)
 
-    return scored_anything
+    return scored_anything, filtered_out_total, batches_completed, batches_failed
 
 
 def print_job(job: dict, label: str = "") -> None:
@@ -2588,6 +2660,7 @@ def _enrich_descriptions(
     cv_text: str,
     diagnosis_counts: dict[str, int],
     fetch_one: FetchOneFn,
+    scoring_stats: dict[str, int] | None = None,
 ) -> int:
     """Shared enrichment stage. `fetch_one(job)` returns (text_lower, diag)
     for one job. Returns prefilter_skipped count.
@@ -2595,9 +2668,16 @@ def _enrich_descriptions(
     Composes `process_one_job` for the per-row title pre-filter + regex
     fallback steps, but keeps the run-level batched description-fetch
     throttling and the run-level batched Claude scoring intact for
-    throughput. Persistence is deferred to the scraper main loop
-    (`save_results_merge(new_jobs)` after the enrich pass), so all calls
-    here pass `persist=False`.
+    throughput. `score_jobs_in_batches` writes each completed batch to
+    seen_jobs.json + results.json (under fcntl lock, with the corpus
+    filter applied) as the parallel futures yield — so a run that crashes
+    mid-scoring preserves the batches that finished before the crash, and
+    the UI's progress panel sees jobs land incrementally.
+
+    `scoring_stats` (when provided) is mutated in-place with the per-batch
+    accumulators `score_jobs_in_batches` returns: `filtered_out`,
+    `batches_completed`, `batches_failed`. main() reads them for the
+    run_history entry.
     """
     prefilter_skipped = 0
     if args.no_enrich or not new_jobs:
@@ -2655,10 +2735,23 @@ def _enrich_descriptions(
     )
 
     # Stage 3: Claude batch scoring (preserved at the run level for throughput).
+    # Per-batch persistence — each completed batch writes to seen + corpus
+    # immediately, so a crash mid-scoring preserves earlier batches' work
+    # and the UI panel sees jobs land in waves.
     to_score = [j for j in to_fetch if j.get("_desc")]
     if to_score:
         print(f"\nScoring {len(to_score)} jobs via Claude in batches of {BATCH_SIZE}...")
-        score_jobs_in_batches(to_score, cv_text)
+        _scored, filtered_out, batches_completed, batches_failed = score_jobs_in_batches(
+            to_score, cv_text, persist_per_batch=True
+        )
+        if scoring_stats is not None:
+            scoring_stats["filtered_out"] = scoring_stats.get("filtered_out", 0) + filtered_out
+            scoring_stats["batches_completed"] = (
+                scoring_stats.get("batches_completed", 0) + batches_completed
+            )
+            scoring_stats["batches_failed"] = (
+                scoring_stats.get("batches_failed", 0) + batches_failed
+            )
 
     # Stage 4: regex fallback for anything still unscored. Routed through
     # process_one_job(already_scored=True, persist=False) so the helper is
@@ -2689,6 +2782,7 @@ def _run_loggedin_pipeline(
     cv_text: str,
     per_query_stats: list[dict],
     run_errors: list[dict],
+    scoring_stats: dict[str, int] | None = None,
 ) -> tuple[int, dict[str, int]]:
     """Original Playwright-driven path — needs linkedin_session.json."""
     # Defer playwright import so guest mode can run on installs without it.
@@ -2817,7 +2911,7 @@ def _run_loggedin_pipeline(
             return fetch_description(page, job["url"], job["id"])
 
         prefilter_skipped = _enrich_descriptions(
-            args, new_jobs, cv_text, diagnosis_counts, _fetch_one
+            args, new_jobs, cv_text, diagnosis_counts, _fetch_one, scoring_stats=scoring_stats
         )
 
         ctx.close()
@@ -2836,6 +2930,7 @@ def _run_guest_pipeline(
     cv_text: str,
     per_query_stats: list[dict],
     run_errors: list[dict],
+    scoring_stats: dict[str, int] | None = None,
 ) -> tuple[int, dict[str, int]]:
     """Unauthenticated HTTP path — no browser, no session needed."""
     diagnosis_counts = {"ok": 0, "empty": 0, "error": 0}
@@ -2879,7 +2974,9 @@ def _run_guest_pipeline(
     def _fetch_one(job: dict) -> tuple[str, str]:
         return fetch_description_guest(session, job["id"])
 
-    prefilter_skipped = _enrich_descriptions(args, new_jobs, cv_text, diagnosis_counts, _fetch_one)
+    prefilter_skipped = _enrich_descriptions(
+        args, new_jobs, cv_text, diagnosis_counts, _fetch_one, scoring_stats=scoring_stats
+    )
     return prefilter_skipped, diagnosis_counts
 
 
@@ -3086,6 +3183,8 @@ def _record_run_history(
     started_perf: float,
     max_pages: int,
     filtered_out: int = 0,
+    batches_completed: int = 0,
+    batches_failed: int = 0,
 ) -> None:
     """Append a run record to run_history.json so the UI's Run History page
     can chart it. Best-effort — failures are logged, never re-raised.
@@ -3093,6 +3192,11 @@ def _record_run_history(
     `filtered_out` is the count of jobs that were scored this run but
     dropped from results.json by `_passes_corpus_filter`. 0 (or absent
     on older history rows) = filter disabled or nothing was dropped.
+
+    `batches_completed` / `batches_failed` are per-batch outcome counts
+    from `score_jobs_in_batches` — useful for diagnosing partial-failure
+    runs ("we wrote 5/8 batches; 3 batches died after retries"). 0 (or
+    absent on older history rows) when the run never reached scoring.
     """
     try:
         ended_at = datetime.now()
@@ -3131,6 +3235,11 @@ def _record_run_history(
                 # results.json by the post-scoring corpus filter. 0
                 # when the filter is off (default).
                 "filtered_out": filtered_out,
+                # Per-batch outcome counts from `score_jobs_in_batches`.
+                # `batches_failed` > 0 surfaces partial-success runs the
+                # UI's Run History page can flag in red.
+                "batches_completed": batches_completed,
+                "batches_failed": batches_failed,
             },
             "fit_distribution": fit_distribution,
             "errors": run_errors,
@@ -3186,6 +3295,15 @@ def main() -> None:
     per_query_stats: list[dict] = []
     run_errors: list[dict] = []
     diagnosis_counts = {"ok": 0, "empty-dom": 0, "authwall": 0, "nav-failed": 0, "error": 0}
+    # Per-batch scoring accumulators — `_enrich_descriptions` (via
+    # `score_jobs_in_batches(persist_per_batch=True)`) writes scored
+    # batches to seen + corpus as they complete, and updates these
+    # counters in-place. We read them when writing run_history below.
+    scoring_stats: dict[str, int] = {
+        "filtered_out": 0,
+        "batches_completed": 0,
+        "batches_failed": 0,
+    }
 
     # Both pipelines return (prefilter_skipped, diagnosis_counts). Only the
     # latter is read downstream — the per-row title-filter count is already
@@ -3202,6 +3320,7 @@ def main() -> None:
         cv_text=cv_text,
         per_query_stats=per_query_stats,
         run_errors=run_errors,
+        scoring_stats=scoring_stats,
     )
 
     # ===== POST-PROCESSING (shared by both modes) =====
@@ -3224,24 +3343,29 @@ def main() -> None:
     display_jobs.sort(key=_sort_key)
 
     all_results.extend(new_jobs)
+    # `score_jobs_in_batches(persist_per_batch=True)` already wrote every
+    # scored batch's IDs to seen_jobs.json + passing rows to results.json
+    # (under fcntl lock) as their futures completed. The end-of-run writes
+    # below cover the IDs that NEVER reached scoring: title-filtered jobs
+    # (Stage 1 of `_enrich_descriptions`) and failed-fetch jobs that the
+    # batch list excluded. Both `save_seen` and `save_results_merge` are
+    # idempotent merges, so the no-op overlap with already-persisted batch
+    # rows is harmless.
     save_seen(seen)
-    # Pass only new_jobs — save_results_merge dedups against the on-disk corpus
-    # under fcntl lock, which makes parallel --mode=guest + --mode=loggedin runs
-    # safe (otherwise the second writer would overwrite the first's additions).
-    #
-    # Corpus filter (issue #117): post-scoring gate that drops low-fit/score
-    # jobs from results.json while leaving them in seen_jobs.json (so they
-    # never burn another LLM call on the next run). Filter is disabled by
-    # default; users opt in via the Crawler Config "Corpus filter" card.
+    # Corpus filter (issue #117): jobs that were scored but failed the gate
+    # are already absent from results.json (they were filtered per-batch
+    # inside `score_jobs_in_batches`). At this point the only new rows that
+    # could still be missing are title-filtered + failed-fetch rows; the
+    # filter is re-applied here so a strict filter still excludes them.
     # Manual-add (corpus_ctl.py add-manual) is intentionally bypassed — it
     # goes through process_one_job's own persist=True path, not this loop.
     corpus_passes = [j for j in new_jobs if _passes_corpus_filter(j)]
-    filtered_out_count = len(new_jobs) - len(corpus_passes)
     save_results_merge(corpus_passes)
+    filtered_out_count = scoring_stats.get("filtered_out", 0)
     if filtered_out_count:
         print(
-            f"Corpus filter: kept {len(corpus_passes)}/{len(new_jobs)} new jobs "
-            f"(dropped {filtered_out_count} below threshold)."
+            f"Corpus filter: dropped {filtered_out_count} scored jobs below threshold "
+            f"(per-batch). Total new rows in corpus this run: {len(corpus_passes)}."
         )
 
     # Record the IDs that were new this run so send_digest.py can pick them up.
@@ -3271,6 +3395,8 @@ def main() -> None:
         started_perf=started_perf,
         max_pages=max_pages,
         filtered_out=filtered_out_count,
+        batches_completed=scoring_stats.get("batches_completed", 0),
+        batches_failed=scoring_stats.get("batches_failed", 0),
     )
 
 
