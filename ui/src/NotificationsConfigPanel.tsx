@@ -117,8 +117,27 @@ export const NotificationsConfigPanel = forwardRef<
   ref,
 ) {
   // Multi-select per channel. Both can be on; both off = local-only fallback.
+  //
+  // Pre-#117 the "enabled" checkbox doubled as the show/hide chevron for
+  // each channel's form — un-tick to hide the form, re-tick to see it.
+  // That conflated two ideas: "I don't want this channel" vs "I'm just
+  // collapsing the form for now". #117 decouples them:
+  //
+  //   emailEnabled / telegramEnabled
+  //       → semantic on/off. Drives saveEnabledChannels() and which
+  //         channels the digest actually fires through.
+  //
+  //   emailExpanded / telegramExpanded
+  //       → purely visual. Drives whether the credentials form is
+  //         shown. Toggled by clicking anywhere on the channel header.
+  //
+  // Default expanded-state mirrors enabled-state at mount (so configured
+  // channels are visible right away), but the two diverge as soon as
+  // the user toggles either independently.
   const [emailEnabled, setEmailEnabled] = useState(false);
   const [telegramEnabled, setTelegramEnabled] = useState(false);
+  const [emailExpanded, setEmailExpanded] = useState(false);
+  const [telegramExpanded, setTelegramExpanded] = useState(false);
 
   // SMTP form state.
   const [presetId, setPresetId] = useState<string>('gmail');
@@ -151,6 +170,10 @@ export const NotificationsConfigPanel = forwardRef<
         const email = body.channels.email;
         if (email.configured) {
           setEmailEnabled(true);
+          // Configured channels open by default so the user sees their
+          // existing settings without having to click. Independent of
+          // emailEnabled — toggling enable later won't re-collapse.
+          setEmailExpanded(true);
           setEmailConfigured(true);
           setHost(email.host || 'smtp.gmail.com');
           setPort(email.port != null ? String(email.port) : '587');
@@ -163,6 +186,7 @@ export const NotificationsConfigPanel = forwardRef<
         const telegram = body.channels.telegram;
         if (telegram.configured) {
           setTelegramEnabled(true);
+          setTelegramExpanded(true);
           setTelegramConfigured(true);
           setChatId(telegram.chat_id || '');
         }
@@ -380,50 +404,114 @@ export const NotificationsConfigPanel = forwardRef<
         </div>
       )}
 
-      {/* Email channel */}
-      <label
+      {/* Email channel — header row toggles the form's visibility
+          (emailExpanded); the Enable checkbox inside controls the
+          semantic on/off (emailEnabled). The two are independent so
+          un-ticking Enable doesn't hide the form (the #117 pain point).
+          The whole header is the click target — chevron + label + tag +
+          configured badge. Min-h-[44px] for mobile tap targets. */}
+      <div
         className={clsx(
-          'flex cursor-pointer items-start gap-3 rounded border p-3 transition',
+          'rounded border transition-colors duration-150',
           emailEnabled
             ? 'border-indigo-500 bg-indigo-50/50 ring-1 ring-indigo-300'
-            : 'border-slate-200 bg-white hover:border-indigo-300',
+            : 'border-slate-200 bg-white',
         )}
       >
-        <input
-          type="checkbox"
-          checked={emailEnabled}
-          onChange={(e) => { setEmailEnabled(e.target.checked); }}
-          className="mt-1"
-        />
-        <div className="flex-1">
-          <div className="font-medium text-slate-800">
-            Email{' '}
-            {emailConfigured && (
-              <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                Configured
-              </span>
+        <button
+          type="button"
+          onClick={() => { setEmailExpanded((v) => !v); }}
+          aria-expanded={emailExpanded}
+          aria-controls="email-channel-body"
+          className={clsx(
+            'flex min-h-[44px] w-full items-center gap-3 rounded p-3 text-left transition-colors duration-150',
+            'hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-300',
+            emailEnabled && 'hover:bg-indigo-50',
+          )}
+        >
+          <span
+            aria-hidden="true"
+            className={clsx(
+              'inline-block text-slate-400 transition-transform duration-150 ease-out',
+              emailExpanded ? 'rotate-90' : 'rotate-0',
+            )}
+          >
+            ▶
+          </span>
+          <div className="flex-1">
+            <div className="font-medium text-slate-800">
+              Email{' '}
+              {emailConfigured && (
+                <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                  Configured
+                </span>
+              )}
+              {!emailEnabled && emailConfigured && (
+                <span
+                  className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+                  title="Saved credentials present, but this channel won't fire on the next scrape."
+                >
+                  Off
+                </span>
+              )}
+              {!emailEnabled && !emailConfigured && (
+                <span className="ml-1 text-[11px] font-normal italic text-slate-400">
+                  no key set
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-slate-600">
+              Send the HTML digest to your inbox after each scrape via SMTP.
+            </p>
+            {/* When configured, show a one-line summary of where we'd send. The
+                password is intentionally absent — see the file header. */}
+            {emailConfigured && !emailExpanded && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                <span className="font-mono">{host}</span>
+                {user && (
+                  <>
+                    {' '}as <span className="font-mono">{user}</span>
+                  </>
+                )}
+              </p>
             )}
           </div>
-          <p className="mt-1 text-xs text-slate-600">
-            Send the HTML digest to your inbox after each scrape via SMTP.
-          </p>
-          {/* When configured, show a one-line summary of where we'd send. The
-              password is intentionally absent — see the file header. */}
-          {emailConfigured && !emailEnabled && (
-            <p className="mt-1 text-[11px] text-slate-500">
-              <span className="font-mono">{host}</span>
-              {user && (
-                <>
-                  {' '}as <span className="font-mono">{user}</span>
-                </>
-              )}
-            </p>
-          )}
-        </div>
-      </label>
+          {/* Enable toggle. Lives in the header row but does NOT toggle
+              the form visibility — clicking the checkbox stops
+              propagation so the surrounding button doesn't fire. */}
+          <label
+            className="inline-flex shrink-0 items-center gap-1.5 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:border-slate-300"
+            onClick={(e) => { e.stopPropagation(); }}
+            onKeyDown={(e) => { e.stopPropagation(); }}
+          >
+            <input
+              type="checkbox"
+              checked={emailEnabled}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setEmailEnabled(next);
+                // Auto-expand on enable (so the user lands in the form
+                // ready to type). Disabling does NOT auto-collapse — the
+                // #117 decoupling means the user keeps the form on
+                // screen as long as they want.
+                if (next) setEmailExpanded(true);
+              }}
+              aria-label="Enable email channel"
+              className="h-3.5 w-3.5"
+            />
+            Enable
+          </label>
+        </button>
+      </div>
 
-      {emailEnabled && (
-        <div className="ml-7 space-y-3 rounded border border-slate-200 bg-slate-50 p-3">
+      {emailExpanded && (
+        <div
+          id="email-channel-body"
+          className="ml-7 space-y-3 rounded border border-slate-200 bg-slate-50 p-3"
+          // Scroll-margin so iOS doesn't bury a focused input under the
+          // sticky tab nav when the soft keyboard opens.
+          style={{ scrollMarginTop: '5rem' }}
+        >
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600">
               Provider preset
@@ -557,43 +645,95 @@ export const NotificationsConfigPanel = forwardRef<
         </div>
       )}
 
-      {/* Telegram channel */}
-      <label
+      {/* Telegram channel — same decoupled header pattern as Email
+          (#117). Header toggles telegramExpanded; the Enable checkbox
+          inside toggles telegramEnabled. */}
+      <div
         className={clsx(
-          'flex cursor-pointer items-start gap-3 rounded border p-3 transition',
+          'rounded border transition-colors duration-150',
           telegramEnabled
             ? 'border-indigo-500 bg-indigo-50/50 ring-1 ring-indigo-300'
-            : 'border-slate-200 bg-white hover:border-indigo-300',
+            : 'border-slate-200 bg-white',
         )}
       >
-        <input
-          type="checkbox"
-          checked={telegramEnabled}
-          onChange={(e) => { setTelegramEnabled(e.target.checked); }}
-          className="mt-1"
-        />
-        <div className="flex-1">
-          <div className="font-medium text-slate-800">
-            Telegram{' '}
-            {telegramConfigured && (
-              <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                Configured
-              </span>
+        <button
+          type="button"
+          onClick={() => { setTelegramExpanded((v) => !v); }}
+          aria-expanded={telegramExpanded}
+          aria-controls="telegram-channel-body"
+          className={clsx(
+            'flex min-h-[44px] w-full items-center gap-3 rounded p-3 text-left transition-colors duration-150',
+            'hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-300',
+            telegramEnabled && 'hover:bg-indigo-50',
+          )}
+        >
+          <span
+            aria-hidden="true"
+            className={clsx(
+              'inline-block text-slate-400 transition-transform duration-150 ease-out',
+              telegramExpanded ? 'rotate-90' : 'rotate-0',
+            )}
+          >
+            ▶
+          </span>
+          <div className="flex-1">
+            <div className="font-medium text-slate-800">
+              Telegram{' '}
+              {telegramConfigured && (
+                <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                  Configured
+                </span>
+              )}
+              {!telegramEnabled && telegramConfigured && (
+                <span
+                  className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+                  title="Saved credentials present, but this channel won't fire on the next scrape."
+                >
+                  Off
+                </span>
+              )}
+              {!telegramEnabled && !telegramConfigured && (
+                <span className="ml-1 text-[11px] font-normal italic text-slate-400">
+                  no key set
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-slate-600">
+              Send a message via a bot after each scrape. Free, no SMTP, no email account needed.
+            </p>
+            {telegramConfigured && !telegramExpanded && chatId && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                chat <span className="font-mono">{chatId}</span>
+              </p>
             )}
           </div>
-          <p className="mt-1 text-xs text-slate-600">
-            Send a message via a bot after each scrape. Free, no SMTP, no email account needed.
-          </p>
-          {telegramConfigured && !telegramEnabled && chatId && (
-            <p className="mt-1 text-[11px] text-slate-500">
-              chat <span className="font-mono">{chatId}</span>
-            </p>
-          )}
-        </div>
-      </label>
+          <label
+            className="inline-flex shrink-0 items-center gap-1.5 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:border-slate-300"
+            onClick={(e) => { e.stopPropagation(); }}
+            onKeyDown={(e) => { e.stopPropagation(); }}
+          >
+            <input
+              type="checkbox"
+              checked={telegramEnabled}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setTelegramEnabled(next);
+                if (next) setTelegramExpanded(true);
+              }}
+              aria-label="Enable telegram channel"
+              className="h-3.5 w-3.5"
+            />
+            Enable
+          </label>
+        </button>
+      </div>
 
-      {telegramEnabled && (
-        <div className="ml-7 space-y-3 rounded border border-slate-200 bg-slate-50 p-3">
+      {telegramExpanded && (
+        <div
+          id="telegram-channel-body"
+          className="ml-7 space-y-3 rounded border border-slate-200 bg-slate-50 p-3"
+          style={{ scrollMarginTop: '5rem' }}
+        >
           <div className="rounded border border-indigo-100 bg-indigo-50/50 p-2.5 text-xs text-slate-700">
             <div className="font-medium text-slate-800">How to set up:</div>
             <ol className="mt-1 list-decimal pl-4 leading-relaxed">
