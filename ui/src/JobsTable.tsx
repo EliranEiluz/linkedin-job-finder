@@ -675,6 +675,13 @@ export const JobsTable = ({
   // The applied-pinned sort + per-column sortingFn handle all ordering.
   // No data pre-sort needed (the previous one was overridden by TanStack
   // the moment the user clicked any column header).
+  //
+  // `autoResetAll: false` is load-bearing: TanStack's default behavior is
+  // to reset sorting / pagination / expansion to `initialState` whenever
+  // the `data` reference changes, and our corpus reloads on every applied
+  // toggle / rate / delete. Without this flag, marking a job applied
+  // wipes the user's ascending-by-score sort back to the defaults — see
+  // bug fix 2026-05-05.
   const table = useReactTable({
     data,
     columns,
@@ -684,6 +691,7 @@ export const JobsTable = ({
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     initialState: { pagination: { pageSize: 50 } },
+    autoResetAll: false,
   });
 
   const pageIndex = table.getState().pagination.pageIndex;
