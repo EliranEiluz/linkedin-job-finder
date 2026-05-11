@@ -43,10 +43,13 @@ export const DIGEST_HTML_PATH = path.join(REPO_ROOT, 'digest.html');
 export const SCHEDULER_TIMEOUT_MS = 10_000;
 export const ONBOARDING_GENERATE_TIMEOUT_MS = 3 * 60 * 1000; // 3 min — Claude call
 export const ONBOARDING_SAVE_TIMEOUT_MS = 10_000;
-// Config-suggester is a single Claude call over feedback signals; 60s
-// aligns with the script's own CLAUDE_TIMEOUT_S so a slow CLI response
-// gets killed HTTP-side at the same time the subprocess does.
-export const CONFIG_SUGGEST_TIMEOUT_MS = 75_000;
+// Config-suggester is a single LLM call over feedback signals. 240s
+// matches the 240s HTTP timeout each provider adapter (claude_cli,
+// claude_sdk, openai, gemini, openrouter) uses on its own request, so a
+// slow but eventually-successful LLM response isn't killed JS-side while
+// the Python subprocess is still waiting. Ollama is even more lenient
+// (600s) but its first-call model-load is rare for the suggester path.
+export const CONFIG_SUGGEST_TIMEOUT_MS = 240_000;
 export const PROFILE_TIMEOUT_MS = 10_000;
 export const CORPUS_TIMEOUT_MS = 8_000;
 export const PREFLIGHT_TIMEOUT_MS = 30_000;
