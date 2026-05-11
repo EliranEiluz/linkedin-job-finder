@@ -38,6 +38,7 @@ from datetime import datetime
 from email.message import EmailMessage
 from html import escape
 from pathlib import Path
+from typing import Any
 
 # State files live at the project ROOT (one level up from backend/).
 HERE = Path(__file__).parent
@@ -520,7 +521,10 @@ def send_via_telegram(
             text = text[: TELEGRAM_MAX_CHARS - 1] + "…"
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {
+    # Annotated explicitly because mypy infers `dict[str, object]` from the
+    # mixed value types, and `requests.post(json=...)` wants a JsonType-ish
+    # shape. `dict[str, Any]` accepts both.
+    payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "HTML",

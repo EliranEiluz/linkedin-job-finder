@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from ._shared import TEST_BATCH, TEST_CV, parse_json_response
 from .base import LLMProvider, ModelInfo, ReasoningCapability
@@ -78,7 +79,10 @@ class OllamaProvider(LLMProvider):
             print("    ollama: requests not installed")
             return None
         prompt = self._prompt(cv_text, batch)
-        body = {
+        # Annotated explicitly so mypy doesn't infer `dict[str, object]` from
+        # the mixed value types; `requests.post(json=...)` rejects that under
+        # stricter stub versions.
+        body: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {
