@@ -19,6 +19,7 @@ import { CategoryManager } from './CategoryManager';
 import { ChipInput } from './ChipInput';
 import { ProfileSwitcher } from './ProfileSwitcher';
 import { ConfigSuggestModal, MIN_SIGNALS_FOR_SUGGEST } from './ConfigSuggestModal';
+import { CollapsibleCard } from './configLayout/CollapsibleCard';
 
 type LoadState =
   | { kind: 'loading' }
@@ -176,36 +177,6 @@ const PriorityChipDraftInput = ({
       placeholder={existing.length === 0 ? 'add company…' : ''}
       className="min-w-[8rem] flex-1 border-0 bg-transparent p-0 font-mono text-xs focus:outline-none focus:ring-0"
     />
-  );
-};
-
-// Collapsible card variant — used for the Scoring & filtering section. Default-
-// collapsed because most users won't touch it after initial setup.
-const CollapsibleCard = ({
-  title,
-  defaultOpen = false,
-  children,
-}: {
-  title: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) => {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <button
-        type="button"
-        onClick={() => { setOpen((v) => !v); }}
-        className="flex w-full items-center justify-between rounded-t-lg px-4 py-3 text-left hover:bg-slate-50"
-        aria-expanded={open}
-      >
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-600">
-          {title}
-        </h2>
-        <span className="text-xs text-slate-400">{open ? '▼' : '▶'}</span>
-      </button>
-      {open && <div className="border-t border-slate-100 p-4">{children}</div>}
-    </section>
   );
 };
 
