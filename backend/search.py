@@ -2473,7 +2473,20 @@ def score_jobs_in_batches(
                 print(f"  Batch failed unexpectedly: {type(e).__name__}: {e}", file=sys.stderr)
                 batches_failed += 1
                 continue
-            _finalize_batch(batch, scored_map)
+            try:
+                _finalize_batch(batch, scored_map)
+            except Exception as e:
+                # `_finalize_batch` shouldn't raise — scoring helpers swallow
+                # their own errors and the merge writers wrap fcntl. But disk
+                # full / permission flips / a parallel writer's lockfile gone
+                # rogue could still surface here. Don't let one bad write
+                # take down the rest of the run.
+                print(
+                    f"  Batch finalize failed: {type(e).__name__}: {e}",
+                    file=sys.stderr,
+                )
+                batches_failed += 1
+                continue
             batches_completed += 1
 
     # Clean up transient desc fields.
