@@ -22,6 +22,19 @@ export interface LLMProviderConfig {
   model?: string; // optional — provider has a sensible default if omitted
 }
 
+// Post-scoring corpus filter (issue #117). Both null = filter disabled =
+// pre-feature behavior (every scored job lands in results.json).
+//   min_fit   — drop everything ranked strictly below this fit. "ok" keeps
+//               ok + good; "good" keeps only good. "skip" / null / unknown
+//               are always below "bad" and so are always dropped when
+//               min_fit is set.
+//   min_score — drop everything whose numeric score is strictly below.
+//               0..10 integer.
+export interface CorpusFilter {
+  min_fit: null | 'ok' | 'good';
+  min_score: number | null;
+}
+
 export interface Category {
   id: string;            // stable client-side id; preserved across saves when possible
   name: string;          // user-facing label, e.g. "Keywords", "Companies", "ML researcher"
@@ -56,6 +69,11 @@ export interface CrawlerConfig {
   // scrape mode and pre-fill for the scheduler card. "guest" if missing
   // (matches the legacy implicit default).
   default_mode?: 'guest' | 'loggedin';
+  // Issue #117 — post-scoring corpus filter. Optional in the type so older
+  // configs round-trip cleanly; normalizeConfig() always materializes a
+  // fully-populated {min_fit: null, min_score: null} so React state
+  // doesn't have to handle the undefined case in the editor card.
+  corpus_filter?: CorpusFilter;
 
   // --- legacy (one-time migrate via normalizeConfig) ---------------------
   // Kept optional so older config.json files load without a type error.
@@ -124,5 +142,9 @@ export const configsEqual = (a: CrawlerConfig, b: CrawlerConfig): boolean => {
   if ((ap?.name ?? null) !== (bp?.name ?? null)) return false;
   if ((ap?.model ?? null) !== (bp?.model ?? null)) return false;
   if ((a.default_mode ?? null) !== (b.default_mode ?? null)) return false;
+  const af = a.corpus_filter ?? { min_fit: null, min_score: null };
+  const bf = b.corpus_filter ?? { min_fit: null, min_score: null };
+  if (af.min_fit !== bf.min_fit) return false;
+  if (af.min_score !== bf.min_score) return false;
   return true;
 };

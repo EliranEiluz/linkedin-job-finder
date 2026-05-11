@@ -14,6 +14,7 @@ import { SchedulerCard } from './SchedulerCard';
 import { LLMProviderCard } from './LLMProviderCard';
 import { RemoteAccessCard } from './RemoteAccessCard';
 import { NotificationsCard } from './NotificationsCard';
+import { CorpusFilterCard } from './CorpusFilterCard';
 import { CategoryManager } from './CategoryManager';
 import { ChipInput } from './ChipInput';
 import { ProfileSwitcher } from './ProfileSwitcher';
@@ -496,6 +497,16 @@ export const ConfigPage = () => {
           <RemoteAccessCard />
 
           <NotificationsCard />
+
+          {/* Corpus filter — post-scoring gate that drops low-fit/score
+              jobs from results.json while leaving them in seen_jobs.json
+              (so they're never re-scored on the next run). Issue #117.
+              normalizeConfig always materializes draft.corpus_filter, so
+              the non-null assertion is sound here. */}
+          <CorpusFilterCard
+            current={draft.corpus_filter ?? { min_fit: null, min_score: null }}
+            onChange={(next) => { setDraft({ ...draft, corpus_filter: next }); }}
+          />
 
           <CategoryManager
             categories={draft.categories}
