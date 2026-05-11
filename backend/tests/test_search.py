@@ -64,6 +64,21 @@ def test_compute_hot(job: dict, expected_hot: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def _use_default_offtopic_patterns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force `OFFTOPIC_TITLE_PATTERNS` to the hardcoded defaults for the
+    duration of a test, regardless of what the repo-root config.json
+    happens to override it to. Without this, running pytest from the
+    project root with a user-tuned config.json would shadow the source
+    defaults and silently make these regex tests test the user's config
+    instead of the in-file defaults."""
+    monkeypatch.setattr(
+        search,
+        "OFFTOPIC_TITLE_PATTERNS",
+        list(search._DEFAULT_OFFTOPIC_TITLE_PATTERNS),
+    )
+
+
 @pytest.mark.parametrize(
     ("title", "is_offtopic"),
     [
@@ -108,7 +123,9 @@ def test_compute_hot(job: dict, expected_hot: bool) -> None:
         ("", False),
     ],
 )
-def test_is_obviously_offtopic(title: str, is_offtopic: bool) -> None:
+def test_is_obviously_offtopic(
+    title: str, is_offtopic: bool, _use_default_offtopic_patterns: None
+) -> None:
     result = search.is_obviously_offtopic(title)
     if is_offtopic:
         assert result is not None, f"expected a regex match for {title!r}"
@@ -116,7 +133,9 @@ def test_is_obviously_offtopic(title: str, is_offtopic: bool) -> None:
         assert result is None, f"expected NO match for {title!r} but matched {result!r}"
 
 
-def test_is_obviously_offtopic_returns_pattern_string() -> None:
+def test_is_obviously_offtopic_returns_pattern_string(
+    _use_default_offtopic_patterns: None,
+) -> None:
     """When a title matches, the helper returns the *which* regex matched —
     used in fit_reasons display so the user sees why a job was demoted."""
     result = search.is_obviously_offtopic("Marketing Manager")
@@ -1130,3 +1149,300 @@ def test_score_jobs_in_batches_runs_batches_in_parallel(
     assert elapsed < 0.9, f"score_jobs_in_batches ran sequentially: {elapsed:.2f}s"
     # And we observed real concurrency (>=2 batches in flight at once).
     assert max_concurrent["v"] >= 2
+
+
+# ---------------------------------------------------------------------------
+# _passes_corpus_filter — post-scoring gate (issue #117).
+# ---------------------------------------------------------------------------
+
+
+def _set_corpus_filter(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    min_fit: str | None = None,
+    min_score: int | None = None,
+) -> None:
+    monkeypatch.setattr(
+        search,
+        "_ACTIVE_CONFIG",
+        {"corpus_filter": {"min_fit": min_fit, "min_score": min_score}},
+    )
+
+
+# Cross product of (min_fit ∈ {None, "ok", "good"}) × (min_score ∈ {None, 5})
+# × representative (fit, score) pairs. 24 cases.
+@pytest.mark.parametrize(
+    ("min_fit", "min_score", "job_fit", "job_score", "expected"),
+    [
+        # min_fit=None, min_score=None — filter off, everything passes.
+        (None, None, "good", 10, True),
+        (None, None, "ok", 5, True),
+        (None, None, "skip", 1, True),
+        (None, None, None, None, True),
+        # min_fit=None, min_score=5 — only score matters.
+        (None, 5, "good", 10, True),
+        (None, 5, "ok", 5, True),  # threshold edge: equal passes
+        (None, 5, "good", 4, False),
+        (None, 5, "skip", 1, False),
+        (None, 5, "good", None, False),  # missing score treated as 0
+        # min_fit="ok", min_score=None — fit must be at least "ok".
+        ("ok", None, "good", 10, True),
+        ("ok", None, "ok", 5, True),
+        ("ok", None, "skip", 1, False),
+        ("ok", None, None, 5, False),  # null fit < bad
+        # min_fit="good", min_score=None — fit must be "good".
+        ("good", None, "good", 10, True),
+        ("good", None, "ok", 5, False),
+        ("good", None, "skip", 1, False),
+        # min_fit="good", min_score=5 — both gates apply.
+        ("good", 5, "good", 10, True),
+        ("good", 5, "good", 4, False),
+        ("good", 5, "ok", 10, False),
+        # Non-numeric score with score gate set — treated as 0.
+        (None, 5, "good", "huge", False),
+        # Score=0 with min_score=0 — boundary passes.
+        (None, 0, "ok", 0, True),
+        # min_fit="ok" + score gate off — fit gate alone decides.
+        ("ok", None, "ok", None, True),
+    ],
+)
+def test_passes_corpus_filter_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+    min_fit: str | None,
+    min_score: int | None,
+    job_fit: str | None,
+    job_score: object,
+    expected: bool,
+) -> None:
+    _set_corpus_filter(monkeypatch, min_fit=min_fit, min_score=min_score)
+    job = {"fit": job_fit, "score": job_score}
+    assert search._passes_corpus_filter(job) is expected
+
+
+def test_passes_corpus_filter_missing_active_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_ACTIVE_CONFIG=None (defensive — never happens at runtime today)
+    must not crash the helper. It should treat that as "filter off"."""
+    monkeypatch.setattr(search, "_ACTIVE_CONFIG", None)
+    assert search._passes_corpus_filter({"fit": "skip", "score": 0}) is True
+
+
+def test_passes_corpus_filter_missing_corpus_filter_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Active config without the corpus_filter key (legacy / pre-feature
+    in-memory configs) treats the filter as off."""
+    monkeypatch.setattr(search, "_ACTIVE_CONFIG", {"some_other_field": True})
+    assert search._passes_corpus_filter({"fit": "skip", "score": 0}) is True
+
+
+def test_normalize_corpus_filter_drops_unknown_min_fit() -> None:
+    out = search._normalize_corpus_filter({"min_fit": "bad", "min_score": 5})
+    # "bad" isn't a valid min_fit (the rank baseline) — drop it.
+    assert out == {"min_fit": None, "min_score": 5}
+
+
+def test_normalize_corpus_filter_drops_out_of_range_score() -> None:
+    assert search._normalize_corpus_filter({"min_fit": None, "min_score": 99}) == {
+        "min_fit": None,
+        "min_score": None,
+    }
+    assert search._normalize_corpus_filter({"min_fit": None, "min_score": -1}) == {
+        "min_fit": None,
+        "min_score": None,
+    }
+
+
+def test_normalize_corpus_filter_rejects_bool_score() -> None:
+    """bool is a subclass of int but True/False have no meaning here."""
+    assert search._normalize_corpus_filter({"min_score": True}) == {
+        "min_fit": None,
+        "min_score": None,
+    }
+
+
+def test_normalize_corpus_filter_non_dict_payload() -> None:
+    assert search._normalize_corpus_filter("not a dict") == {
+        "min_fit": None,
+        "min_score": None,
+    }
+    assert search._normalize_corpus_filter(None) == {
+        "min_fit": None,
+        "min_score": None,
+    }
+
+
+def test_hardcoded_defaults_include_corpus_filter() -> None:
+    """The schema must include corpus_filter so the UI's defaults.json
+    round-trip materializes the field on first load. Both sub-fields
+    null = filter disabled = pre-feature behavior."""
+    defaults = search._hardcoded_defaults()
+    assert defaults["corpus_filter"] == {"min_fit": None, "min_score": None}
+
+
+def test_load_config_migration_injects_corpus_filter(
+    tmp_repo: Path,
+) -> None:
+    """Legacy config.json (no corpus_filter key) loads with the disabled-
+    filter shape and behaves identically to today."""
+    (tmp_repo / "config.json").write_text(
+        json.dumps(
+            {
+                "categories": [],
+                "location": "Remote",
+                "date_filter": "",
+                "geo_id": "",
+                "max_pages": 3,
+                "priority_companies": [],
+            }
+        )
+    )
+    cfg = search.load_config()
+    assert cfg["corpus_filter"] == {"min_fit": None, "min_score": None}
+
+
+def test_load_config_normalizes_malformed_corpus_filter(tmp_repo: Path) -> None:
+    """Malformed corpus_filter block doesn't break load_config — it
+    silently falls back to the disabled-filter shape."""
+    (tmp_repo / "config.json").write_text(
+        json.dumps(
+            {
+                "categories": [],
+                "location": "Remote",
+                "date_filter": "",
+                "geo_id": "",
+                "max_pages": 3,
+                "priority_companies": [],
+                "corpus_filter": {"min_fit": "garbage", "min_score": "five"},
+            }
+        )
+    )
+    cfg = search.load_config()
+    assert cfg["corpus_filter"] == {"min_fit": None, "min_score": None}
+
+
+def test_load_config_accepts_valid_corpus_filter(tmp_repo: Path) -> None:
+    (tmp_repo / "config.json").write_text(
+        json.dumps(
+            {
+                "categories": [],
+                "location": "Remote",
+                "date_filter": "",
+                "geo_id": "",
+                "max_pages": 3,
+                "priority_companies": [],
+                "corpus_filter": {"min_fit": "good", "min_score": 7},
+            }
+        )
+    )
+    cfg = search.load_config()
+    assert cfg["corpus_filter"] == {"min_fit": "good", "min_score": 7}
+
+
+# ---------------------------------------------------------------------------
+# _record_run_history — surfaces filtered_out count (issue #117).
+# ---------------------------------------------------------------------------
+
+
+def test_record_run_history_includes_filtered_out(
+    tmp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run_history.json entry must carry totals.filtered_out so the
+    UI's Corpus Filter card can surface "X filtered last run"."""
+    from argparse import Namespace
+    from datetime import datetime
+    from time import perf_counter
+
+    args = Namespace(all=False, no_enrich=False, all_time=False, pages=None)
+    search._record_run_history(
+        args,
+        new_jobs=[
+            {"id": "1", "fit": "good", "scored_by": "claude"},
+            {"id": "2", "fit": "ok", "scored_by": "claude"},
+            {"id": "3", "fit": "skip", "scored_by": "title-filter"},
+        ],
+        diagnosis_counts={"ok": 2, "error": 0},
+        per_query_stats=[],
+        run_errors=[],
+        started_at=datetime.now(),
+        started_perf=perf_counter() - 1.0,
+        max_pages=3,
+        filtered_out=4,
+    )
+    raw = json.loads((tmp_repo / "run_history.json").read_text())
+    runs = raw["runs"]
+    assert len(runs) == 1
+    assert runs[0]["totals"]["filtered_out"] == 4
+
+
+def test_record_run_history_defaults_filtered_out_zero(
+    tmp_repo: Path,
+) -> None:
+    """Callers that don't pass filtered_out (legacy callers, mock-call
+    paths) get 0 — the default — so older history rows stay parseable."""
+    from argparse import Namespace
+    from datetime import datetime
+    from time import perf_counter
+
+    args = Namespace(all=False, no_enrich=False, all_time=False, pages=None)
+    search._record_run_history(
+        args,
+        new_jobs=[],
+        diagnosis_counts={"ok": 0, "error": 0},
+        per_query_stats=[],
+        run_errors=[],
+        started_at=datetime.now(),
+        started_perf=perf_counter() - 1.0,
+        max_pages=3,
+    )
+    raw = json.loads((tmp_repo / "run_history.json").read_text())
+    assert raw["runs"][0]["totals"]["filtered_out"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Manual-add bypass — process_one_job with persist=True writes through the
+# scoring branch's save_results_merge directly (not via the corpus-filter
+# gate in main()). A manually added job with fit=None must still land in
+# the corpus even when the filter is set to its strictest mode.
+# ---------------------------------------------------------------------------
+
+
+def test_manual_add_bypasses_corpus_filter(
+    tmp_repo: Path, monkeypatch: pytest.MonkeyPatch, sample_job: dict
+) -> None:
+    """Manual-add (process_one_job(persist=True)) writes to results.json
+    via save_results_merge BEFORE the main loop's gate runs. So even with
+    the filter on its strictest setting, the manual-added row lands."""
+    _set_corpus_filter(monkeypatch, min_fit="good", min_score=10)
+
+    # Patch out fetch / claude / regex so process_one_job exercises just
+    # its title-filter + persist path. A non-offtopic title with no LLM
+    # backend leaves fit=None, score=None — exactly the shape a user-
+    # typed URL produces before LinkedIn metadata is scraped.
+    monkeypatch.setattr(search, "claude_batch_score", lambda _cv, _jobs: None)
+    monkeypatch.setattr(
+        search,
+        "_apply_regex_fallback",
+        lambda job, _desc: job,
+    )
+
+    def fake_fetch(_job: dict) -> tuple[str, str]:
+        return "", "empty"
+
+    job = dict(sample_job)
+    job["title"] = "Site Reliability Engineer"  # not offtopic
+    search.process_one_job(
+        job,
+        cv_text="",
+        fetch_one=fake_fetch,
+        persist=True,
+        already_scored=False,
+    )
+
+    # Manual-add row must be on disk even though it has fit=None.
+    on_disk = json.loads((tmp_repo / "results.json").read_text())
+    assert any(j.get("id") == sample_job["id"] for j in on_disk), (
+        "manual-added job was unexpectedly dropped — corpus filter must not "
+        "apply to the process_one_job(persist=True) write path."
+    )

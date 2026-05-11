@@ -20,6 +20,7 @@
 import type {
   Category,
   CategoryType,
+  CorpusFilter,
   CrawlerConfig,
   LLMProviderConfig,
   LLMProviderName,
@@ -34,6 +35,30 @@ const VALID_PROVIDER_NAMES: ReadonlySet<LLMProviderName> = new Set([
   'openrouter',
   'ollama',
 ]);
+
+// Defensive corpus_filter normalizer. Older configs (pre-#117) won't have
+// this key at all; legacy configs with bogus values (e.g. min_score=42 or
+// min_fit="bad") get silently squashed back to the disabled-filter shape.
+// Always returns a fully-populated object so the editor card never has
+// to handle undefined sub-fields.
+const normalizeCorpusFilter = (v: unknown): CorpusFilter => {
+  const disabled: CorpusFilter = { min_fit: null, min_score: null };
+  if (!v || typeof v !== 'object') return disabled;
+  const r = v as Record<string, unknown>;
+  const out: CorpusFilter = { min_fit: null, min_score: null };
+  if (r.min_fit === 'ok' || r.min_fit === 'good') {
+    out.min_fit = r.min_fit;
+  }
+  if (
+    typeof r.min_score === 'number'
+    && Number.isInteger(r.min_score)
+    && r.min_score >= 0
+    && r.min_score <= 10
+  ) {
+    out.min_score = r.min_score;
+  }
+  return out;
+};
 
 const normalizeLLMProvider = (v: unknown): LLMProviderConfig | undefined => {
   if (!v || typeof v !== 'object') return undefined;
@@ -230,6 +255,12 @@ export const normalizeConfig = (raw: unknown): CrawlerConfig => {
     feedback_examples_max: feedbackMax,
     llm_provider: llmProvider,
     default_mode: defaultMode,
+    // Always materialize a fully-populated corpus_filter object so the
+    // card never has to handle undefined sub-fields. Legacy configs (no
+    // corpus_filter key) end up with {min_fit: null, min_score: null},
+    // which the backend treats as "filter disabled" — identical behavior
+    // to pre-#117.
+    corpus_filter: normalizeCorpusFilter(r.corpus_filter),
   };
 };
 
@@ -273,6 +304,15 @@ export const serializeConfig = (cfg: CrawlerConfig): Record<string, unknown> => 
   }
   if (cfg.default_mode === 'guest' || cfg.default_mode === 'loggedin') {
     out.default_mode = cfg.default_mode;
+  }
+  // Always write corpus_filter back. If both fields are null we still
+  // round-trip it so the json on disk is self-describing; the backend
+  // treats {min_fit: null, min_score: null} as "filter off".
+  if (cfg.corpus_filter) {
+    out.corpus_filter = {
+      min_fit: cfg.corpus_filter.min_fit,
+      min_score: cfg.corpus_filter.min_score,
+    };
   }
   return out;
 };

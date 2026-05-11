@@ -17,6 +17,11 @@ export interface RunTotals {
   title_filtered: number;
   descriptions_fetched: number;
   descriptions_failed: number;
+  // Issue #117 — jobs scored this run but dropped from results.json
+  // by the post-scoring corpus filter. Optional because older history
+  // rows (pre-feature) don't have this field; readers must handle the
+  // missing case (treat as 0 / "filter off").
+  filtered_out?: number;
 }
 
 export interface RunFitDistribution {

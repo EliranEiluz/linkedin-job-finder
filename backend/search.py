@@ -552,18 +552,31 @@ def claude_batch_score(cv_text: str, batch: list[dict]) -> dict | None:
 # seniority extremes (intern/junior/director+) and obvious non-IC tracks
 # (sales / marketing / PM / community / QA). Domain-specific stack/role
 # negatives are added by the wizard from the user's CV + intent.
-OFFTOPIC_TITLE_PATTERNS = [
+# Immutable source-of-truth tuple. `OFFTOPIC_TITLE_PATTERNS` below is the
+# mutable view that `load_config()` overwrites from config.json; tests and
+# `_hardcoded_defaults()` consumers that want the original in-file list
+# (not whatever the user's config happens to override it to) read this
+# tuple directly.
+_DEFAULT_OFFTOPIC_TITLE_PATTERNS: tuple[str, ...] = (
     r"\bintern(ship)?\b",
     r"\bjunior\b",
     r"\bentry[- ]?level\b",
-    r"\bgraduate( program)?\b",
+    # "Graduate program" still matches; "Graduate Software Engineer" /
+    # "Graduate Developer" / "Graduate Engineer" now match too — the
+    # legacy `\bgraduate( program)?\b` only fired when the literal word
+    # "program" followed.
+    r"\bgraduate( program| \w+ (engineer|developer))?\b",
     r"\b(VP|vice president|director|head of|chief)\b",
     r"\b(sales|pre[- ]?sales|sdr|account executive)\b",
     r"\b(product|project|program) manager\b",
     r"\bmarketing\b",
     r"\b(community|customer success|developer relations|devrel|evangelist)\b",
-    r"\b(QA|quality assurance) (engineer|tester|analyst)\b",
-]
+    # QA on its own (e.g. "QA Engineer", "Quality Assurance Tester",
+    # bare "QA") — previously required "engineer|tester|analyst" so
+    # "Quality Assurance Tester" matched but plain "QA" was missed.
+    r"\b(QA|quality assurance)\b",
+)
+OFFTOPIC_TITLE_PATTERNS: list[str] = list(_DEFAULT_OFFTOPIC_TITLE_PATTERNS)
 
 
 def _clean_title(title: str) -> str:
@@ -591,6 +604,50 @@ def is_obviously_offtopic(title: str) -> str | None:
         if re.search(pat, t, re.IGNORECASE):
             return pat
     return None
+
+
+# Rank lookup for the corpus-filter min_fit gate. "skip" / None / unknown
+# resolve to -1 so they never beat any user-set threshold (min_fit="ok"
+# starts at rank 1 → drops bad/skip; min_fit="good" starts at rank 2 →
+# drops bad/ok/skip).
+_CORPUS_FILTER_FIT_RANK: dict[str | None, int] = {"bad": 0, "ok": 1, "good": 2}
+
+
+def _passes_corpus_filter(job: dict) -> bool:
+    """Whether `job` should land in results.json after a scrape.
+
+    The corpus filter is a post-scoring gate: jobs that fail it stay in
+    `seen_jobs.json` (so they're never re-scored on the next run) but
+    DO NOT enter `results.json`. That keeps the user's corpus signal-to-
+    noise high when running broad keyword searches.
+
+    Both `min_fit` and `min_score` are optional. Empty config / both
+    None == filter disabled == every scored job passes (pre-feature
+    behavior). The scrape main loop is the ONLY caller; manual-add
+    (`corpus_ctl.py add-manual`) goes through `process_one_job(persist=True)`
+    which writes via a different path and bypasses this gate by design —
+    a user explicitly typing a URL is making a deliberate choice that the
+    filter shouldn't override.
+    """
+    cfg = (_ACTIVE_CONFIG or {}).get("corpus_filter") or {}
+    min_fit = cfg.get("min_fit")
+    min_score = cfg.get("min_score")
+
+    if min_fit:
+        job_rank = _CORPUS_FILTER_FIT_RANK.get(job.get("fit"), -1)
+        threshold_rank = _CORPUS_FILTER_FIT_RANK.get(min_fit, 0)
+        if job_rank < threshold_rank:
+            return False
+
+    if min_score is not None:
+        raw_score = job.get("score")
+        # Non-numeric/missing score is treated as 0 — it can't satisfy
+        # any positive threshold, so the job is dropped.
+        numeric_score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
+        if numeric_score < float(min_score):
+            return False
+
+    return True
 
 
 # ---------- END CLAUDE SCORING ----------
@@ -820,7 +877,7 @@ def _hardcoded_defaults() -> dict:
         "claude_scoring_prompt": CLAUDE_BATCH_SCORING_PROMPT,
         "fit_positive_patterns": list(FIT_POSITIVE),
         "fit_negative_patterns": list(FIT_NEGATIVE),
-        "offtopic_title_patterns": list(OFFTOPIC_TITLE_PATTERNS),
+        "offtopic_title_patterns": list(_DEFAULT_OFFTOPIC_TITLE_PATTERNS),
         "feedback_examples_max": FEEDBACK_EXAMPLES_MAX_DEFAULT,
         # Stage 2 LLM provider abstraction. "auto" = resolver picks the first
         # working provider (claude_cli -> claude_sdk -> gemini -> openai ->
@@ -830,6 +887,10 @@ def _hardcoded_defaults() -> dict:
         # Stage 3 — wizard picks this; used as the scheduler / scrape default.
         # "guest" if missing so existing configs without the field stay unchanged.
         "default_mode": "guest",
+        # Post-scoring corpus filter (issue #117). Both fields None = filter
+        # disabled = pre-feature behavior. See `_passes_corpus_filter` for
+        # the gate logic.
+        "corpus_filter": {"min_fit": None, "min_score": None},
     }
 
 
@@ -910,6 +971,37 @@ def _normalize_llm_provider(raw: Any, fallback: dict) -> dict:
     model = raw.get("model")
     if isinstance(model, str) and model.strip():
         out["model"] = model.strip()
+    return out
+
+
+_VALID_CORPUS_FILTER_FITS = {"ok", "good"}
+
+
+def _normalize_corpus_filter(raw: Any) -> dict:
+    """Validate the corpus_filter block. Anything malformed (wrong type,
+    out-of-range, unknown enum, etc.) silently falls back to "off"
+    (i.e. {min_fit: None, min_score: None}). Backward compatible: a
+    config.json that pre-dates this feature has no corpus_filter key
+    and the missing-dict path resolves the same way as both-None.
+
+    Accepted values:
+      min_fit   - None | "ok" | "good"
+      min_score - None | int in [0, 10]
+    """
+    out: dict[str, Any] = {"min_fit": None, "min_score": None}
+    if not isinstance(raw, dict):
+        return out
+
+    raw_fit = raw.get("min_fit")
+    if isinstance(raw_fit, str) and raw_fit in _VALID_CORPUS_FILTER_FITS:
+        out["min_fit"] = raw_fit
+
+    raw_score = raw.get("min_score")
+    # bool is a subclass of int — reject it explicitly so True/False
+    # don't masquerade as 1/0 from a hand-edited config.
+    if isinstance(raw_score, int) and not isinstance(raw_score, bool) and 0 <= raw_score <= 10:
+        out["min_score"] = raw_score
+
     return out
 
 
@@ -998,6 +1090,9 @@ def load_config() -> dict:
             if user_cfg.get("default_mode") in ("guest", "loggedin")
             else defaults["default_mode"]
         ),
+        # Post-scoring corpus filter (issue #117). Validated; malformed
+        # blocks fall back silently to "off".
+        "corpus_filter": _normalize_corpus_filter(user_cfg.get("corpus_filter")),
     }
 
     # Mutate module-level constants in place so the rest of the file
@@ -2990,9 +3085,15 @@ def _record_run_history(
     started_at: datetime,
     started_perf: float,
     max_pages: int,
+    filtered_out: int = 0,
 ) -> None:
     """Append a run record to run_history.json so the UI's Run History page
-    can chart it. Best-effort — failures are logged, never re-raised."""
+    can chart it. Best-effort — failures are logged, never re-raised.
+
+    `filtered_out` is the count of jobs that were scored this run but
+    dropped from results.json by `_passes_corpus_filter`. 0 (or absent
+    on older history rows) = filter disabled or nothing was dropped.
+    """
     try:
         ended_at = datetime.now()
         scored_claude = sum(1 for j in new_jobs if j.get("scored_by") == "claude")
@@ -3026,6 +3127,10 @@ def _record_run_history(
                 "title_filtered": title_filtered,
                 "descriptions_fetched": descriptions_fetched,
                 "descriptions_failed": descriptions_failed,
+                # Issue #117 — jobs that were scored but dropped from
+                # results.json by the post-scoring corpus filter. 0
+                # when the filter is off (default).
+                "filtered_out": filtered_out,
             },
             "fit_distribution": fit_distribution,
             "errors": run_errors,
@@ -3123,7 +3228,21 @@ def main() -> None:
     # Pass only new_jobs — save_results_merge dedups against the on-disk corpus
     # under fcntl lock, which makes parallel --mode=guest + --mode=loggedin runs
     # safe (otherwise the second writer would overwrite the first's additions).
-    save_results_merge(new_jobs)
+    #
+    # Corpus filter (issue #117): post-scoring gate that drops low-fit/score
+    # jobs from results.json while leaving them in seen_jobs.json (so they
+    # never burn another LLM call on the next run). Filter is disabled by
+    # default; users opt in via the Crawler Config "Corpus filter" card.
+    # Manual-add (corpus_ctl.py add-manual) is intentionally bypassed — it
+    # goes through process_one_job's own persist=True path, not this loop.
+    corpus_passes = [j for j in new_jobs if _passes_corpus_filter(j)]
+    filtered_out_count = len(new_jobs) - len(corpus_passes)
+    save_results_merge(corpus_passes)
+    if filtered_out_count:
+        print(
+            f"Corpus filter: kept {len(corpus_passes)}/{len(new_jobs)} new jobs "
+            f"(dropped {filtered_out_count} below threshold)."
+        )
 
     # Record the IDs that were new this run so send_digest.py can pick them up.
     # Path MUST be ROOT — that's where send_digest.py:NEW_IDS_FILE reads from,
@@ -3151,6 +3270,7 @@ def main() -> None:
         started_at=started_at,
         started_perf=started_perf,
         max_pages=max_pages,
+        filtered_out=filtered_out_count,
     )
 
 
