@@ -927,7 +927,10 @@ export const ConfigPage = () => {
           <SaveChangesBar
             dirty={dirty}
             saving={saving}
-            onSave={() => { void save(); }}
+            // Return the promise so the bar can await the write and
+            // flash "Saved ✓" only after success. Errors are toasted
+            // by saveConfig; the bar swallows the rejection.
+            onSave={save}
             onDiscard={discard}
             onResetDefaults={resetToDefaults}
           />
