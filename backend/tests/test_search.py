@@ -16,6 +16,7 @@ Style:
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -1170,6 +1171,224 @@ def test_score_jobs_in_batches_runs_batches_in_parallel(
 
 
 # ---------------------------------------------------------------------------
+# Per-batch streaming writes — score_jobs_in_batches(persist_per_batch=True)
+# writes each batch's seen ids + corpus rows under fcntl lock as the futures
+# complete, instead of holding everything in RAM until end of run.
+# Crash safety + live UI progress.
+# ---------------------------------------------------------------------------
+
+
+def test_score_jobs_in_batches_writes_per_batch(
+    tmp_repo: Path,  # noqa: ARG001 — fixture redirects RESULTS_FILE / SEEN_FILE
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With persist_per_batch=True, save_results_merge + save_seen fire once
+    per completed batch — NOT once with everything at end. Spy on both
+    helpers to count invocations."""
+    monkeypatch.setattr(search, "BATCH_SIZE", 2)
+    monkeypatch.setattr(
+        search, "_ACTIVE_CONFIG", {"corpus_filter": {"min_fit": None, "min_score": None}}
+    )
+
+    def deterministic(_cv: str, batch: list[dict]) -> dict:
+        return {str(j["id"]): {"fit": "good", "score": 8, "reasons": []} for j in batch}
+
+    monkeypatch.setattr(search, "claude_batch_score", deterministic)
+
+    save_results_calls: list[int] = []
+    save_seen_calls: list[int] = []
+    real_save_results = search.save_results_merge
+    real_save_seen = search.save_seen
+
+    def spy_save_results(new_jobs: list) -> None:
+        save_results_calls.append(len(new_jobs))
+        real_save_results(new_jobs)
+
+    def spy_save_seen(seen: set) -> None:
+        save_seen_calls.append(len(seen))
+        real_save_seen(seen)
+
+    monkeypatch.setattr(search, "save_results_merge", spy_save_results)
+    monkeypatch.setattr(search, "save_seen", spy_save_seen)
+
+    jobs = [{"id": f"j{i}", "_desc": "desc"} for i in range(6)]
+    scored, filtered_out, completed, failed = search.score_jobs_in_batches(
+        jobs, "cv", persist_per_batch=True
+    )
+
+    assert scored is True
+    assert filtered_out == 0
+    assert completed == 3  # 6 jobs / batch_size 2 = 3 batches
+    assert failed == 0
+    # One write per batch — NOT one big write at the end.
+    assert len(save_results_calls) == 3, (
+        f"expected 3 per-batch save_results_merge calls, got {save_results_calls}"
+    )
+    assert len(save_seen_calls) == 3, f"expected 3 per-batch save_seen calls, got {save_seen_calls}"
+
+
+def test_score_jobs_in_batches_partial_failure_continues(
+    tmp_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """4 batches; batch index 1's future raises (simulating an unexpected
+    error that escapes _retry_score_batch's envelope). The remaining 3
+    batches must still complete and persist, batches_failed must be 1."""
+    monkeypatch.setattr(search, "BATCH_SIZE", 2)
+    monkeypatch.setattr(
+        search, "_ACTIVE_CONFIG", {"corpus_filter": {"min_fit": None, "min_score": None}}
+    )
+
+    def scorer(_cv: str, batch: list[dict]) -> dict:
+        return {str(j["id"]): {"fit": "ok", "score": 5, "reasons": []} for j in batch}
+
+    monkeypatch.setattr(search, "claude_batch_score", scorer)
+
+    # Inject a hard failure into _retry_score_batch for batch index 1's ids.
+    # _retry_score_batch normally swallows; raising directly bypasses its
+    # envelope, surfaces at the executor, and triggers the per-batch except.
+    real_retry = search._retry_score_batch
+    bad_ids = {"j2", "j3"}  # batch index 1 = jobs 2,3
+
+    def flaky_retry(cv_text: str, batch: list[dict], **kw):  # type: ignore[no-untyped-def]
+        if any(j["id"] in bad_ids for j in batch):
+            raise RuntimeError("simulated unrecoverable batch failure")
+        return real_retry(cv_text, batch, **kw)
+
+    monkeypatch.setattr(search, "_retry_score_batch", flaky_retry)
+
+    jobs = [{"id": f"j{i}", "_desc": "desc"} for i in range(8)]  # 4 batches of 2
+    scored, _filtered_out, completed, failed = search.score_jobs_in_batches(
+        jobs, "cv", persist_per_batch=True
+    )
+
+    assert scored is True
+    assert completed == 3
+    assert failed == 1
+
+    # Surviving batches' ids must be in results.json + seen_jobs.json.
+    on_disk_results = json.loads((tmp_repo / "results.json").read_text())
+    on_disk_seen = set(json.loads((tmp_repo / "seen_jobs.json").read_text()))
+    surviving_ids = {f"j{i}" for i in range(8)} - bad_ids
+    persisted_ids = {j["id"] for j in on_disk_results}
+    assert surviving_ids <= persisted_ids, (
+        f"expected surviving batches in corpus, got {persisted_ids}"
+    )
+    assert surviving_ids <= on_disk_seen
+    # The failed batch's ids should NOT have been persisted (the future
+    # raised before _finalize_batch ran for that batch).
+    assert not (bad_ids & persisted_ids)
+
+
+def test_score_jobs_in_batches_filter_applied_per_batch(
+    tmp_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With corpus_filter min_fit='good', only good-fit jobs land in
+    results.json; seen_jobs.json gets every scored id regardless."""
+    monkeypatch.setattr(search, "BATCH_SIZE", 2)
+    monkeypatch.setattr(
+        search, "_ACTIVE_CONFIG", {"corpus_filter": {"min_fit": "good", "min_score": None}}
+    )
+
+    # Two batches: first all "good", second all "ok" (must be filtered out).
+    def scorer(_cv: str, batch: list[dict]) -> dict:
+        out = {}
+        for j in batch:
+            fit = "good" if j["id"].startswith("g") else "ok"
+            out[str(j["id"])] = {"fit": fit, "score": 8, "reasons": []}
+        return out
+
+    monkeypatch.setattr(search, "claude_batch_score", scorer)
+
+    jobs = [
+        {"id": "g1", "_desc": "x"},
+        {"id": "g2", "_desc": "x"},
+        {"id": "ok1", "_desc": "x"},
+        {"id": "ok2", "_desc": "x"},
+    ]
+    scored, filtered_out, completed, failed = search.score_jobs_in_batches(
+        jobs, "cv", persist_per_batch=True
+    )
+
+    assert scored is True
+    assert completed == 2
+    assert failed == 0
+    assert filtered_out == 2  # both "ok" jobs dropped
+
+    on_disk_results = json.loads((tmp_repo / "results.json").read_text())
+    on_disk_seen = set(json.loads((tmp_repo / "seen_jobs.json").read_text()))
+    corpus_ids = {j["id"] for j in on_disk_results}
+    assert corpus_ids == {"g1", "g2"}, f"only 'good' jobs should be in corpus, got {corpus_ids}"
+    # Every scored id — pass or fail filter — lands in seen so it never
+    # burns another LLM call on the next run.
+    assert on_disk_seen == {"g1", "g2", "ok1", "ok2"}
+
+
+def test_score_jobs_in_batches_crash_preserves_completed_batches(
+    tmp_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If a fatal error rips through the executor partway through, the
+    batches that ran to completion + their per-batch writes must survive on
+    disk. Simulated by sleeping in the third batch's mock to ensure the
+    first two finish first, then raising SystemExit out of the as_completed
+    loop via a SystemExit (which bypasses the executor's exception envelope
+    — it's a BaseException, not Exception)."""
+    import threading
+    import time as time_mod
+
+    monkeypatch.setattr(search, "BATCH_SIZE", 2)
+    monkeypatch.setattr(
+        search, "_ACTIVE_CONFIG", {"corpus_filter": {"min_fit": None, "min_score": None}}
+    )
+
+    completed_event = threading.Event()
+
+    def scorer(_cv: str, batch: list[dict]) -> dict:
+        if any(j["id"] in {"j4", "j5"} for j in batch):
+            # Wait until first two batches' results are written, then bail.
+            completed_event.wait(timeout=5.0)
+            raise SystemExit("simulated crash mid-scoring")
+        return {str(j["id"]): {"fit": "ok", "score": 5, "reasons": []} for j in batch}
+
+    monkeypatch.setattr(search, "claude_batch_score", scorer)
+
+    # Wrap save_results_merge so we trip completed_event once the first two
+    # batches have persisted — then the third batch (sleeping in scorer)
+    # is allowed to crash.
+    real_save_results = search.save_results_merge
+    persist_count = {"n": 0}
+
+    def trip_after_two(new_jobs: list) -> None:
+        real_save_results(new_jobs)
+        persist_count["n"] += 1
+        if persist_count["n"] >= 2:
+            completed_event.set()
+
+    monkeypatch.setattr(search, "save_results_merge", trip_after_two)
+
+    jobs = [{"id": f"j{i}", "_desc": "x"} for i in range(6)]  # 3 batches of 2
+    # SystemExit is a BaseException — it escapes ThreadPoolExecutor's
+    # standard envelope and propagates out of as_completed. We catch it at
+    # the test level (matching the user spec: "simulate by having the 3rd
+    # batch's future raise SystemExit and catching it at the test level").
+    with contextlib.suppress(SystemExit):
+        search.score_jobs_in_batches(jobs, "cv", persist_per_batch=True)
+
+    on_disk_results = json.loads((tmp_repo / "results.json").read_text())
+    on_disk_seen = set(json.loads((tmp_repo / "seen_jobs.json").read_text()))
+    surviving_ids = {j["id"] for j in on_disk_results}
+    # First two batches' rows survived the simulated crash because they were
+    # written eagerly per-batch. The fact that the third batch crashed
+    # mid-flight didn't roll them back.
+    assert {"j0", "j1", "j2", "j3"} <= surviving_ids, (
+        f"completed batches should survive crash, got {surviving_ids}"
+    )
+    assert {"j0", "j1", "j2", "j3"} <= on_disk_seen
+
+
+# ---------------------------------------------------------------------------
 # _passes_corpus_filter — post-scoring gate (issue #117).
 # ---------------------------------------------------------------------------
 
@@ -1416,6 +1635,61 @@ def test_record_run_history_defaults_filtered_out_zero(
     )
     raw = json.loads((tmp_repo / "run_history.json").read_text())
     assert raw["runs"][0]["totals"]["filtered_out"] == 0
+
+
+def test_record_run_history_includes_batch_counts(
+    tmp_repo: Path,
+) -> None:
+    """run_history.json must carry totals.batches_completed and
+    totals.batches_failed so the UI can surface partial-failure runs."""
+    from argparse import Namespace
+    from datetime import datetime
+    from time import perf_counter
+
+    args = Namespace(all=False, no_enrich=False, all_time=False, pages=None)
+    search._record_run_history(
+        args,
+        new_jobs=[],
+        diagnosis_counts={"ok": 0, "error": 0},
+        per_query_stats=[],
+        run_errors=[],
+        started_at=datetime.now(),
+        started_perf=perf_counter() - 1.0,
+        max_pages=3,
+        filtered_out=2,
+        batches_completed=5,
+        batches_failed=1,
+    )
+    raw = json.loads((tmp_repo / "run_history.json").read_text())
+    totals = raw["runs"][0]["totals"]
+    assert totals["filtered_out"] == 2
+    assert totals["batches_completed"] == 5
+    assert totals["batches_failed"] == 1
+
+
+def test_record_run_history_defaults_batch_counts_zero(
+    tmp_repo: Path,
+) -> None:
+    """Legacy callers that don't pass the new fields get 0 — keeps older
+    history rows parseable and the UI's "show failures" badge silent."""
+    from argparse import Namespace
+    from datetime import datetime
+    from time import perf_counter
+
+    args = Namespace(all=False, no_enrich=False, all_time=False, pages=None)
+    search._record_run_history(
+        args,
+        new_jobs=[],
+        diagnosis_counts={"ok": 0, "error": 0},
+        per_query_stats=[],
+        run_errors=[],
+        started_at=datetime.now(),
+        started_perf=perf_counter() - 1.0,
+        max_pages=3,
+    )
+    totals = json.loads((tmp_repo / "run_history.json").read_text())["runs"][0]["totals"]
+    assert totals["batches_completed"] == 0
+    assert totals["batches_failed"] == 0
 
 
 # ---------------------------------------------------------------------------
