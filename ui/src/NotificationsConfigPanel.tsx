@@ -25,7 +25,7 @@
 //     and by the standalone-card layout, surfaced via a ref-exposed
 //     `saveEnabledChannels()` so a parent can chain save→advance.
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Banner } from './onboarding/components';
 import type {
@@ -157,6 +157,44 @@ export const NotificationsConfigPanel = forwardRef<
   const [telegramConfigured, setTelegramConfigured] = useState(false);
   const [telegramAction, setTelegramAction] = useState<ActionState>({ kind: 'idle' });
 
+  // Inline "Saved ✓" pulse on each Save / Test button. Lives separately
+  // from the persisted Banner (which still shows the human-readable
+  // result + any error message) so the button itself can carry a quick
+  // affirmation without waiting for the user to scan downwards.
+  // 1500ms is the spec's locked-in dwell.
+  const [emailButtonOk, setEmailButtonOk] = useState<'save' | 'test' | null>(null);
+  const [telegramButtonOk, setTelegramButtonOk] = useState<'save' | 'test' | null>(null);
+  const emailFlashTimer = useRef<number | null>(null);
+  const telegramFlashTimer = useRef<number | null>(null);
+  const flashEmailOk = useCallback((verb: 'save' | 'test') => {
+    if (emailFlashTimer.current !== null) {
+      window.clearTimeout(emailFlashTimer.current);
+    }
+    setEmailButtonOk(verb);
+    emailFlashTimer.current = window.setTimeout(() => {
+      setEmailButtonOk(null);
+    }, 1500);
+  }, []);
+  const flashTelegramOk = useCallback((verb: 'save' | 'test') => {
+    if (telegramFlashTimer.current !== null) {
+      window.clearTimeout(telegramFlashTimer.current);
+    }
+    setTelegramButtonOk(verb);
+    telegramFlashTimer.current = window.setTimeout(() => {
+      setTelegramButtonOk(null);
+    }, 1500);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (emailFlashTimer.current !== null) {
+        window.clearTimeout(emailFlashTimer.current);
+      }
+      if (telegramFlashTimer.current !== null) {
+        window.clearTimeout(telegramFlashTimer.current);
+      }
+    };
+  }, []);
+
   // Load existing config on mount. If a channel is already configured,
   // expand it + pre-fill the visible fields. Secrets stay blank.
   useEffect(() => {
@@ -258,13 +296,14 @@ export const NotificationsConfigPanel = forwardRef<
         setPassword('');
         setEmailConfigured(true);
         setEmailAction({ kind: 'ok', message: testBody.message ?? 'Test email sent.' });
+        flashEmailOk('test');
       } else {
         setEmailAction({ kind: 'err', message: testBody.error ?? 'test failed' });
       }
     } catch (e) {
       setEmailAction({ kind: 'err', message: (e as Error).message });
     }
-  }, [validateEmail, buildEmailPayload]);
+  }, [validateEmail, buildEmailPayload, flashEmailOk]);
 
   const onSaveEmail = useCallback(async (): Promise<boolean> => {
     const v = validateEmail();
@@ -281,6 +320,7 @@ export const NotificationsConfigPanel = forwardRef<
         setPassword('');
         setEmailConfigured(true);
         setEmailAction({ kind: 'ok', message: 'Saved.' });
+        flashEmailOk('save');
         return true;
       }
       setEmailAction({ kind: 'err', message: body.error ?? 'save failed' });
@@ -289,7 +329,7 @@ export const NotificationsConfigPanel = forwardRef<
       setEmailAction({ kind: 'err', message: (e as Error).message });
       return false;
     }
-  }, [validateEmail, buildEmailPayload]);
+  }, [validateEmail, buildEmailPayload, flashEmailOk]);
 
   // ---- Telegram channel handlers -------------------------------------
 
@@ -325,13 +365,14 @@ export const NotificationsConfigPanel = forwardRef<
         setBotToken('');
         setTelegramConfigured(true);
         setTelegramAction({ kind: 'ok', message: testBody.message ?? 'Test message sent.' });
+        flashTelegramOk('test');
       } else {
         setTelegramAction({ kind: 'err', message: testBody.error ?? 'test failed' });
       }
     } catch (e) {
       setTelegramAction({ kind: 'err', message: (e as Error).message });
     }
-  }, [validateTelegram, buildTelegramPayload]);
+  }, [validateTelegram, buildTelegramPayload, flashTelegramOk]);
 
   const onSaveTelegram = useCallback(async (): Promise<boolean> => {
     const v = validateTelegram();
@@ -348,6 +389,7 @@ export const NotificationsConfigPanel = forwardRef<
         setBotToken('');
         setTelegramConfigured(true);
         setTelegramAction({ kind: 'ok', message: 'Saved.' });
+        flashTelegramOk('save');
         return true;
       }
       setTelegramAction({ kind: 'err', message: body.error ?? 'save failed' });
@@ -356,7 +398,7 @@ export const NotificationsConfigPanel = forwardRef<
       setTelegramAction({ kind: 'err', message: (e as Error).message });
       return false;
     }
-  }, [validateTelegram, buildTelegramPayload]);
+  }, [validateTelegram, buildTelegramPayload, flashTelegramOk]);
 
   // Expose a single "save whatever is checked" handle so a parent (wizard
   // step) can chain save → advance behind its own Continue button.
@@ -616,22 +658,43 @@ export const NotificationsConfigPanel = forwardRef<
               type="button"
               onClick={() => void onTestEmail()}
               disabled={emailAction.kind === 'loading'}
-              className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-[36px] items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition-colors duration-150 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {emailAction.kind === 'loading' && emailAction.verb === 'test'
-                ? 'Testing…'
-                : 'Test connection'}
+              {emailAction.kind === 'loading' && emailAction.verb === 'test' ? (
+                // Spinner — neutral border on a light grey track.
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
+                  />
+                  Testing…
+                </>
+              ) : emailButtonOk === 'test' ? (
+                <span className="text-emerald-700">Sent ✓</span>
+              ) : (
+                'Test connection'
+              )}
             </button>
             {showSaveButtons && (
               <button
                 type="button"
                 onClick={() => void onSaveEmail()}
                 disabled={emailAction.kind === 'loading'}
-                className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {emailAction.kind === 'loading' && emailAction.verb === 'save'
-                  ? 'Saving…'
-                  : 'Save'}
+                {emailAction.kind === 'loading' && emailAction.verb === 'save' ? (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                    />
+                    Saving…
+                  </>
+                ) : emailButtonOk === 'save' ? (
+                  'Saved ✓'
+                ) : (
+                  'Save'
+                )}
               </button>
             )}
           </div>
@@ -797,22 +860,42 @@ export const NotificationsConfigPanel = forwardRef<
               type="button"
               onClick={() => void onTestTelegram()}
               disabled={telegramAction.kind === 'loading'}
-              className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-[36px] items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition-colors duration-150 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {telegramAction.kind === 'loading' && telegramAction.verb === 'test'
-                ? 'Testing…'
-                : 'Test connection'}
+              {telegramAction.kind === 'loading' && telegramAction.verb === 'test' ? (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
+                  />
+                  Testing…
+                </>
+              ) : telegramButtonOk === 'test' ? (
+                <span className="text-emerald-700">Sent ✓</span>
+              ) : (
+                'Test connection'
+              )}
             </button>
             {showSaveButtons && (
               <button
                 type="button"
                 onClick={() => void onSaveTelegram()}
                 disabled={telegramAction.kind === 'loading'}
-                className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {telegramAction.kind === 'loading' && telegramAction.verb === 'save'
-                  ? 'Saving…'
-                  : 'Save'}
+                {telegramAction.kind === 'loading' && telegramAction.verb === 'save' ? (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                    />
+                    Saving…
+                  </>
+                ) : telegramButtonOk === 'save' ? (
+                  'Saved ✓'
+                ) : (
+                  'Save'
+                )}
               </button>
             )}
           </div>
