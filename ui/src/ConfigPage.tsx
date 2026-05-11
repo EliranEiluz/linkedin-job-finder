@@ -20,6 +20,14 @@ import { ChipInput } from './ChipInput';
 import { ProfileSwitcher } from './ProfileSwitcher';
 import { ConfigSuggestModal, MIN_SIGNALS_FOR_SUGGEST } from './ConfigSuggestModal';
 import { CollapsibleCard } from './configLayout/CollapsibleCard';
+import { ConfigSubNav } from './configLayout/ConfigSubNav';
+import { ConfigSection } from './configLayout/ConfigSection';
+import {
+  CONFIG_SECTIONS,
+  DEFAULT_SECTION,
+  type ConfigSectionId,
+} from './configLayout/types';
+import { useViewport } from './useViewport';
 
 type LoadState =
   | { kind: 'loading' }
@@ -180,6 +188,31 @@ const PriorityChipDraftInput = ({
   );
 };
 
+// Hash-routed sub-section helpers. The Crawler Config tab parks the
+// active section in `location.hash` (#run / #pipeline / #search) so
+// (a) browser back/forward navigates between sub-sections, (b) deep
+// links from a notification or a docs link land on the right pane, and
+// (c) the URL bar tells the user where they are at a glance.
+const SECTION_HASHES = new Set<ConfigSectionId>(
+  CONFIG_SECTIONS.map((s) => s.id),
+);
+const readSectionFromHash = (): ConfigSectionId => {
+  if (typeof window === 'undefined') return DEFAULT_SECTION;
+  const raw = window.location.hash.replace(/^#/, '');
+  return SECTION_HASHES.has(raw as ConfigSectionId)
+    ? (raw as ConfigSectionId)
+    : DEFAULT_SECTION;
+};
+const writeSectionToHash = (id: ConfigSectionId): void => {
+  if (typeof window === 'undefined') return;
+  // Use replaceState so we don't pile up a history entry every time
+  // someone clicks between sub-sections. The App tab nav already does
+  // the same.
+  const url = new URL(window.location.href);
+  url.hash = id;
+  window.history.replaceState(null, '', url.toString());
+};
+
 export const ConfigPage = () => {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [draft, setDraft] = useState<CrawlerConfig | null>(null);
@@ -194,6 +227,40 @@ export const ConfigPage = () => {
   // tooltip explaining why. Threshold is mirrored from the Python script.
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [signalCount, setSignalCount] = useState<number | null>(null);
+
+  // Mobile vs desktop layout split. Mobile (<md) renders all three
+  // sub-sections as accordions; desktop renders a left rail + only the
+  // active section. The hook is matchMedia-driven so it stays cheap.
+  const { isMobile } = useViewport();
+
+  // Active sub-section (desktop sub-nav). Hash-routed: #run / #pipeline
+  // / #search. First-paint defaults to DEFAULT_SECTION on a fresh URL.
+  const [activeSection, setActiveSection] = useState<ConfigSectionId>(() =>
+    readSectionFromHash(),
+  );
+  // Sync the URL once on mount so DEFAULT_SECTION fallbacks become
+  // sticky if the user copies the URL. We only write when the current
+  // hash is missing OR mismatched.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const current = window.location.hash.replace(/^#/, '');
+    if (!SECTION_HASHES.has(current as ConfigSectionId)) {
+      writeSectionToHash(activeSection);
+    }
+    // Listen for back/forward navigation so the sub-nav reflects history.
+    const onHashChange = () => {
+      setActiveSection(readSectionFromHash());
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => { window.removeEventListener('hashchange', onHashChange); };
+    // We deliberately do NOT depend on `activeSection` — that would
+    // re-bind the listener on every section change for no reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const onSectionChange = useCallback((next: ConfigSectionId) => {
+    setActiveSection(next);
+    writeSectionToHash(next);
+  }, []);
 
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
@@ -415,7 +482,18 @@ export const ConfigPage = () => {
       />
 
       <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 pb-36 md:pb-4">
-        <div className="mx-auto flex max-w-4xl flex-col gap-4">
+        <div className="mx-auto flex max-w-6xl flex-col gap-4 md:flex-row md:items-start">
+          {/* Desktop-only left rail: switches the active sub-section.
+              Hidden on mobile — ConfigSection renders all three as
+              accordions there instead. */}
+          {!isMobile && (
+            <ConfigSubNav
+              active={activeSection}
+              onChange={onSectionChange}
+            />
+          )}
+
+          <div className="flex min-w-0 flex-1 flex-col gap-4">
           {/* Profile switcher — switching profiles repoints config.json to a
               different file, then we reload to pull in the new draft state.
               The "Suggest from feedback" button is mounted via the
@@ -449,40 +527,162 @@ export const ConfigPage = () => {
             }
           />
 
-          <ScrapeRunPanel />
+          {/* === Run & Infra section ===================================== */}
+          <ConfigSection
+            meta={CONFIG_SECTIONS[0]}
+            mobile={isMobile}
+            active={activeSection === 'run'}
+          >
+            <ScrapeRunPanel />
+            <SchedulerCard />
+            <RemoteAccessCard />
+            <NotificationsCard />
+          </ConfigSection>
 
-          <SchedulerCard />
+          {/* === AI Pipeline section ===================================== */}
+          <ConfigSection
+            meta={CONFIG_SECTIONS[1]}
+            mobile={isMobile}
+            active={activeSection === 'pipeline'}
+          >
+            {/* LLM provider card — lets the user change the active LLM
+                after onboarding. The Step1LLM wizard step is the same UX,
+                but the wizard variant adds auto-detect + Back/Continue
+                navigation around the shared <LLMProviderSelector />. Here
+                we just write `llm_provider` straight through saveConfig so
+                the change takes effect on the next scraper run without
+                forcing the user to click the bottom "Save" bar. */}
+            <LLMProviderCard
+              current={draft.llm_provider}
+              onChange={(next) => { void saveConfig({ ...draft, llm_provider: next }); }}
+            />
 
-          {/* LLM provider card — lets the user change the active LLM
-              after onboarding. The Step1LLM wizard step is the same UX,
-              but the wizard variant adds auto-detect + Back/Continue
-              navigation around the shared <LLMProviderSelector />. Here
-              we just write `llm_provider` straight through saveConfig so
-              the change takes effect on the next scraper run without
-              forcing the user to click the bottom "Save" bar. */}
-          <LLMProviderCard
-            current={draft.llm_provider}
-            onChange={(next) => { void saveConfig({ ...draft, llm_provider: next }); }}
-          />
+            {/* Corpus filter — post-scoring gate that drops low-fit/score
+                jobs from results.json while leaving them in seen_jobs.json
+                (so they're never re-scored on the next run). Issue #117.
+                normalizeConfig always materializes draft.corpus_filter, so
+                the non-null assertion is sound here. */}
+            <CorpusFilterCard
+              current={draft.corpus_filter ?? { min_fit: null, min_score: null }}
+              onChange={(next) => { setDraft({ ...draft, corpus_filter: next }); }}
+            />
 
-          <RemoteAccessCard />
+            <CollapsibleCard
+              title="Scoring & filtering"
+              persistKey="scoring_filtering"
+              defaultOpen={false}
+              subtitle="Override the LLM scoring prompt or set regex patterns used when the LLM is unavailable."
+            >
+              <div className="mb-4">
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  LLM scoring prompt
+                </label>
+                <p className="mb-1.5 text-[11px] text-slate-500">
+                  Sent to the LLM with your CV and a batch of jobs. Use{' '}
+                  <code className="rounded bg-slate-100 px-1 font-mono">{'{cv}'}</code>{' '}
+                  and{' '}
+                  <code className="rounded bg-slate-100 px-1 font-mono">{'{jobs_json}'}</code>{' '}
+                  placeholders. Leave blank to use the built-in default.
+                </p>
+                <textarea
+                  value={draft.claude_scoring_prompt ?? ''}
+                  onChange={(e) =>
+                    { setDraft({
+                      ...draft,
+                      claude_scoring_prompt:
+                        e.target.value.length > 0 ? e.target.value : undefined,
+                    }); }
+                  }
+                  rows={10}
+                  placeholder="(blank — using built-in default)"
+                  className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 font-mono text-xs leading-relaxed focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
+                />
+              </div>
 
-          <NotificationsCard />
+              <div className="rounded border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => { setShowRegexFallback((v) => !v); }}
+                  className="flex w-full items-center justify-between bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                  aria-expanded={showRegexFallback}
+                >
+                  <span>Regex fallback (only used when LLM scoring is unavailable)</span>
+                  <span className="text-slate-400">{showRegexFallback ? '▼' : '▶'}</span>
+                </button>
+                {showRegexFallback && (
+                  <div className="border-t border-slate-200 p-3">
+                    <div className="mb-3">
+                      <label className="mb-1 block text-xs font-semibold text-slate-700">
+                        Fit-positive regex patterns
+                      </label>
+                      <ChipInput
+                        values={draft.fit_positive_patterns ?? []}
+                        onChange={(next) =>
+                          { setDraft({ ...draft, fit_positive_patterns: next }); }
+                        }
+                        placeholder="e.g. cryptograph, machine.learning"
+                        monospace
+                      />
+                    </div>
+                    <div className="mb-3">
+                      <label className="mb-1 block text-xs font-semibold text-slate-700">
+                        Fit-negative regex patterns
+                      </label>
+                      <ChipInput
+                        values={draft.fit_negative_patterns ?? []}
+                        onChange={(next) =>
+                          { setDraft({ ...draft, fit_negative_patterns: next }); }
+                        }
+                        placeholder="e.g. devSecOps, IT support"
+                        monospace
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-700">
+                        Off-topic title patterns
+                      </label>
+                      <ChipInput
+                        values={draft.offtopic_title_patterns ?? []}
+                        onChange={(next) =>
+                          { setDraft({ ...draft, offtopic_title_patterns: next }); }
+                        }
+                        placeholder="e.g. \\bintern\\b, sales"
+                        monospace
+                      />
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Applied to job titles to drop obvious off-topic hits.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CollapsibleCard>
+          </ConfigSection>
 
-          {/* Corpus filter — post-scoring gate that drops low-fit/score
-              jobs from results.json while leaving them in seen_jobs.json
-              (so they're never re-scored on the next run). Issue #117.
-              normalizeConfig always materializes draft.corpus_filter, so
-              the non-null assertion is sound here. */}
-          <CorpusFilterCard
-            current={draft.corpus_filter ?? { min_fit: null, min_score: null }}
-            onChange={(next) => { setDraft({ ...draft, corpus_filter: next }); }}
-          />
+          {/* === Search Shape section ==================================== */}
+          <ConfigSection
+            meta={CONFIG_SECTIONS[2]}
+            mobile={isMobile}
+            active={activeSection === 'search'}
+          >
+            <CategoryManager
+              categories={draft.categories}
+              onChange={(categories) => { setDraft({ ...draft, categories }); }}
+            />
 
-          <CategoryManager
-            categories={draft.categories}
-            onChange={(categories) => { setDraft({ ...draft, categories }); }}
-          />
+            <Card title="Priority companies">
+              <p className="mb-2 text-xs text-slate-500">
+                Lowercased on save. Match is substring-in-company-name. Press
+                Enter or comma to add a chip; click × to remove.
+              </p>
+              <PriorityCompaniesEditor
+                values={draft.priority_companies}
+                onChange={(next) => { setDraft({ ...draft, priority_companies: next }); }}
+              />
+              <div className="mt-1 text-right text-[11px] tabular-nums text-slate-500">
+                {priorityCount} {priorityCount === 1 ? 'company' : 'companies'}
+              </div>
+            </Card>
 
           <Card title="Search behavior">
             <p className="mb-3 text-xs text-slate-500">
@@ -605,106 +805,7 @@ export const ConfigPage = () => {
               </div>
             </div>
           </Card>
-
-          <CollapsibleCard title="Scoring & filtering">
-            <div className="mb-4">
-              <label className="mb-1 block text-xs font-semibold text-slate-700">
-                LLM scoring prompt
-              </label>
-              <p className="mb-1.5 text-[11px] text-slate-500">
-                Sent to the LLM with your CV and a batch of jobs. Use{' '}
-                <code className="rounded bg-slate-100 px-1 font-mono">{'{cv}'}</code>{' '}
-                and{' '}
-                <code className="rounded bg-slate-100 px-1 font-mono">{'{jobs_json}'}</code>{' '}
-                placeholders. Leave blank to use the built-in default.
-              </p>
-              <textarea
-                value={draft.claude_scoring_prompt ?? ''}
-                onChange={(e) =>
-                  { setDraft({
-                    ...draft,
-                    claude_scoring_prompt:
-                      e.target.value.length > 0 ? e.target.value : undefined,
-                  }); }
-                }
-                rows={10}
-                placeholder="(blank — using built-in default)"
-                className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 font-mono text-xs leading-relaxed focus:border-brand-700 focus:outline-none focus:ring-1 focus:ring-brand-700"
-              />
-            </div>
-
-            <div className="rounded border border-slate-200">
-              <button
-                type="button"
-                onClick={() => { setShowRegexFallback((v) => !v); }}
-                className="flex w-full items-center justify-between bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                aria-expanded={showRegexFallback}
-              >
-                <span>Regex fallback (only used when LLM scoring is unavailable)</span>
-                <span className="text-slate-400">{showRegexFallback ? '▼' : '▶'}</span>
-              </button>
-              {showRegexFallback && (
-                <div className="border-t border-slate-200 p-3">
-                  <div className="mb-3">
-                    <label className="mb-1 block text-xs font-semibold text-slate-700">
-                      Fit-positive regex patterns
-                    </label>
-                    <ChipInput
-                      values={draft.fit_positive_patterns ?? []}
-                      onChange={(next) =>
-                        { setDraft({ ...draft, fit_positive_patterns: next }); }
-                      }
-                      placeholder="e.g. cryptograph, machine.learning"
-                      monospace
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="mb-1 block text-xs font-semibold text-slate-700">
-                      Fit-negative regex patterns
-                    </label>
-                    <ChipInput
-                      values={draft.fit_negative_patterns ?? []}
-                      onChange={(next) =>
-                        { setDraft({ ...draft, fit_negative_patterns: next }); }
-                      }
-                      placeholder="e.g. devSecOps, IT support"
-                      monospace
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold text-slate-700">
-                      Off-topic title patterns
-                    </label>
-                    <ChipInput
-                      values={draft.offtopic_title_patterns ?? []}
-                      onChange={(next) =>
-                        { setDraft({ ...draft, offtopic_title_patterns: next }); }
-                      }
-                      placeholder="e.g. \\bintern\\b, sales"
-                      monospace
-                    />
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      Applied to job titles to drop obvious off-topic hits.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </CollapsibleCard>
-
-          <Card title="Priority companies">
-            <p className="mb-2 text-xs text-slate-500">
-              Lowercased on save. Match is substring-in-company-name. Press
-              Enter or comma to add a chip; click × to remove.
-            </p>
-            <PriorityCompaniesEditor
-              values={draft.priority_companies}
-              onChange={(next) => { setDraft({ ...draft, priority_companies: next }); }}
-            />
-            <div className="mt-1 text-right text-[11px] tabular-nums text-slate-500">
-              {priorityCount} {priorityCount === 1 ? 'company' : 'companies'}
-            </div>
-          </Card>
+          </ConfigSection>
 
           {/* Action bar — sticks to the bottom of the scroll container.
               Page padding-bottom (pb-36 below md, pb-4 at md+) reserves room
@@ -740,8 +841,9 @@ export const ConfigPage = () => {
               </button>
             </div>
           </div>
-        </div>
-      </div>
+          </div>{/* right column */}
+        </div>{/* max-w-6xl row */}
+      </div>{/* scroll container */}
     </div>
   );
 };

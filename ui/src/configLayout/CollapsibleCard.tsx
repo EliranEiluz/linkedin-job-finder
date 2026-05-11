@@ -111,9 +111,7 @@ export const CollapsibleCard = ({
   // (if persistKey is set); otherwise defaultOpen. Re-resolving on every
   // render would clobber user toggles.
   const initialRef = useRef<boolean>(
-    controlledOpen !== undefined
-      ? controlledOpen
-      : (readPersisted(persistKey) ?? defaultOpen),
+    controlledOpen ?? readPersisted(persistKey) ?? defaultOpen,
   );
   const [innerOpen, setInnerOpen] = useState<boolean>(initialRef.current);
   const isControlled = controlledOpen !== undefined;
