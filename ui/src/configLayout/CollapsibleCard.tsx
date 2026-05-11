@@ -155,66 +155,67 @@ export const CollapsibleCard = ({
         className,
       )}
     >
-      <button
-        type="button"
-        onClick={toggle}
-        onKeyDown={onKeyDown}
-        aria-expanded={open}
-        aria-controls={bodyId}
-        // The header row is the entire click target. min-h-[44px] for
-        // mobile tap targets (per WCAG 2.5.5 + the brief's explicit
-        // 44px ask). Hover state covers the full row.
+      {/* Header row. The CLICK TARGET is a button that covers the full
+          row (left half = chevron + title); the right slot is rendered
+          OUTSIDE that button so it can host its own interactive
+          controls (e.g. a refresh button) without nesting a <button>
+          inside a <button> — which the HTML parser disallows and
+          React DOM warns about. The two siblings sit in a flex row;
+          the button stretches via flex-1 so a click anywhere on its
+          area expands the card. */}
+      <div
         className={clsx(
-          'group flex min-h-[44px] w-full items-center gap-3 rounded-t-lg px-4 py-3 text-left transition-colors duration-150',
-          'hover:bg-slate-50 focus-visible:bg-slate-50',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-300',
-          // When the card is closed, round the bottom corners too — no
-          // body to anchor a square edge against.
+          'flex min-h-[44px] w-full items-center gap-3 rounded-t-lg pr-4 transition-colors duration-150',
+          'hover:bg-slate-50 focus-within:bg-slate-50',
           !open && 'rounded-b-lg',
         )}
       >
-        {/* Chevron — rotates 90deg with a 150ms ease. Its parent <button>
-            owns the click; the chevron itself is decorative. */}
-        <span
-          aria-hidden="true"
+        <button
+          type="button"
+          onClick={toggle}
+          onKeyDown={onKeyDown}
+          aria-expanded={open}
+          aria-controls={bodyId}
           className={clsx(
-            'inline-block text-slate-400 transition-transform duration-150 ease-out',
-            open ? 'rotate-90' : 'rotate-0',
+            'group flex flex-1 items-center gap-3 self-stretch rounded-t-lg px-4 py-3 text-left',
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-300',
+            !open && 'rounded-b-lg',
           )}
         >
-          ▶
-        </span>
-        <h2 className="flex flex-1 items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-600">
-          {title}
-          {dirty && (
-            <span
-              aria-label="Unsaved changes"
-              title="Unsaved changes in this section"
-              className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-brand-700"
-            />
-          )}
-        </h2>
-        {/* Right slot: status chips, badges etc. — always visible. */}
-        {right && (
-          // Stop propagation so a click on an inline action inside `right`
-          // (e.g. a refresh button) doesn't also toggle the section. Cards
-          // that don't pass interactive content here are unaffected.
+          {/* Chevron — rotates 90deg with a 150ms ease. */}
           <span
-            className="ml-auto inline-flex items-center gap-2"
-            onClick={(e) => { e.stopPropagation(); }}
-            onKeyDown={(e) => { e.stopPropagation(); }}
-            role="presentation"
+            aria-hidden="true"
+            className={clsx(
+              'inline-block text-slate-400 transition-transform duration-150 ease-out',
+              open ? 'rotate-90' : 'rotate-0',
+            )}
           >
-            {right}
+            ▶
           </span>
+          <h2 className="flex flex-1 items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-600">
+            {title}
+            {dirty && (
+              <span
+                aria-label="Unsaved changes"
+                title="Unsaved changes in this section"
+                className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-brand-700"
+              />
+            )}
+          </h2>
+          {/* Summary chip: collapsed-only. Lives inside the click area
+              so a tap on the chip toggles the section too. */}
+          {!open && summary && (
+            <span className="inline-flex items-center">{summary}</span>
+          )}
+        </button>
+        {/* Right slot: status chips, refresh button, etc. — always
+            visible. Rendered as a SIBLING of the header button so any
+            interactive content it carries is valid HTML and doesn't
+            need its own stopPropagation. */}
+        {right && (
+          <span className="inline-flex items-center gap-2">{right}</span>
         )}
-        {/* Summary chip: collapsed-only. */}
-        {!open && summary && (
-          <span className={clsx('inline-flex items-center', right ? '' : 'ml-auto')}>
-            {summary}
-          </span>
-        )}
-      </button>
+      </div>
       {subtitle && open && (
         <p className="px-4 -mt-1 pb-2 text-xs text-slate-500">{subtitle}</p>
       )}

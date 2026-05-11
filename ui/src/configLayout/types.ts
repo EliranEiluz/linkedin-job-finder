@@ -13,7 +13,15 @@ export interface ConfigSectionMeta {
   subtitle: string;
 }
 
-export const CONFIG_SECTIONS: ConfigSectionMeta[] = [
+// Tuple type (not just `[]`) so `CONFIG_SECTIONS[0]` is known to be a
+// real ConfigSectionMeta rather than `ConfigSectionMeta | undefined`
+// under `noUncheckedIndexedAccess`. The three slots are stable per
+// the section layout and aren't expected to grow without a UI rework.
+export const CONFIG_SECTIONS: readonly [
+  ConfigSectionMeta,
+  ConfigSectionMeta,
+  ConfigSectionMeta,
+] = [
   {
     id: 'run',
     label: 'Run & Infra',

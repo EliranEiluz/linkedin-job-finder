@@ -291,6 +291,87 @@ describe('NotificationsConfigPanel', () => {
     expect(await screen.findByText('Telegram message sent')).toBeInTheDocument();
   });
 
+  it('decouples enable-toggle from form visibility (un-ticking Enable does NOT collapse)', async () => {
+    // #117: previously the only way to hide the SMTP/Telegram form was
+    // to un-tick "Enable email channel" — semantic disable conflated
+    // with visual collapse. Now the checkbox sets enabled/disabled and
+    // the form stays on screen as long as the user wants. The form is
+    // gated on `emailExpanded`, not `emailEnabled`.
+    await mountWithStatus({
+      ok: true,
+      channels: {
+        email: {
+          configured: true,
+          host: 'smtp.gmail.com',
+          port: 587,
+          user: 'alice@example.com',
+          email_to: 'alice@example.com',
+          ssl: false,
+        },
+        telegram: { configured: false, chat_id: '' },
+      },
+    });
+    // Configured email auto-expands AND auto-enables. The form body's
+    // "App password" input is the canary that the form is mounted.
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText('(saved — leave blank to keep)'),
+      ).toBeInTheDocument();
+    });
+    // Un-tick the "Enable email channel" checkbox.
+    const enableCheckbox = screen.getByLabelText('Enable email channel');
+    expect((enableCheckbox as HTMLInputElement).checked).toBe(true);
+    act(() => {
+      fireEvent.click(enableCheckbox);
+    });
+    expect((enableCheckbox as HTMLInputElement).checked).toBe(false);
+    // Form body STILL on screen — the password input must still be in
+    // the DOM even though the channel is now disabled.
+    expect(
+      screen.getByPlaceholderText('(saved — leave blank to keep)'),
+    ).toBeInTheDocument();
+  });
+
+  it('the header row click toggles form visibility WITHOUT toggling enable', async () => {
+    // Inverse of the previous test: clicking the chevron / title region
+    // should collapse the form; the Enable checkbox must NOT flip.
+    await mountWithStatus({
+      ok: true,
+      channels: {
+        email: {
+          configured: true,
+          host: 'smtp.gmail.com',
+          port: 587,
+          user: 'alice@example.com',
+          email_to: 'alice@example.com',
+          ssl: false,
+        },
+        telegram: { configured: false, chat_id: '' },
+      },
+    });
+    const enableCheckbox = screen.getByLabelText('Enable email channel');
+    // Initially auto-expanded + auto-enabled.
+    expect((enableCheckbox as HTMLInputElement).checked).toBe(true);
+    expect(
+      screen.getByPlaceholderText('(saved — leave blank to keep)'),
+    ).toBeInTheDocument();
+    // The header button is the one with aria-expanded — find it via
+    // aria-controls (we set id="email-channel-body" on the body).
+    const headerButton = document.querySelector(
+      'button[aria-controls="email-channel-body"]',
+    );
+    if (!headerButton) throw new Error('expected an email header button');
+    act(() => {
+      fireEvent.click(headerButton);
+    });
+    // Form collapsed — password input gone.
+    expect(
+      screen.queryByPlaceholderText('(saved — leave blank to keep)'),
+    ).not.toBeInTheDocument();
+    // Enable state preserved.
+    expect((enableCheckbox as HTMLInputElement).checked).toBe(true);
+  });
+
   it('saveEnabledChannels (via ref) only POSTs save for channels currently enabled', async () => {
     let smtpCalls = 0;
     let telegramCalls = 0;
