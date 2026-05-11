@@ -76,6 +76,41 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { id: 'custom', label: 'Custom', host: '', port: 587, ssl: false },
 ];
 
+// Tiny inline copy-to-clipboard button. Tracks its own "Copied" pulse
+// (1.5s) so the user gets immediate feedback. Mirrors the same helper
+// in RemoteAccessCard — kept local rather than lifted to a shared
+// module because the two callsites have slightly different paddings.
+const InlineCopyButton = ({
+  text,
+  label = 'Copy',
+}: {
+  text: string;
+  label?: string;
+}) => {
+  const [copied, setCopied] = useState(false);
+  const onClick = () => {
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => { setCopied(false); }, 1500);
+      },
+      () => {
+        /* clipboard denied — manual copy still works */
+      },
+    );
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 transition-colors duration-150 hover:bg-slate-100"
+      title={`Copy ${label.toLowerCase()}`}
+    >
+      {copied ? 'Copied ✓' : label}
+    </button>
+  );
+};
+
 const findPreset = (host: string, port: number, ssl: boolean): string => {
   const m = PROVIDER_PRESETS.find(
     (p) => p.id !== 'custom' && p.host === host && p.port === port && p.ssl === ssl,
@@ -658,6 +693,7 @@ export const NotificationsConfigPanel = forwardRef<
               type="button"
               onClick={() => void onTestEmail()}
               disabled={emailAction.kind === 'loading'}
+              title="Save the SMTP settings and send a real test email to the recipient address."
               className="inline-flex min-h-[36px] items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition-colors duration-150 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {emailAction.kind === 'loading' && emailAction.verb === 'test' ? (
@@ -765,8 +801,18 @@ export const NotificationsConfigPanel = forwardRef<
               Send a message via a bot after each scrape. Free, no SMTP, no email account needed.
             </p>
             {telegramConfigured && !telegramExpanded && chatId && (
-              <p className="mt-1 text-[11px] text-slate-500">
+              <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-slate-500">
                 chat <span className="font-mono">{chatId}</span>
+                {/* Wrap copy in a span that stops propagation — the
+                    surrounding <button> would otherwise eat the click
+                    and toggle the form's expanded state. */}
+                <span
+                  onClick={(e) => { e.stopPropagation(); }}
+                  onKeyDown={(e) => { e.stopPropagation(); }}
+                  role="presentation"
+                >
+                  <InlineCopyButton text={chatId} />
+                </span>
               </p>
             )}
           </div>
@@ -845,14 +891,20 @@ export const NotificationsConfigPanel = forwardRef<
 
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600">Chat ID</label>
-            <input
-              type="text"
-              value={chatId}
-              onChange={(e) => { setChatId(e.target.value); }}
-              placeholder="e.g. 123456789"
-              autoComplete="off"
-              className="w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={chatId}
+                onChange={(e) => { setChatId(e.target.value); }}
+                placeholder="e.g. 123456789"
+                autoComplete="off"
+                className="flex-1 rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+              {/* Copy is useful when the user just pasted the chat ID
+                  from getUpdates and now needs it for a script / docs;
+                  also handy when revisiting the configured value. */}
+              {chatId && <InlineCopyButton text={chatId} />}
+            </div>
           </div>
 
           <div className="flex items-center gap-2 pt-1">
@@ -860,6 +912,7 @@ export const NotificationsConfigPanel = forwardRef<
               type="button"
               onClick={() => void onTestTelegram()}
               disabled={telegramAction.kind === 'loading'}
+              title="Save the Telegram credentials and send a real test message to the configured chat."
               className="inline-flex min-h-[36px] items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition-colors duration-150 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {telegramAction.kind === 'loading' && telegramAction.verb === 'test' ? (

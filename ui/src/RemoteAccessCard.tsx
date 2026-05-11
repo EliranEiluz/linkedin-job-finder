@@ -238,10 +238,13 @@ const TailscaleSection = ({
         <div className="border-t border-slate-200 px-3 py-2 text-xs text-slate-700">
           <ol className="ml-4 list-decimal space-y-1">
             <li>
-              Install:{' '}
-              <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">
-                {install.cmd}
-              </code>
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                Install:{' '}
+                <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">
+                  {install.cmd}
+                </code>
+                <CopyButton text={install.cmd} />
+              </span>
               {install.note && (
                 <div className="mt-0.5 text-[11px] text-slate-500">{install.note}</div>
               )}
@@ -361,10 +364,13 @@ const CloudflareSection = ({
         <div className="border-t border-slate-200 px-3 py-2 text-xs text-slate-700">
           <ol className="ml-4 list-decimal space-y-1">
             <li>
-              Install:{' '}
-              <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">
-                {install.cmd}
-              </code>
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                Install:{' '}
+                <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">
+                  {install.cmd}
+                </code>
+                <CopyButton text={install.cmd} />
+              </span>
               {install.note && (
                 <div className="mt-0.5 text-[11px] text-slate-500">{install.note}</div>
               )}
