@@ -19,6 +19,7 @@ import { CategoryManager } from './CategoryManager';
 import { ChipInput } from './ChipInput';
 import { ProfileSwitcher } from './ProfileSwitcher';
 import { ConfigSuggestModal, MIN_SIGNALS_FOR_SUGGEST } from './ConfigSuggestModal';
+import { SaveChangesBar } from './SaveChangesBar';
 import { CollapsibleCard } from './configLayout/CollapsibleCard';
 import { ConfigSubNav } from './configLayout/ConfigSubNav';
 import { ConfigSection } from './configLayout/ConfigSection';
@@ -580,7 +581,13 @@ export const ConfigPage = () => {
         onApply={(next) => saveConfig(next)}
       />
 
-      <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 pb-36 md:pb-4">
+      {/* Bottom padding reserves room for the fixed SaveChangesBar so
+          the last content card never sits under the bar when the user
+          scrolls to the end. Same value on mobile and desktop because
+          the bar is now `position: fixed` (was `sticky` and took its
+          own layout space at desktop widths). pb-28 ≈ 112px clears the
+          bar's ~72px height + safe-area inset + breathing room. */}
+      <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 pb-28">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 md:flex-row md:items-start">
           {/* Desktop-only left rail: switches the active sub-section.
               Hidden on mobile — ConfigSection renders all three as
@@ -914,40 +921,19 @@ export const ConfigPage = () => {
           </Card>
           </ConfigSection>
 
-          {/* Action bar — sticks to the bottom of the scroll container.
-              Page padding-bottom (pb-36 below md, pb-4 at md+) reserves room
-              so the bar never floats over content. Labels shorten on mobile
-              so all 3 buttons fit on a 393px viewport; full labels return
-              at md+. */}
-          <div className="sticky bottom-0 -mx-4 flex items-center justify-between gap-2 border-t border-slate-200 bg-white px-4 py-3">
-            <button
-              type="button"
-              onClick={resetToDefaults}
-              className="min-h-[44px] rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-amber-400 hover:text-amber-700"
-              title="Replace draft with the in-file defaults"
-            >
-              <span className="md:hidden">Reset</span>
-              <span className="hidden md:inline">Reset to defaults</span>
-            </button>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={discard}
-                disabled={!dirty || saving}
-                className="min-h-[44px] rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Discard
-              </button>
-              <button
-                type="button"
-                onClick={() => void save()}
-                disabled={!dirty || saving}
-                className="min-h-[44px] rounded bg-brand-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {saving ? 'Saving…' : <><span className="md:hidden">Save</span><span className="hidden md:inline">Save changes</span></>}
-              </button>
-            </div>
-          </div>
+          {/* Action bar — see SaveChangesBar.tsx for positioning notes.
+              Page padding-bottom (pb-36 below md, pb-4 at md+) reserves
+              room so the bar never floats over content. */}
+          <SaveChangesBar
+            dirty={dirty}
+            saving={saving}
+            // Return the promise so the bar can await the write and
+            // flash "Saved ✓" only after success. Errors are toasted
+            // by saveConfig; the bar swallows the rejection.
+            onSave={save}
+            onDiscard={discard}
+            onResetDefaults={resetToDefaults}
+          />
           </div>{/* right column */}
         </div>{/* max-w-6xl row */}
       </div>{/* scroll container */}
