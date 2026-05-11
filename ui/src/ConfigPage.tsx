@@ -13,6 +13,7 @@ import { ScrapeRunPanel } from './ScrapeRunPanel';
 import { SchedulerCard } from './SchedulerCard';
 import { LLMProviderCard } from './LLMProviderCard';
 import { RemoteAccessCard } from './RemoteAccessCard';
+import { NotificationsCard } from './NotificationsCard';
 import { CategoryManager } from './CategoryManager';
 import { ChipInput } from './ChipInput';
 import { ProfileSwitcher } from './ProfileSwitcher';
@@ -493,6 +494,8 @@ export const ConfigPage = () => {
           />
 
           <RemoteAccessCard />
+
+          <NotificationsCard />
 
           <CategoryManager
             categories={draft.categories}

@@ -1,77 +1,23 @@
-// Step 6 — Notifications. Multi-select: each scrape always writes
-// digest.html locally; on top of that the user can opt into Email and/or
-// Telegram (independent — both can be on simultaneously). Local has no
-// configuration to save; Email and Telegram each have their own collapsed
-// form + per-channel Test / Save buttons.
+// Step 6 — Notifications. Thin wizard wrapper around the shared
+// NotificationsConfigPanel. The panel owns ALL of the per-channel UI and
+// state (Email + Telegram); this file just adds the wizard's heading,
+// intro paragraph, BackButton + "Save & continue" button.
 //
-// Save flow (per channel): POST /api/notifications/save-{smtp|telegram}
-// then POST /api/notifications/test-{smtp|telegram}. The test step reads
-// from disk, so save must come first. Empty secret = preserve the saved
-// one (status returns *configured but never the value).
+// Save flow on Continue: the shared panel exposes
+// `saveEnabledChannels()` via ref — it returns false when an enabled
+// channel fails validation, so the wizard keeps the user on this step
+// until they fix it.
+//
+// The post-onboarding Crawler Config "Notifications" card (issue #113)
+// renders the same panel via NotificationsCard.tsx — the panel itself is
+// the single source of truth for the form.
 
-import { useCallback, useEffect, useState } from 'react';
-import clsx from 'clsx';
-import { Banner, BackButton } from '../components';
-import type {
-  NotificationsActionResponse,
-  NotificationsStatusResponse,
-} from '../types';
-
-// SMTP provider presets — provider-agnostic copy, no model versioning.
-interface ProviderPreset {
-  id: string;
-  label: string;
-  host: string;
-  port: number;
-  ssl: boolean;
-  hint?: string;
-}
-const PROVIDER_PRESETS: ProviderPreset[] = [
-  {
-    id: 'gmail',
-    label: 'Gmail',
-    host: 'smtp.gmail.com',
-    port: 587,
-    ssl: false,
-    hint: 'Generate an app password at https://myaccount.google.com/apppasswords',
-  },
-  {
-    id: 'icloud',
-    label: 'iCloud',
-    host: 'smtp.mail.me.com',
-    port: 587,
-    ssl: false,
-    hint: 'iCloud requires an app-specific password (Apple ID security settings).',
-  },
-  {
-    id: 'fastmail',
-    label: 'Fastmail',
-    host: 'smtp.fastmail.com',
-    port: 465,
-    ssl: true,
-  },
-  {
-    id: 'outlook',
-    label: 'Outlook',
-    host: 'smtp.office365.com',
-    port: 587,
-    ssl: false,
-  },
-  { id: 'custom', label: 'Custom', host: '', port: 587, ssl: false },
-];
-
-const findPreset = (host: string, port: number, ssl: boolean): string => {
-  const m = PROVIDER_PRESETS.find(
-    (p) => p.id !== 'custom' && p.host === host && p.port === port && p.ssl === ssl,
-  );
-  return m ? m.id : 'custom';
-};
-
-type ActionState =
-  | { kind: 'idle' }
-  | { kind: 'loading'; verb: 'test' | 'save' }
-  | { kind: 'ok'; message: string }
-  | { kind: 'err'; message: string };
+import { useCallback, useRef, useState } from 'react';
+import { BackButton } from '../components';
+import {
+  NotificationsConfigPanel,
+  type NotificationsConfigPanelHandle,
+} from '../../NotificationsConfigPanel';
 
 export const Step6Notifications = ({
   onAdvance,
@@ -80,240 +26,22 @@ export const Step6Notifications = ({
   onAdvance: () => void;
   onBack: () => void;
 }) => {
-  // Multi-select per channel. Both can be on; both off = local-only fallback.
-  const [emailEnabled, setEmailEnabled] = useState(false);
-  const [telegramEnabled, setTelegramEnabled] = useState(false);
+  const panelRef = useRef<NotificationsConfigPanelHandle>(null);
+  const [busy, setBusy] = useState(false);
 
-  // SMTP form state.
-  const [presetId, setPresetId] = useState<string>('gmail');
-  const [host, setHost] = useState('smtp.gmail.com');
-  const [port, setPort] = useState<string>('587');
-  const [user, setUser] = useState('');
-  const [password, setPassword] = useState('');
-  const [emailTo, setEmailTo] = useState('');
-  const [useSsl, setUseSsl] = useState(false);
-  const [emailConfigured, setEmailConfigured] = useState(false);
-  const [emailAction, setEmailAction] = useState<ActionState>({ kind: 'idle' });
-
-  // Telegram form state. Bot token is treated like the SMTP password —
-  // never round-tripped from /status, blank input = preserve the saved one.
-  const [botToken, setBotToken] = useState('');
-  const [chatId, setChatId] = useState('');
-  const [telegramConfigured, setTelegramConfigured] = useState(false);
-  const [telegramAction, setTelegramAction] = useState<ActionState>({ kind: 'idle' });
-
-  // Load existing config on mount. If a channel is already configured,
-  // expand it + pre-fill the visible fields. Secrets stay blank.
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(`/api/notifications/status?t=${Date.now().toString()}`);
-        if (!res.ok) return;
-        const body = (await res.json()) as NotificationsStatusResponse;
-        if (!body.ok) return;
-
-        const email = body.channels.email;
-        if (email.configured) {
-          setEmailEnabled(true);
-          setEmailConfigured(true);
-          setHost(email.host || 'smtp.gmail.com');
-          setPort(email.port != null ? String(email.port) : '587');
-          setUser(email.user || '');
-          setEmailTo(email.email_to || '');
-          setUseSsl(email.ssl);
-          setPresetId(findPreset(email.host || '', email.port ?? 587, email.ssl));
-        }
-
-        const telegram = body.channels.telegram;
-        if (telegram.configured) {
-          setTelegramEnabled(true);
-          setTelegramConfigured(true);
-          setChatId(telegram.chat_id || '');
-        }
-      } catch {
-        /* leave defaults — first-time user */
-      }
-    })();
-  }, []);
-
-  const onPresetChange = useCallback((id: string) => {
-    setPresetId(id);
-    const p = PROVIDER_PRESETS.find((x) => x.id === id);
-    if (!p) return;
-    if (id !== 'custom') {
-      setHost(p.host);
-      setPort(String(p.port));
-      setUseSsl(p.ssl);
-    }
-  }, []);
-
-  // Auto-toggle SSL on port 465 (SMTPS implicit). Backend mirrors this
-  // logic so wizard and nightly send agree on SSL state.
-  const onPortChange = useCallback((next: string) => {
-    setPort(next);
-    if (next.trim() === '465') setUseSsl(true);
-  }, []);
-
-  // ---- Email channel handlers ----------------------------------------
-
-  const buildEmailPayload = useCallback(() => {
-    const portInt = parseInt(port.trim(), 10);
-    return {
-      host: host.trim(),
-      port: Number.isFinite(portInt) ? portInt : 587,
-      user: user.trim(),
-      password,
-      email_to: emailTo.trim(),
-      use_ssl: useSsl,
-    };
-  }, [host, port, user, password, emailTo, useSsl]);
-
-  const validateEmail = useCallback((): string | null => {
-    if (!host.trim()) return 'SMTP host is required';
-    const p = parseInt(port.trim(), 10);
-    if (!Number.isFinite(p) || p < 1 || p > 65535) return 'Port must be 1-65535';
-    if (!user.trim()) return 'Username is required';
-    if (!password && !emailConfigured) return 'App password is required';
-    return null;
-  }, [host, port, user, password, emailConfigured]);
-
-  const onTestEmail = useCallback(async () => {
-    const v = validateEmail();
-    if (v) { setEmailAction({ kind: 'err', message: v }); return; }
-    setEmailAction({ kind: 'loading', verb: 'test' });
-    try {
-      const saveRes = await fetch('/api/notifications/save-smtp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildEmailPayload()),
-      });
-      const saveBody = (await saveRes.json()) as NotificationsActionResponse;
-      if (!saveBody.ok) {
-        setEmailAction({ kind: 'err', message: saveBody.error ?? 'save failed' });
-        return;
-      }
-      const testRes = await fetch('/api/notifications/test-smtp', { method: 'POST' });
-      const testBody = (await testRes.json()) as NotificationsActionResponse;
-      if (testBody.ok) {
-        setPassword('');
-        setEmailConfigured(true);
-        setEmailAction({ kind: 'ok', message: testBody.message ?? 'Test email sent.' });
-      } else {
-        setEmailAction({ kind: 'err', message: testBody.error ?? 'test failed' });
-      }
-    } catch (e) {
-      setEmailAction({ kind: 'err', message: (e as Error).message });
-    }
-  }, [validateEmail, buildEmailPayload]);
-
-  const onSaveEmail = useCallback(async (): Promise<boolean> => {
-    const v = validateEmail();
-    if (v) { setEmailAction({ kind: 'err', message: v }); return false; }
-    setEmailAction({ kind: 'loading', verb: 'save' });
-    try {
-      const res = await fetch('/api/notifications/save-smtp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildEmailPayload()),
-      });
-      const body = (await res.json()) as NotificationsActionResponse;
-      if (body.ok) {
-        setPassword('');
-        setEmailConfigured(true);
-        setEmailAction({ kind: 'ok', message: 'Saved.' });
-        return true;
-      }
-      setEmailAction({ kind: 'err', message: body.error ?? 'save failed' });
-      return false;
-    } catch (e) {
-      setEmailAction({ kind: 'err', message: (e as Error).message });
-      return false;
-    }
-  }, [validateEmail, buildEmailPayload]);
-
-  // ---- Telegram channel handlers -------------------------------------
-
-  const buildTelegramPayload = useCallback(() => ({
-    bot_token: botToken,
-    chat_id: chatId.trim(),
-  }), [botToken, chatId]);
-
-  const validateTelegram = useCallback((): string | null => {
-    if (!chatId.trim()) return 'Chat ID is required';
-    if (!botToken && !telegramConfigured) return 'Bot token is required';
-    return null;
-  }, [chatId, botToken, telegramConfigured]);
-
-  const onTestTelegram = useCallback(async () => {
-    const v = validateTelegram();
-    if (v) { setTelegramAction({ kind: 'err', message: v }); return; }
-    setTelegramAction({ kind: 'loading', verb: 'test' });
-    try {
-      const saveRes = await fetch('/api/notifications/save-telegram', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildTelegramPayload()),
-      });
-      const saveBody = (await saveRes.json()) as NotificationsActionResponse;
-      if (!saveBody.ok) {
-        setTelegramAction({ kind: 'err', message: saveBody.error ?? 'save failed' });
-        return;
-      }
-      const testRes = await fetch('/api/notifications/test-telegram', { method: 'POST' });
-      const testBody = (await testRes.json()) as NotificationsActionResponse;
-      if (testBody.ok) {
-        setBotToken('');
-        setTelegramConfigured(true);
-        setTelegramAction({ kind: 'ok', message: testBody.message ?? 'Test message sent.' });
-      } else {
-        setTelegramAction({ kind: 'err', message: testBody.error ?? 'test failed' });
-      }
-    } catch (e) {
-      setTelegramAction({ kind: 'err', message: (e as Error).message });
-    }
-  }, [validateTelegram, buildTelegramPayload]);
-
-  const onSaveTelegram = useCallback(async (): Promise<boolean> => {
-    const v = validateTelegram();
-    if (v) { setTelegramAction({ kind: 'err', message: v }); return false; }
-    setTelegramAction({ kind: 'loading', verb: 'save' });
-    try {
-      const res = await fetch('/api/notifications/save-telegram', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildTelegramPayload()),
-      });
-      const body = (await res.json()) as NotificationsActionResponse;
-      if (body.ok) {
-        setBotToken('');
-        setTelegramConfigured(true);
-        setTelegramAction({ kind: 'ok', message: 'Saved.' });
-        return true;
-      }
-      setTelegramAction({ kind: 'err', message: body.error ?? 'save failed' });
-      return false;
-    } catch (e) {
-      setTelegramAction({ kind: 'err', message: (e as Error).message });
-      return false;
-    }
-  }, [validateTelegram, buildTelegramPayload]);
-
-  // ---- Continue button -----------------------------------------------
-
-  // Save whatever's checked + has unsaved changes, then advance. If a
-  // channel is checked but its form is invalid, surface the inline error
-  // and don't advance until the user fixes it.
   const onContinue = useCallback(async () => {
-    if (emailEnabled) {
-      const ok = await onSaveEmail();
-      if (!ok) return;
+    if (!panelRef.current) {
+      onAdvance();
+      return;
     }
-    if (telegramEnabled) {
-      const ok = await onSaveTelegram();
-      if (!ok) return;
+    setBusy(true);
+    try {
+      const ok = await panelRef.current.saveEnabledChannels();
+      if (ok) onAdvance();
+    } finally {
+      setBusy(false);
     }
-    onAdvance();
-  }, [emailEnabled, telegramEnabled, onSaveEmail, onSaveTelegram, onAdvance]);
+  }, [onAdvance]);
 
   return (
     <div>
@@ -321,309 +49,28 @@ export const Step6Notifications = ({
       <p className="mb-4 text-sm text-slate-600">
         How should the scraper deliver new jobs? Pick any combination — each
         channel runs independently. You can change this later by editing{' '}
-        <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">~/.linkedin-jobs.env</code>.
+        <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">~/.linkedin-jobs.env</code>
+        {' '}or from the Crawler Config tab.
       </p>
 
-      <div className="space-y-3">
-        {/* Local — always on, informational only */}
-        <div className="flex items-start gap-3 rounded border border-slate-200 bg-slate-50 p-3">
-          <input
-            type="checkbox"
-            checked
-            disabled
-            className="mt-1 cursor-not-allowed"
-            aria-label="Local digest (always on)"
-          />
-          <div>
-            <div className="font-medium text-slate-800">
-              Local <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Always on</span>
-            </div>
-            <p className="mt-1 text-xs text-slate-600">
-              Each scrape writes <code className="rounded bg-slate-100 px-1 py-0.5">digest.html</code>{' '}
-              in your repo root; open it in a browser (or the Run History tab) to see new jobs. No setup needed.
-            </p>
-          </div>
-        </div>
-
-        {/* Email channel */}
-        <label
-          className={clsx(
-            'flex cursor-pointer items-start gap-3 rounded border p-3 transition',
-            emailEnabled
-              ? 'border-indigo-500 bg-indigo-50/50 ring-1 ring-indigo-300'
-              : 'border-slate-200 bg-white hover:border-indigo-300',
-          )}
-        >
-          <input
-            type="checkbox"
-            checked={emailEnabled}
-            onChange={(e) => { setEmailEnabled(e.target.checked); }}
-            className="mt-1"
-          />
-          <div className="flex-1">
-            <div className="font-medium text-slate-800">
-              Email{' '}
-              {emailConfigured && (
-                <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                  Configured
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-slate-600">
-              Send the HTML digest to your inbox after each scrape via SMTP.
-            </p>
-          </div>
-        </label>
-
-        {emailEnabled && (
-          <div className="ml-7 space-y-3 rounded border border-slate-200 bg-slate-50 p-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">
-                Provider preset
-              </label>
-              <select
-                value={presetId}
-                onChange={(e) => { onPresetChange(e.target.value); }}
-                className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              >
-                {PROVIDER_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
-              {(() => {
-                const p = PROVIDER_PRESETS.find((x) => x.id === presetId);
-                return p?.hint ? (
-                  <div className="mt-1 text-xs text-slate-500">{p.hint}</div>
-                ) : null;
-              })()}
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">SMTP host</label>
-                <input
-                  type="text"
-                  value={host}
-                  onChange={(e) => { setHost(e.target.value); }}
-                  placeholder="smtp.gmail.com"
-                  autoComplete="off"
-                  className="w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                />
-              </div>
-              <div className="flex items-end gap-3">
-                <div className="flex-1">
-                  <label className="mb-1 block text-xs font-medium text-slate-600">SMTP port</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={port}
-                    onChange={(e) => { onPortChange(e.target.value); }}
-                    placeholder="587"
-                    autoComplete="off"
-                    className="w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                  />
-                </div>
-                <label className="mb-1 inline-flex items-center gap-1.5 text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={useSsl}
-                    onChange={(e) => { setUseSsl(e.target.checked); }}
-                  />
-                  use SSL
-                </label>
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">Username</label>
-              <input
-                type="text"
-                value={user}
-                onChange={(e) => { setUser(e.target.value); }}
-                placeholder="you@example.com"
-                autoComplete="off"
-                className="w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">App password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => { setPassword(e.target.value); }}
-                placeholder={
-                  emailConfigured
-                    ? '(saved — leave blank to keep)'
-                    : 'paste app password…'
-                }
-                autoComplete="new-password"
-                className="w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">
-                Recipient <span className="font-normal text-slate-500">(defaults to username)</span>
-              </label>
-              <input
-                type="text"
-                value={emailTo}
-                onChange={(e) => { setEmailTo(e.target.value); }}
-                placeholder={user || 'you@example.com'}
-                autoComplete="off"
-                className="w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              />
-            </div>
-
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => void onTestEmail()}
-                disabled={emailAction.kind === 'loading'}
-                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {emailAction.kind === 'loading' && emailAction.verb === 'test'
-                  ? 'Testing…'
-                  : 'Test connection'}
-              </button>
-            </div>
-
-            {emailAction.kind === 'ok' && (
-              <Banner kind="ok">{emailAction.message}</Banner>
-            )}
-            {emailAction.kind === 'err' && (
-              <Banner kind="err">{emailAction.message}</Banner>
-            )}
-          </div>
-        )}
-
-        {/* Telegram channel */}
-        <label
-          className={clsx(
-            'flex cursor-pointer items-start gap-3 rounded border p-3 transition',
-            telegramEnabled
-              ? 'border-indigo-500 bg-indigo-50/50 ring-1 ring-indigo-300'
-              : 'border-slate-200 bg-white hover:border-indigo-300',
-          )}
-        >
-          <input
-            type="checkbox"
-            checked={telegramEnabled}
-            onChange={(e) => { setTelegramEnabled(e.target.checked); }}
-            className="mt-1"
-          />
-          <div className="flex-1">
-            <div className="font-medium text-slate-800">
-              Telegram{' '}
-              {telegramConfigured && (
-                <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                  Configured
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-slate-600">
-              Send a message via a bot after each scrape. Free, no SMTP, no email account needed.
-            </p>
-          </div>
-        </label>
-
-        {telegramEnabled && (
-          <div className="ml-7 space-y-3 rounded border border-slate-200 bg-slate-50 p-3">
-            <div className="rounded border border-indigo-100 bg-indigo-50/50 p-2.5 text-xs text-slate-700">
-              <div className="font-medium text-slate-800">How to set up:</div>
-              <ol className="mt-1 list-decimal pl-4 leading-relaxed">
-                <li>
-                  Talk to{' '}
-                  <a
-                    href="https://t.me/BotFather"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-mono text-indigo-700 hover:underline"
-                  >
-                    @BotFather
-                  </a>{' '}
-                  on Telegram, run <code className="rounded bg-white px-1">/newbot</code>, copy the token it gives you.
-                </li>
-                <li>
-                  Start a chat with your new bot and send any message (e.g.{' '}
-                  <code className="rounded bg-white px-1">hi</code>).
-                </li>
-                <li>
-                  Visit{' '}
-                  <code className="rounded bg-white px-1">
-                    https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates
-                  </code>{' '}
-                  in a browser, look for{' '}
-                  <code className="rounded bg-white px-1">{`"chat":{"id":...}`}</code> — that number is your chat ID.
-                </li>
-              </ol>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">Bot token</label>
-              <input
-                type="password"
-                value={botToken}
-                onChange={(e) => { setBotToken(e.target.value); }}
-                placeholder={
-                  telegramConfigured
-                    ? '(saved — leave blank to keep)'
-                    : 'paste bot token…'
-                }
-                autoComplete="new-password"
-                className="w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">Chat ID</label>
-              <input
-                type="text"
-                value={chatId}
-                onChange={(e) => { setChatId(e.target.value); }}
-                placeholder="e.g. 123456789"
-                autoComplete="off"
-                className="w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              />
-            </div>
-
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => void onTestTelegram()}
-                disabled={telegramAction.kind === 'loading'}
-                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {telegramAction.kind === 'loading' && telegramAction.verb === 'test'
-                  ? 'Testing…'
-                  : 'Test connection'}
-              </button>
-            </div>
-
-            {telegramAction.kind === 'ok' && (
-              <Banner kind="ok">{telegramAction.message}</Banner>
-            )}
-            {telegramAction.kind === 'err' && (
-              <Banner kind="err">{telegramAction.message}</Banner>
-            )}
-          </div>
-        )}
-      </div>
+      {/* The wizard owns its own combined Save-and-continue button at the
+          bottom of the step, so suppress the per-channel Save buttons —
+          Test connection is still surfaced inside the panel. */}
+      <NotificationsConfigPanel
+        ref={panelRef}
+        showLocal
+        showSaveButtons={false}
+      />
 
       <div className="mt-5 flex justify-between gap-2">
         <BackButton onBack={onBack} />
         <button
           type="button"
           onClick={() => void onContinue()}
-          disabled={
-            emailAction.kind === 'loading' || telegramAction.kind === 'loading'
-          }
+          disabled={busy}
           className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {emailEnabled || telegramEnabled
-            ? 'Save & continue →'
-            : 'Continue →'}
+          {busy ? 'Saving…' : 'Save & continue →'}
         </button>
       </div>
     </div>
