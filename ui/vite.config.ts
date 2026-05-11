@@ -1993,5 +1993,9 @@ export default defineConfig({
   // dashboard at http://<mac-hostname>:5173. The dashboard ships with zero
   // local auth — see docs/remote-access.md for the auth-gate options
   // (Tailscale gives implicit gating; Cloudflare Tunnel + Access for public).
-  server: { host: true },
+  // `allowedHosts: true` disables Vite's DNS-rebinding host check, so requests
+  // arriving with non-localhost Host headers (e.g. `mac:5173` from a Tailscale
+  // peer) aren't blocked. Safe because the dev server is reachable only via
+  // loopback + your private tailnet (Wireguard) — no public exposure.
+  server: { host: true, allowedHosts: true },
 });
