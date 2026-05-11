@@ -25,7 +25,7 @@
 //     and by the standalone-card layout, surfaced via a ref-exposed
 //     `saveEnabledChannels()` so a parent can chain save→advance.
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Banner } from './onboarding/components';
 import type {
@@ -76,6 +76,41 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { id: 'custom', label: 'Custom', host: '', port: 587, ssl: false },
 ];
 
+// Tiny inline copy-to-clipboard button. Tracks its own "Copied" pulse
+// (1.5s) so the user gets immediate feedback. Mirrors the same helper
+// in RemoteAccessCard — kept local rather than lifted to a shared
+// module because the two callsites have slightly different paddings.
+const InlineCopyButton = ({
+  text,
+  label = 'Copy',
+}: {
+  text: string;
+  label?: string;
+}) => {
+  const [copied, setCopied] = useState(false);
+  const onClick = () => {
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => { setCopied(false); }, 1500);
+      },
+      () => {
+        /* clipboard denied — manual copy still works */
+      },
+    );
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 transition-colors duration-150 hover:bg-slate-100"
+      title={`Copy ${label.toLowerCase()}`}
+    >
+      {copied ? 'Copied ✓' : label}
+    </button>
+  );
+};
+
 const findPreset = (host: string, port: number, ssl: boolean): string => {
   const m = PROVIDER_PRESETS.find(
     (p) => p.id !== 'custom' && p.host === host && p.port === port && p.ssl === ssl,
@@ -117,8 +152,27 @@ export const NotificationsConfigPanel = forwardRef<
   ref,
 ) {
   // Multi-select per channel. Both can be on; both off = local-only fallback.
+  //
+  // Pre-#117 the "enabled" checkbox doubled as the show/hide chevron for
+  // each channel's form — un-tick to hide the form, re-tick to see it.
+  // That conflated two ideas: "I don't want this channel" vs "I'm just
+  // collapsing the form for now". #117 decouples them:
+  //
+  //   emailEnabled / telegramEnabled
+  //       → semantic on/off. Drives saveEnabledChannels() and which
+  //         channels the digest actually fires through.
+  //
+  //   emailExpanded / telegramExpanded
+  //       → purely visual. Drives whether the credentials form is
+  //         shown. Toggled by clicking anywhere on the channel header.
+  //
+  // Default expanded-state mirrors enabled-state at mount (so configured
+  // channels are visible right away), but the two diverge as soon as
+  // the user toggles either independently.
   const [emailEnabled, setEmailEnabled] = useState(false);
   const [telegramEnabled, setTelegramEnabled] = useState(false);
+  const [emailExpanded, setEmailExpanded] = useState(false);
+  const [telegramExpanded, setTelegramExpanded] = useState(false);
 
   // SMTP form state.
   const [presetId, setPresetId] = useState<string>('gmail');
@@ -138,6 +192,44 @@ export const NotificationsConfigPanel = forwardRef<
   const [telegramConfigured, setTelegramConfigured] = useState(false);
   const [telegramAction, setTelegramAction] = useState<ActionState>({ kind: 'idle' });
 
+  // Inline "Saved ✓" pulse on each Save / Test button. Lives separately
+  // from the persisted Banner (which still shows the human-readable
+  // result + any error message) so the button itself can carry a quick
+  // affirmation without waiting for the user to scan downwards.
+  // 1500ms is the spec's locked-in dwell.
+  const [emailButtonOk, setEmailButtonOk] = useState<'save' | 'test' | null>(null);
+  const [telegramButtonOk, setTelegramButtonOk] = useState<'save' | 'test' | null>(null);
+  const emailFlashTimer = useRef<number | null>(null);
+  const telegramFlashTimer = useRef<number | null>(null);
+  const flashEmailOk = useCallback((verb: 'save' | 'test') => {
+    if (emailFlashTimer.current !== null) {
+      window.clearTimeout(emailFlashTimer.current);
+    }
+    setEmailButtonOk(verb);
+    emailFlashTimer.current = window.setTimeout(() => {
+      setEmailButtonOk(null);
+    }, 1500);
+  }, []);
+  const flashTelegramOk = useCallback((verb: 'save' | 'test') => {
+    if (telegramFlashTimer.current !== null) {
+      window.clearTimeout(telegramFlashTimer.current);
+    }
+    setTelegramButtonOk(verb);
+    telegramFlashTimer.current = window.setTimeout(() => {
+      setTelegramButtonOk(null);
+    }, 1500);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (emailFlashTimer.current !== null) {
+        window.clearTimeout(emailFlashTimer.current);
+      }
+      if (telegramFlashTimer.current !== null) {
+        window.clearTimeout(telegramFlashTimer.current);
+      }
+    };
+  }, []);
+
   // Load existing config on mount. If a channel is already configured,
   // expand it + pre-fill the visible fields. Secrets stay blank.
   useEffect(() => {
@@ -151,6 +243,10 @@ export const NotificationsConfigPanel = forwardRef<
         const email = body.channels.email;
         if (email.configured) {
           setEmailEnabled(true);
+          // Configured channels open by default so the user sees their
+          // existing settings without having to click. Independent of
+          // emailEnabled — toggling enable later won't re-collapse.
+          setEmailExpanded(true);
           setEmailConfigured(true);
           setHost(email.host || 'smtp.gmail.com');
           setPort(email.port != null ? String(email.port) : '587');
@@ -163,6 +259,7 @@ export const NotificationsConfigPanel = forwardRef<
         const telegram = body.channels.telegram;
         if (telegram.configured) {
           setTelegramEnabled(true);
+          setTelegramExpanded(true);
           setTelegramConfigured(true);
           setChatId(telegram.chat_id || '');
         }
@@ -234,13 +331,14 @@ export const NotificationsConfigPanel = forwardRef<
         setPassword('');
         setEmailConfigured(true);
         setEmailAction({ kind: 'ok', message: testBody.message ?? 'Test email sent.' });
+        flashEmailOk('test');
       } else {
         setEmailAction({ kind: 'err', message: testBody.error ?? 'test failed' });
       }
     } catch (e) {
       setEmailAction({ kind: 'err', message: (e as Error).message });
     }
-  }, [validateEmail, buildEmailPayload]);
+  }, [validateEmail, buildEmailPayload, flashEmailOk]);
 
   const onSaveEmail = useCallback(async (): Promise<boolean> => {
     const v = validateEmail();
@@ -257,6 +355,7 @@ export const NotificationsConfigPanel = forwardRef<
         setPassword('');
         setEmailConfigured(true);
         setEmailAction({ kind: 'ok', message: 'Saved.' });
+        flashEmailOk('save');
         return true;
       }
       setEmailAction({ kind: 'err', message: body.error ?? 'save failed' });
@@ -265,7 +364,7 @@ export const NotificationsConfigPanel = forwardRef<
       setEmailAction({ kind: 'err', message: (e as Error).message });
       return false;
     }
-  }, [validateEmail, buildEmailPayload]);
+  }, [validateEmail, buildEmailPayload, flashEmailOk]);
 
   // ---- Telegram channel handlers -------------------------------------
 
@@ -301,13 +400,14 @@ export const NotificationsConfigPanel = forwardRef<
         setBotToken('');
         setTelegramConfigured(true);
         setTelegramAction({ kind: 'ok', message: testBody.message ?? 'Test message sent.' });
+        flashTelegramOk('test');
       } else {
         setTelegramAction({ kind: 'err', message: testBody.error ?? 'test failed' });
       }
     } catch (e) {
       setTelegramAction({ kind: 'err', message: (e as Error).message });
     }
-  }, [validateTelegram, buildTelegramPayload]);
+  }, [validateTelegram, buildTelegramPayload, flashTelegramOk]);
 
   const onSaveTelegram = useCallback(async (): Promise<boolean> => {
     const v = validateTelegram();
@@ -324,6 +424,7 @@ export const NotificationsConfigPanel = forwardRef<
         setBotToken('');
         setTelegramConfigured(true);
         setTelegramAction({ kind: 'ok', message: 'Saved.' });
+        flashTelegramOk('save');
         return true;
       }
       setTelegramAction({ kind: 'err', message: body.error ?? 'save failed' });
@@ -332,7 +433,7 @@ export const NotificationsConfigPanel = forwardRef<
       setTelegramAction({ kind: 'err', message: (e as Error).message });
       return false;
     }
-  }, [validateTelegram, buildTelegramPayload]);
+  }, [validateTelegram, buildTelegramPayload, flashTelegramOk]);
 
   // Expose a single "save whatever is checked" handle so a parent (wizard
   // step) can chain save → advance behind its own Continue button.
@@ -380,50 +481,114 @@ export const NotificationsConfigPanel = forwardRef<
         </div>
       )}
 
-      {/* Email channel */}
-      <label
+      {/* Email channel — header row toggles the form's visibility
+          (emailExpanded); the Enable checkbox inside controls the
+          semantic on/off (emailEnabled). The two are independent so
+          un-ticking Enable doesn't hide the form (the #117 pain point).
+          The whole header is the click target — chevron + label + tag +
+          configured badge. Min-h-[44px] for mobile tap targets. */}
+      <div
         className={clsx(
-          'flex cursor-pointer items-start gap-3 rounded border p-3 transition',
+          'rounded border transition-colors duration-150',
           emailEnabled
             ? 'border-indigo-500 bg-indigo-50/50 ring-1 ring-indigo-300'
-            : 'border-slate-200 bg-white hover:border-indigo-300',
+            : 'border-slate-200 bg-white',
         )}
       >
-        <input
-          type="checkbox"
-          checked={emailEnabled}
-          onChange={(e) => { setEmailEnabled(e.target.checked); }}
-          className="mt-1"
-        />
-        <div className="flex-1">
-          <div className="font-medium text-slate-800">
-            Email{' '}
-            {emailConfigured && (
-              <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                Configured
-              </span>
+        <button
+          type="button"
+          onClick={() => { setEmailExpanded((v) => !v); }}
+          aria-expanded={emailExpanded}
+          aria-controls="email-channel-body"
+          className={clsx(
+            'flex min-h-[44px] w-full items-center gap-3 rounded p-3 text-left transition-colors duration-150',
+            'hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-300',
+            emailEnabled && 'hover:bg-indigo-50',
+          )}
+        >
+          <span
+            aria-hidden="true"
+            className={clsx(
+              'inline-block text-slate-400 transition-transform duration-150 ease-out',
+              emailExpanded ? 'rotate-90' : 'rotate-0',
+            )}
+          >
+            ▶
+          </span>
+          <div className="flex-1">
+            <div className="font-medium text-slate-800">
+              Email{' '}
+              {emailConfigured && (
+                <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                  Configured
+                </span>
+              )}
+              {!emailEnabled && emailConfigured && (
+                <span
+                  className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+                  title="Saved credentials present, but this channel won't fire on the next scrape."
+                >
+                  Off
+                </span>
+              )}
+              {!emailEnabled && !emailConfigured && (
+                <span className="ml-1 text-[11px] font-normal italic text-slate-400">
+                  no key set
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-slate-600">
+              Send the HTML digest to your inbox after each scrape via SMTP.
+            </p>
+            {/* When configured, show a one-line summary of where we'd send. The
+                password is intentionally absent — see the file header. */}
+            {emailConfigured && !emailExpanded && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                <span className="font-mono">{host}</span>
+                {user && (
+                  <>
+                    {' '}as <span className="font-mono">{user}</span>
+                  </>
+                )}
+              </p>
             )}
           </div>
-          <p className="mt-1 text-xs text-slate-600">
-            Send the HTML digest to your inbox after each scrape via SMTP.
-          </p>
-          {/* When configured, show a one-line summary of where we'd send. The
-              password is intentionally absent — see the file header. */}
-          {emailConfigured && !emailEnabled && (
-            <p className="mt-1 text-[11px] text-slate-500">
-              <span className="font-mono">{host}</span>
-              {user && (
-                <>
-                  {' '}as <span className="font-mono">{user}</span>
-                </>
-              )}
-            </p>
-          )}
-        </div>
-      </label>
+          {/* Enable toggle. Lives in the header row but does NOT toggle
+              the form visibility — clicking the checkbox stops
+              propagation so the surrounding button doesn't fire. */}
+          <label
+            className="inline-flex shrink-0 items-center gap-1.5 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:border-slate-300"
+            onClick={(e) => { e.stopPropagation(); }}
+            onKeyDown={(e) => { e.stopPropagation(); }}
+          >
+            <input
+              type="checkbox"
+              checked={emailEnabled}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setEmailEnabled(next);
+                // Auto-expand on enable (so the user lands in the form
+                // ready to type). Disabling does NOT auto-collapse — the
+                // #117 decoupling means the user keeps the form on
+                // screen as long as they want.
+                if (next) setEmailExpanded(true);
+              }}
+              aria-label="Enable email channel"
+              className="h-3.5 w-3.5"
+            />
+            Enable
+          </label>
+        </button>
+      </div>
 
-      {emailEnabled && (
-        <div className="ml-7 space-y-3 rounded border border-slate-200 bg-slate-50 p-3">
+      {emailExpanded && (
+        <div
+          id="email-channel-body"
+          className="ml-7 space-y-3 rounded border border-slate-200 bg-slate-50 p-3"
+          // Scroll-margin so iOS doesn't bury a focused input under the
+          // sticky tab nav when the soft keyboard opens.
+          style={{ scrollMarginTop: '5rem' }}
+        >
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600">
               Provider preset
@@ -528,22 +693,44 @@ export const NotificationsConfigPanel = forwardRef<
               type="button"
               onClick={() => void onTestEmail()}
               disabled={emailAction.kind === 'loading'}
-              className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Save the SMTP settings and send a real test email to the recipient address."
+              className="inline-flex min-h-[36px] items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition-colors duration-150 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {emailAction.kind === 'loading' && emailAction.verb === 'test'
-                ? 'Testing…'
-                : 'Test connection'}
+              {emailAction.kind === 'loading' && emailAction.verb === 'test' ? (
+                // Spinner — neutral border on a light grey track.
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
+                  />
+                  Testing…
+                </>
+              ) : emailButtonOk === 'test' ? (
+                <span className="text-emerald-700">Sent ✓</span>
+              ) : (
+                'Test connection'
+              )}
             </button>
             {showSaveButtons && (
               <button
                 type="button"
                 onClick={() => void onSaveEmail()}
                 disabled={emailAction.kind === 'loading'}
-                className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {emailAction.kind === 'loading' && emailAction.verb === 'save'
-                  ? 'Saving…'
-                  : 'Save'}
+                {emailAction.kind === 'loading' && emailAction.verb === 'save' ? (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                    />
+                    Saving…
+                  </>
+                ) : emailButtonOk === 'save' ? (
+                  'Saved ✓'
+                ) : (
+                  'Save'
+                )}
               </button>
             )}
           </div>
@@ -557,43 +744,105 @@ export const NotificationsConfigPanel = forwardRef<
         </div>
       )}
 
-      {/* Telegram channel */}
-      <label
+      {/* Telegram channel — same decoupled header pattern as Email
+          (#117). Header toggles telegramExpanded; the Enable checkbox
+          inside toggles telegramEnabled. */}
+      <div
         className={clsx(
-          'flex cursor-pointer items-start gap-3 rounded border p-3 transition',
+          'rounded border transition-colors duration-150',
           telegramEnabled
             ? 'border-indigo-500 bg-indigo-50/50 ring-1 ring-indigo-300'
-            : 'border-slate-200 bg-white hover:border-indigo-300',
+            : 'border-slate-200 bg-white',
         )}
       >
-        <input
-          type="checkbox"
-          checked={telegramEnabled}
-          onChange={(e) => { setTelegramEnabled(e.target.checked); }}
-          className="mt-1"
-        />
-        <div className="flex-1">
-          <div className="font-medium text-slate-800">
-            Telegram{' '}
-            {telegramConfigured && (
-              <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                Configured
-              </span>
+        <button
+          type="button"
+          onClick={() => { setTelegramExpanded((v) => !v); }}
+          aria-expanded={telegramExpanded}
+          aria-controls="telegram-channel-body"
+          className={clsx(
+            'flex min-h-[44px] w-full items-center gap-3 rounded p-3 text-left transition-colors duration-150',
+            'hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-300',
+            telegramEnabled && 'hover:bg-indigo-50',
+          )}
+        >
+          <span
+            aria-hidden="true"
+            className={clsx(
+              'inline-block text-slate-400 transition-transform duration-150 ease-out',
+              telegramExpanded ? 'rotate-90' : 'rotate-0',
+            )}
+          >
+            ▶
+          </span>
+          <div className="flex-1">
+            <div className="font-medium text-slate-800">
+              Telegram{' '}
+              {telegramConfigured && (
+                <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                  Configured
+                </span>
+              )}
+              {!telegramEnabled && telegramConfigured && (
+                <span
+                  className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+                  title="Saved credentials present, but this channel won't fire on the next scrape."
+                >
+                  Off
+                </span>
+              )}
+              {!telegramEnabled && !telegramConfigured && (
+                <span className="ml-1 text-[11px] font-normal italic text-slate-400">
+                  no key set
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-slate-600">
+              Send a message via a bot after each scrape. Free, no SMTP, no email account needed.
+            </p>
+            {telegramConfigured && !telegramExpanded && chatId && (
+              <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+                chat <span className="font-mono">{chatId}</span>
+                {/* Wrap copy in a span that stops propagation — the
+                    surrounding <button> would otherwise eat the click
+                    and toggle the form's expanded state. */}
+                <span
+                  onClick={(e) => { e.stopPropagation(); }}
+                  onKeyDown={(e) => { e.stopPropagation(); }}
+                  role="presentation"
+                >
+                  <InlineCopyButton text={chatId} />
+                </span>
+              </p>
             )}
           </div>
-          <p className="mt-1 text-xs text-slate-600">
-            Send a message via a bot after each scrape. Free, no SMTP, no email account needed.
-          </p>
-          {telegramConfigured && !telegramEnabled && chatId && (
-            <p className="mt-1 text-[11px] text-slate-500">
-              chat <span className="font-mono">{chatId}</span>
-            </p>
-          )}
-        </div>
-      </label>
+          <label
+            className="inline-flex shrink-0 items-center gap-1.5 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:border-slate-300"
+            onClick={(e) => { e.stopPropagation(); }}
+            onKeyDown={(e) => { e.stopPropagation(); }}
+          >
+            <input
+              type="checkbox"
+              checked={telegramEnabled}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setTelegramEnabled(next);
+                if (next) setTelegramExpanded(true);
+              }}
+              aria-label="Enable telegram channel"
+              className="h-3.5 w-3.5"
+            />
+            Enable
+          </label>
+        </button>
+      </div>
 
-      {telegramEnabled && (
-        <div className="ml-7 space-y-3 rounded border border-slate-200 bg-slate-50 p-3">
+      {telegramExpanded && (
+        <div
+          id="telegram-channel-body"
+          className="ml-7 space-y-3 rounded border border-slate-200 bg-slate-50 p-3"
+          style={{ scrollMarginTop: '5rem' }}
+        >
           <div className="rounded border border-indigo-100 bg-indigo-50/50 p-2.5 text-xs text-slate-700">
             <div className="font-medium text-slate-800">How to set up:</div>
             <ol className="mt-1 list-decimal pl-4 leading-relaxed">
@@ -642,14 +891,20 @@ export const NotificationsConfigPanel = forwardRef<
 
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600">Chat ID</label>
-            <input
-              type="text"
-              value={chatId}
-              onChange={(e) => { setChatId(e.target.value); }}
-              placeholder="e.g. 123456789"
-              autoComplete="off"
-              className="w-full rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={chatId}
+                onChange={(e) => { setChatId(e.target.value); }}
+                placeholder="e.g. 123456789"
+                autoComplete="off"
+                className="flex-1 rounded border border-slate-300 bg-white px-2 py-1 font-mono text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+              {/* Copy is useful when the user just pasted the chat ID
+                  from getUpdates and now needs it for a script / docs;
+                  also handy when revisiting the configured value. */}
+              {chatId && <InlineCopyButton text={chatId} />}
+            </div>
           </div>
 
           <div className="flex items-center gap-2 pt-1">
@@ -657,22 +912,43 @@ export const NotificationsConfigPanel = forwardRef<
               type="button"
               onClick={() => void onTestTelegram()}
               disabled={telegramAction.kind === 'loading'}
-              className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Save the Telegram credentials and send a real test message to the configured chat."
+              className="inline-flex min-h-[36px] items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition-colors duration-150 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {telegramAction.kind === 'loading' && telegramAction.verb === 'test'
-                ? 'Testing…'
-                : 'Test connection'}
+              {telegramAction.kind === 'loading' && telegramAction.verb === 'test' ? (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
+                  />
+                  Testing…
+                </>
+              ) : telegramButtonOk === 'test' ? (
+                <span className="text-emerald-700">Sent ✓</span>
+              ) : (
+                'Test connection'
+              )}
             </button>
             {showSaveButtons && (
               <button
                 type="button"
                 onClick={() => void onSaveTelegram()}
                 disabled={telegramAction.kind === 'loading'}
-                className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors duration-150 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {telegramAction.kind === 'loading' && telegramAction.verb === 'save'
-                  ? 'Saving…'
-                  : 'Save'}
+                {telegramAction.kind === 'loading' && telegramAction.verb === 'save' ? (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                    />
+                    Saving…
+                  </>
+                ) : telegramButtonOk === 'save' ? (
+                  'Saved ✓'
+                ) : (
+                  'Save'
+                )}
               </button>
             )}
           </div>
