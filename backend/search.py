@@ -552,18 +552,31 @@ def claude_batch_score(cv_text: str, batch: list[dict]) -> dict | None:
 # seniority extremes (intern/junior/director+) and obvious non-IC tracks
 # (sales / marketing / PM / community / QA). Domain-specific stack/role
 # negatives are added by the wizard from the user's CV + intent.
-OFFTOPIC_TITLE_PATTERNS = [
+# Immutable source-of-truth tuple. `OFFTOPIC_TITLE_PATTERNS` below is the
+# mutable view that `load_config()` overwrites from config.json; tests and
+# `_hardcoded_defaults()` consumers that want the original in-file list
+# (not whatever the user's config happens to override it to) read this
+# tuple directly.
+_DEFAULT_OFFTOPIC_TITLE_PATTERNS: tuple[str, ...] = (
     r"\bintern(ship)?\b",
     r"\bjunior\b",
     r"\bentry[- ]?level\b",
-    r"\bgraduate( program)?\b",
+    # "Graduate program" still matches; "Graduate Software Engineer" /
+    # "Graduate Developer" / "Graduate Engineer" now match too — the
+    # legacy `\bgraduate( program)?\b` only fired when the literal word
+    # "program" followed.
+    r"\bgraduate( program| \w+ (engineer|developer))?\b",
     r"\b(VP|vice president|director|head of|chief)\b",
     r"\b(sales|pre[- ]?sales|sdr|account executive)\b",
     r"\b(product|project|program) manager\b",
     r"\bmarketing\b",
     r"\b(community|customer success|developer relations|devrel|evangelist)\b",
-    r"\b(QA|quality assurance) (engineer|tester|analyst)\b",
-]
+    # QA on its own (e.g. "QA Engineer", "Quality Assurance Tester",
+    # bare "QA") — previously required "engineer|tester|analyst" so
+    # "Quality Assurance Tester" matched but plain "QA" was missed.
+    r"\b(QA|quality assurance)\b",
+)
+OFFTOPIC_TITLE_PATTERNS: list[str] = list(_DEFAULT_OFFTOPIC_TITLE_PATTERNS)
 
 
 def _clean_title(title: str) -> str:
@@ -820,7 +833,7 @@ def _hardcoded_defaults() -> dict:
         "claude_scoring_prompt": CLAUDE_BATCH_SCORING_PROMPT,
         "fit_positive_patterns": list(FIT_POSITIVE),
         "fit_negative_patterns": list(FIT_NEGATIVE),
-        "offtopic_title_patterns": list(OFFTOPIC_TITLE_PATTERNS),
+        "offtopic_title_patterns": list(_DEFAULT_OFFTOPIC_TITLE_PATTERNS),
         "feedback_examples_max": FEEDBACK_EXAMPLES_MAX_DEFAULT,
         # Stage 2 LLM provider abstraction. "auto" = resolver picks the first
         # working provider (claude_cli -> claude_sdk -> gemini -> openai ->

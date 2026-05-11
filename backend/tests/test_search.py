@@ -64,6 +64,21 @@ def test_compute_hot(job: dict, expected_hot: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def _use_default_offtopic_patterns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force `OFFTOPIC_TITLE_PATTERNS` to the hardcoded defaults for the
+    duration of a test, regardless of what the repo-root config.json
+    happens to override it to. Without this, running pytest from the
+    project root with a user-tuned config.json would shadow the source
+    defaults and silently make these regex tests test the user's config
+    instead of the in-file defaults."""
+    monkeypatch.setattr(
+        search,
+        "OFFTOPIC_TITLE_PATTERNS",
+        list(search._DEFAULT_OFFTOPIC_TITLE_PATTERNS),
+    )
+
+
 @pytest.mark.parametrize(
     ("title", "is_offtopic"),
     [
@@ -108,7 +123,9 @@ def test_compute_hot(job: dict, expected_hot: bool) -> None:
         ("", False),
     ],
 )
-def test_is_obviously_offtopic(title: str, is_offtopic: bool) -> None:
+def test_is_obviously_offtopic(
+    title: str, is_offtopic: bool, _use_default_offtopic_patterns: None
+) -> None:
     result = search.is_obviously_offtopic(title)
     if is_offtopic:
         assert result is not None, f"expected a regex match for {title!r}"
@@ -116,7 +133,9 @@ def test_is_obviously_offtopic(title: str, is_offtopic: bool) -> None:
         assert result is None, f"expected NO match for {title!r} but matched {result!r}"
 
 
-def test_is_obviously_offtopic_returns_pattern_string() -> None:
+def test_is_obviously_offtopic_returns_pattern_string(
+    _use_default_offtopic_patterns: None,
+) -> None:
     """When a title matches, the helper returns the *which* regex matched —
     used in fit_reasons display so the user sees why a job was demoted."""
     result = search.is_obviously_offtopic("Marketing Manager")
