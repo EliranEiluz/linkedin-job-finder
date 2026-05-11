@@ -961,7 +961,10 @@ _VALID_LLM_PROVIDER_NAMES = {
 def _normalize_llm_provider(raw: Any, fallback: dict) -> dict:
     """Validate the llm_provider config block. Drops malformed payloads back
     to the fallback (defaults to {'name': 'auto'}). Optional `model` is kept
-    only if it's a non-empty string."""
+    only if it's a non-empty string. Optional `reasoning_effort` (#114)
+    accepts a string ("low"/"medium"/"high"/"max"/"xhigh"/"off"), a bool
+    (ollama think models), or an int (gemini 2.5 thinkingBudget); anything
+    else is dropped silently."""
     if not isinstance(raw, dict):
         return dict(fallback)
     name = str(raw.get("name") or "").strip().lower()
@@ -971,6 +974,14 @@ def _normalize_llm_provider(raw: Any, fallback: dict) -> dict:
     model = raw.get("model")
     if isinstance(model, str) and model.strip():
         out["model"] = model.strip()
+    eff = raw.get("reasoning_effort")
+    # bool first — it's a subclass of int. Either gets stored verbatim;
+    # strings are trimmed. None / unsupported types stay out of the merged
+    # config so they round-trip identically to a missing key.
+    if isinstance(eff, bool | int):
+        out["reasoning_effort"] = eff
+    elif isinstance(eff, str) and eff.strip():
+        out["reasoning_effort"] = eff.strip()
     return out
 
 

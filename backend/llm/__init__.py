@@ -4,8 +4,9 @@ delegates `score_batch`. Stage 2 — backend only, no UI yet."""
 from __future__ import annotations
 
 import os
+from typing import Any
 
-from .base import LLMProvider
+from .base import LLMProvider, ModelInfo, ReasoningCapability
 from .claude_cli import ClaudeCLIProvider
 from .claude_sdk import ClaudeSDKProvider
 from .gemini import GeminiProvider
@@ -41,9 +42,18 @@ def _read_cfg() -> dict:
     return val
 
 
-def _instantiate(name: str, model: str | None = None) -> LLMProvider:
+def _instantiate(
+    name: str,
+    model: str | None = None,
+    reasoning_effort: Any = None,
+) -> LLMProvider:
     cls = PROVIDERS[name]
-    return cls(model=model) if model else cls()
+    kwargs: dict[str, Any] = {}
+    if model:
+        kwargs["model"] = model
+    if reasoning_effort is not None:
+        kwargs["reasoning_effort"] = reasoning_effort
+    return cls(**kwargs) if kwargs else cls()
 
 
 def _quick_available(p: LLMProvider) -> bool:
@@ -83,19 +93,31 @@ def get_provider(force: bool = False) -> LLMProvider | None:
     cfg = _read_cfg()
     name = (cfg.get("name") or "auto").strip().lower()
     model = cfg.get("model") or None
+    # New in #114 — reasoning_effort follows the model. Passed through to
+    # the provider; each provider validates the value against its declared
+    # shape and silently omits invalid values from the request.
+    reasoning = cfg.get("reasoning_effort")
     if name != "auto":
         if name not in PROVIDERS:
             print(f"⚠ unknown llm_provider.name={name!r} — falling back to auto")
             name = "auto"
         else:
-            _cached = _instantiate(name, model)
+            _cached = _instantiate(name, model, reasoning)
             return _cached
     # auto: pick the first provider that's quickly-available. We don't run the
     # full test() during scrape startup — that would burn a Claude token on
     # every run. quick_available is a pure-local check. The actual scrape will
     # surface a real failure if the chosen provider then breaks at score time.
     for n in AUTO_ORDER:
-        cand = _instantiate(n, model if cfg.get("name") == n else None)
+        # Only forward model + reasoning to the matching provider name —
+        # picking a different one in auto mode means the user's choice
+        # doesn't apply.
+        match = cfg.get("name") == n
+        cand = _instantiate(
+            n,
+            model if match else None,
+            reasoning if match else None,
+        )
         if _quick_available(cand):
             _cached = cand
             return _cached
@@ -137,15 +159,31 @@ def test_provider(name: str | None = None) -> tuple[bool, str]:
         return False, f"unknown provider {name!r} — known: {sorted(PROVIDERS)}"
     cfg = _read_cfg()
     model = cfg.get("model") if cfg.get("name") == name else None
-    return _instantiate(name, model).test()
+    reasoning = cfg.get("reasoning_effort") if cfg.get("name") == name else None
+    return _instantiate(name, model, reasoning).test()
+
+
+def list_models(name: str) -> list[ModelInfo]:
+    """List the chosen provider's available models. Empty list if the name
+    isn't known or the provider's enumeration failed (the provider's own
+    `list_models` swallows transport errors)."""
+    if name not in PROVIDERS:
+        return []
+    # No persisted model/effort needed for catalog enumeration — we just
+    # ask the provider what's available. (Some providers' constructors take
+    # creds via env, not args, so no params needed here.)
+    return _instantiate(name).list_models()
 
 
 __all__ = [
     "AUTO_ORDER",
     "PROVIDERS",
     "LLMProvider",
+    "ModelInfo",
+    "ReasoningCapability",
     "complete",
     "get_provider",
+    "list_models",
     "score_batch",
     "test_provider",
 ]

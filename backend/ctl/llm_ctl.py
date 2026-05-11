@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-LLM-provider CLI for the welcome wizard. Three commands:
+LLM-provider CLI for the welcome wizard. Four commands:
 
   list           — emit the 6 providers + metadata for the picker UI
   test           — {name} on stdin → calls backend.llm.test_provider()
   save-credential — {name, key} on stdin → atomic-writes the env-var line
                     into ~/.linkedin-jobs.env (chmod 600). Refuses for
                     providers without an env_var (claude_cli, ollama).
+  models <provider> — emit {ok, models: [...]} catalog for the picker.
+                    Each entry has its ReasoningCapability inline so the
+                    UI can render the right secondary control per model.
 
 NEVER logs the key value (not even on error). Same stable JSON CLI style
 as preflight_ctl.py / scheduler_ctl.py.
@@ -32,7 +35,7 @@ from _common import (  # noqa: E402  (sys.path shim above)
 )
 from _common import emit as _emit  # noqa: E402  (sys.path shim above)
 
-from backend.llm import test_provider  # noqa: E402  (sys.path shim above)
+from backend.llm import list_models, test_provider  # noqa: E402  (sys.path shim above)
 
 ENV_FILE = Path.home() / ".linkedin-jobs.env"
 
@@ -153,12 +156,38 @@ def cmd_save_credential() -> None:
     _emit({"ok": True, "env_var": env_var, "env_file": str(ENV_FILE)})
 
 
+def cmd_models(provider: str | None) -> None:
+    """Emit the chosen provider's model catalog. The provider name comes
+    from argparse (positional) — keeping it on argv rather than stdin so
+    the Vite middleware can pass `?provider=X` directly as a query param
+    without a body marshall."""
+    name = (provider or "").strip()
+    if not name:
+        _emit({"ok": False, "error": "provider name required"}, code=1)
+    # Pick up any credentials the user just saved in this session before we
+    # ask the provider for its catalog (live API enumeration needs the key).
+    load_env_file(ENV_FILE)
+    try:
+        models = list_models(name)
+    except Exception as e:
+        _emit(
+            {"ok": False, "error": f"{type(e).__name__}: {e}", "provider": name},
+            code=1,
+        )
+    # Empty list isn't an error — it just means "no models available right
+    # now" (e.g. ollama with no models pulled, or live API unreachable).
+    # The picker UI surfaces an empty-state message.
+    _emit({"ok": True, "provider": name, "models": [m.to_dict() for m in models]})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("list")
     sub.add_parser("test")
     sub.add_parser("save-credential")
+    p_models = sub.add_parser("models")
+    p_models.add_argument("provider", nargs="?", default=None)
     args = parser.parse_args()
     if args.cmd == "list":
         cmd_list()
@@ -166,6 +195,8 @@ def main() -> int:
         cmd_test()
     if args.cmd == "save-credential":
         cmd_save_credential()
+    if args.cmd == "models":
+        cmd_models(args.provider)
     parser.print_help()
     return 2
 
