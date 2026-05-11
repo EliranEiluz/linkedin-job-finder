@@ -39,12 +39,10 @@ describe('CorpusFilterCard', () => {
     render(<CorpusFilterCard current={disabled} onChange={() => undefined} />);
 
     expect(screen.getByText('Corpus filter')).toBeInTheDocument();
-    // Min Fit defaults to "Off (no filter)".
-    const fitSelect = screen.getByLabelText('Min fit');
-    expect(fitSelect.value).toBe('');
+    // Min Fit defaults to "Off (no filter)" (value="").
+    expect(screen.getByLabelText('Min fit')).toHaveValue('');
     // Score is disabled.
-    const scoreInput = screen.getByLabelText('Min score (0-10)');
-    expect(scoreInput).toBeDisabled();
+    expect(screen.getByLabelText('Min score (0-10)')).toBeDisabled();
     // Help text is present.
     expect(
       screen.getByText(/won't appear in your corpus/i),
@@ -175,12 +173,9 @@ describe('CorpusFilterCard', () => {
         onChange={() => undefined}
       />,
     );
-    const fitSelect = screen.getByLabelText('Min fit');
-    expect(fitSelect.value).toBe('good');
-    const checkbox = screen.getByLabelText('Enable score threshold');
-    expect(checkbox).toBeChecked();
-    const scoreInput = screen.getByLabelText('Min score (0-10)');
-    expect(scoreInput).toHaveValue(7);
+    expect(screen.getByLabelText('Min fit')).toHaveValue('good');
+    expect(screen.getByLabelText('Enable score threshold')).toBeChecked();
+    expect(screen.getByLabelText('Min score (0-10)')).toHaveValue(7);
   });
 
   it('shows the "X filtered last run" badge when the latest run has filtered_out > 0', async () => {
