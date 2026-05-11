@@ -3,18 +3,34 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
+from ._openai_capabilities import capability_for
 from ._shared import TEST_BATCH, TEST_CV, parse_json_response
-from .base import LLMProvider
+from .base import LLMProvider, ModelInfo, ReasoningCapability
 
 ENDPOINT = "https://api.openai.com/v1/chat/completions"
+MODELS_ENDPOINT = "https://api.openai.com/v1/models"
+
+# Same valid-levels surface as the capability map. Used to validate user-
+# configured effort before letting it land in a request.
+_VALID_EFFORT_LEVELS: frozenset[str] = frozenset({"low", "medium", "high", "xhigh"})
 
 
 class OpenAIProvider(LLMProvider):
     name = "openai"
 
-    def __init__(self, model: str = "gpt-4o-mini"):
+    def __init__(
+        self,
+        model: str = "gpt-4o-mini",
+        *,
+        reasoning_effort: str | int | None = None,
+    ):
         self.model = model
+        # Mirrors the claude_sdk pattern — None/off/unknown all suppress the
+        # field at request time. The capability lookup at request time is
+        # what decides whether the model even accepts the parameter.
+        self.reasoning_effort = reasoning_effort
 
     def _prompt(self, cv_text: str, batch: list[dict]) -> str:
         from backend.search import _build_batch_prompt
@@ -23,6 +39,31 @@ class OpenAIProvider(LLMProvider):
 
     def _api_key(self) -> str | None:
         return os.environ.get("OPENAI_API_KEY")
+
+    def _effort_for_body(self) -> str | None:
+        """Resolved reasoning_effort string, or None to omit from the body.
+
+        Skips when:
+          - user left it as None / "off" / "" (silent — that's the user
+            choosing to disable);
+          - user picked something but the chosen model doesn't actually
+            accept reasoning_effort (logged warning, request proceeds);
+          - the level isn't in the canonical set (logged warning).
+        """
+        eff = self.reasoning_effort
+        if not isinstance(eff, str):
+            return None
+        lvl = eff.strip().lower()
+        if lvl in ("", "off", "none"):
+            return None
+        if lvl not in _VALID_EFFORT_LEVELS:
+            print(f"    openai: ignoring unknown reasoning_effort={lvl!r}")
+            return None
+        cap = capability_for(self.model)
+        if not cap.supported:
+            print(f"    openai: model {self.model!r} does not accept reasoning_effort — omitting")
+            return None
+        return lvl
 
     def score_batch(self, cv_text: str, batch: list[dict]) -> list | None:
         key = self._api_key()
@@ -34,7 +75,7 @@ class OpenAIProvider(LLMProvider):
             print("    openai: requests not installed")
             return None
         prompt = self._prompt(cv_text, batch)
-        body = {
+        body: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {
@@ -47,6 +88,8 @@ class OpenAIProvider(LLMProvider):
             "max_tokens": 2048,
             "response_format": {"type": "json_object"},
         }
+        # Scoring path deliberately omits reasoning_effort (see #114 default
+        # policy — bounded structured-output JSON doesn't benefit).
         headers = {
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
@@ -109,6 +152,9 @@ class OpenAIProvider(LLMProvider):
             "temperature": 0.2,
             "max_tokens": max_tokens,
         }
+        eff = self._effort_for_body()
+        if eff is not None:
+            body["reasoning_effort"] = eff
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         headers = {
@@ -129,3 +175,48 @@ class OpenAIProvider(LLMProvider):
         except Exception as e:
             print(f"    openai error: {str(e)[:200]}")
             return None
+
+    def list_models(self) -> list[ModelInfo]:
+        """GET /v1/models — sparse response (id/owned_by only). Cross-
+        reference against the in-repo capability map for the reasoning
+        surface."""
+        key = self._api_key()
+        if not key:
+            return []
+        try:
+            import requests
+        except Exception:
+            return []
+        try:
+            r = requests.get(
+                MODELS_ENDPOINT,
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=30,
+            )
+            if r.status_code != 200:
+                print(f"    openai list_models http {r.status_code}: {r.text[:200]}")
+                return []
+            data = r.json()
+        except Exception as e:
+            print(f"    openai list_models error: {str(e)[:200]}")
+            return []
+        out: list[ModelInfo] = []
+        for entry in data.get("data") or []:
+            if not isinstance(entry, dict):
+                continue
+            mid = str(entry.get("id") or "")
+            if not mid:
+                continue
+            # Live API doesn't expose token windows on this endpoint; the
+            # picker falls back to "unknown" rendering for those columns.
+            out.append(
+                ModelInfo(
+                    id=mid,
+                    display_name=mid,
+                    max_input_tokens=None,
+                    max_output_tokens=None,
+                    reasoning=capability_for(mid)
+                    or ReasoningCapability(supported=False, shape="none"),
+                )
+            )
+        return out
