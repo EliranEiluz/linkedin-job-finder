@@ -581,7 +581,13 @@ export const ConfigPage = () => {
         onApply={(next) => saveConfig(next)}
       />
 
-      <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 pb-36 md:pb-4">
+      {/* Bottom padding reserves room for the fixed SaveChangesBar so
+          the last content card never sits under the bar when the user
+          scrolls to the end. Same value on mobile and desktop because
+          the bar is now `position: fixed` (was `sticky` and took its
+          own layout space at desktop widths). pb-28 ≈ 112px clears the
+          bar's ~72px height + safe-area inset + breathing room. */}
+      <div className="flex-1 overflow-y-auto bg-slate-50 px-4 py-4 pb-28">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 md:flex-row md:items-start">
           {/* Desktop-only left rail: switches the active sub-section.
               Hidden on mobile — ConfigSection renders all three as
