@@ -621,7 +621,7 @@ export const ConfigPage = () => {
                     ? 'Loading feedback signals…'
                     : signalCount < MIN_SIGNALS_FOR_SUGGEST
                       ? `Need ≥${MIN_SIGNALS_FOR_SUGGEST} rated/applied/manual-added jobs (you have ${signalCount})`
-                      : `Reads up to 30 of your most recent feedback signals (ratings, applies, kanban moves, manual-adds) plus the active profile's config and asks Claude to suggest new queries, priority companies, and off-topic title regex. You pick which to apply.`
+                      : `Reads up to 30 of your most recent feedback signals (ratings, applies, kanban moves, manual-adds) plus the active profile's config and asks the LLM to suggest new queries, priority companies, and off-topic title regex. You pick which to apply.`
                 }
                 className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -866,7 +866,7 @@ export const ConfigPage = () => {
                 />
                 <p className="mt-1 text-[11px] text-slate-500">
                   Recent rated / kanban-progressed / manual-add jobs that get
-                  shown to Claude as calibration evidence on every scoring
+                  shown to the LLM as calibration evidence on every scoring
                   call. Half positive, half negative, recency-sorted. Default 6.
                 </p>
               </div>

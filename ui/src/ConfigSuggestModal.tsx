@@ -281,7 +281,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
           {state.kind === 'loading' && (
             <div className="flex items-center gap-2 rounded border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-700">
               <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700" />
-              <span>Asking Claude to read your signals… (up to 60s)</span>
+              <span>Asking the LLM to read your signals… (up to 60s)</span>
             </div>
           )}
 
@@ -300,7 +300,7 @@ export const ConfigSuggestModal = ({ open, config, onClose, onApply }: Props) =>
               )}
               <div className="rounded border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
                 No actionable suggestions yet — your config already covers the
-                patterns Claude saw.
+                patterns the LLM saw.
               </div>
             </>
           )}

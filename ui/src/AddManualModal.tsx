@@ -196,7 +196,7 @@ export const AddManualModal = ({ open, onClose }: Props) => {
                   <span>Working… this can take 30-60 seconds</span>
                 </div>
                 <div className="mt-1 text-[11px] text-slate-500">
-                  Fetching from LinkedIn, then scoring with Claude.
+                  Fetching from LinkedIn, then scoring with the LLM.
                 </div>
               </div>
             )}
