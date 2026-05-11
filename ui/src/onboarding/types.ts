@@ -79,35 +79,17 @@ export interface PreflightResponse {
   error?: string;
 }
 
-export interface LLMProvider {
-  name: LLMProviderName;
-  label: string;
-  needs_key: boolean;
-  free_tier: boolean;
-  env_var: string | null;
-  help_url: string;
-  blurb: string;
-}
-
-export interface LLMListResponse {
-  ok: boolean;
-  providers?: LLMProvider[];
-  error?: string;
-}
-
-export interface LLMTestResponse {
-  ok: boolean;
-  message?: string;
-  name?: string;
-  error?: string;
-}
-
-export interface LLMSaveCredResponse {
-  ok: boolean;
-  env_var?: string;
-  env_path?: string;
-  error?: string;
-}
+// LLM provider response types were lifted to `ui/src/llmApi.ts` when the
+// provider-picker UI was extracted from Step1LLM into a shared component
+// (so the post-onboarding LLMProviderCard can import them without pulling
+// in the onboarding tree). Re-exported here so the wizard's existing
+// `import { ... } from '../types'` paths keep working.
+export type {
+  LLMProvider,
+  LLMListResponse,
+  LLMTestResponse,
+  LLMSaveCredResponse,
+} from '../llmApi';
 
 export interface LinkedInSessionResponse {
   exists: boolean;
