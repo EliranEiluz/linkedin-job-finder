@@ -139,6 +139,54 @@ describe('normalizeConfig — default_mode', () => {
   });
 });
 
+describe('normalizeConfig — corpus_filter (issue #117)', () => {
+  it('injects the disabled-filter shape when the key is missing', () => {
+    // Legacy config (no corpus_filter key) must load with both fields
+    // null so the backend treats it as "filter disabled" — pre-feature
+    // behavior. Same shape as a config with the field explicitly set
+    // to {min_fit: null, min_score: null}.
+    const cfg = normalizeConfig({});
+    expect(cfg.corpus_filter).toEqual({ min_fit: null, min_score: null });
+  });
+
+  it('keeps a valid corpus_filter block', () => {
+    const cfg = normalizeConfig({
+      corpus_filter: { min_fit: 'good', min_score: 7 },
+    });
+    expect(cfg.corpus_filter).toEqual({ min_fit: 'good', min_score: 7 });
+  });
+
+  it.each([
+    [{ min_fit: 'bad', min_score: 5 }, { min_fit: null, min_score: 5 }],
+    [{ min_fit: 'good', min_score: 99 }, { min_fit: 'good', min_score: null }],
+    [{ min_fit: 'good', min_score: -3 }, { min_fit: 'good', min_score: null }],
+    [{ min_fit: 'good', min_score: 7.5 }, { min_fit: 'good', min_score: null }],
+    [{ min_fit: 42 }, { min_fit: null, min_score: null }],
+    ['not an object', { min_fit: null, min_score: null }],
+  ])('drops malformed corpus_filter fields %j -> %j', (input, expected) => {
+    const cfg = normalizeConfig({ corpus_filter: input });
+    expect(cfg.corpus_filter).toEqual(expected);
+  });
+
+  it('serialize then re-normalize round-trips the corpus_filter shape', () => {
+    const cfg = normalizeConfig({
+      corpus_filter: { min_fit: 'ok', min_score: 5 },
+    });
+    // Re-normalizing serialized output must give the same shape — this
+    // pins down the round-trip property that every other field already
+    // gets a dedicated test for.
+    const serialized = serializeConfig(cfg);
+    const reNormalized = normalizeConfig(serialized);
+    expect(reNormalized.corpus_filter).toEqual({ min_fit: 'ok', min_score: 5 });
+  });
+
+  it('serializes the disabled-filter shape as both-null so the on-disk json is self-describing', () => {
+    const cfg = normalizeConfig({});
+    const out = serializeConfig(cfg);
+    expect(out.corpus_filter).toEqual({ min_fit: null, min_score: null });
+  });
+});
+
 describe('validateGeoId', () => {
   it.each([
     ['', ''],            // empty -> empty
