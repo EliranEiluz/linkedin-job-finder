@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "schema:dump": "vite-node scripts/dumpFilterSchema.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
