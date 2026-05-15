@@ -18,6 +18,7 @@ import {
   CONFIG_SUGGEST_CTL,
   PROFILE_CTL,
   CORPUS_CTL,
+  CORPUS_NL_CTL,
   PREFLIGHT_CTL,
   LLM_CTL,
   CV_EXTRACT_CTL,
@@ -30,6 +31,7 @@ import {
   CONFIG_SUGGEST_TIMEOUT_MS,
   PROFILE_TIMEOUT_MS,
   CORPUS_TIMEOUT_MS,
+  CORPUS_NL_TIMEOUT_MS,
   PREFLIGHT_TIMEOUT_MS,
   LLM_LIST_TIMEOUT_MS,
   LLM_MODELS_TIMEOUT_MS,
@@ -457,6 +459,52 @@ const configSuggestResponse = (
   sendJson(res, 500, {
     ok: false,
     error: `config_suggest_ctl.py produced no JSON on stdout (exit=${result.exitCode})`,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  });
+};
+
+// --- corpus_nl_ctl.py shell-out --------------------------------------
+
+// Single bounded-JSON LLM call. Mirrors the config-suggest envelope-
+// passthrough policy so the UI sees a structured `{ok, filters,
+// parse_summary, raw}` (or `{ok:false, error, raw}`) body verbatim.
+// Uses the generic runCtl helper because there's no extra arg-shaping
+// to do — stdin is just `{query: "..."}`.
+const corpusNlResponse = (
+  res: ServerResponse,
+  result: SchedulerCtlResult,
+) => {
+  if (result.spawnError) {
+    sendJson(res, 500, {
+      ok: false,
+      error: `failed to spawn corpus_nl_ctl.py: ${result.spawnError}`,
+      stderr: result.stderr,
+    }); return;
+  }
+  if (result.timedOut) {
+    sendJson(res, 504, {
+      ok: false,
+      error: `corpus_nl_ctl.py timed out after ${CORPUS_NL_TIMEOUT_MS}ms`,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }); return;
+  }
+  const trimmed = result.stdout.trim();
+  let parsed: unknown = null;
+  if (trimmed) {
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      /* fall through */
+    }
+  }
+  if (parsed && typeof parsed === 'object') {
+    sendJson(res, 200, parsed); return;
+  }
+  sendJson(res, 500, {
+    ok: false,
+    error: `corpus_nl_ctl.py produced no JSON on stdout (exit=${String(result.exitCode)})`,
     stdout: result.stdout,
     stderr: result.stderr,
   });
@@ -1798,6 +1846,38 @@ const configApiPlugin = (): Plugin => ({
             }); return;
           }
           sendJson(res, parsed.ok ? 200 : 400, parsed); return;
+        }
+
+        // ---- corpus natural-language filter translation. Single LLM
+        //      call via corpus_nl_ctl.py — converts a free-text query
+        //      into a partial FilterState. The UI shows the parsed
+        //      preview before applying, so a misparse is recoverable
+        //      with one click ("Cancel"). Reasoning is forced off in
+        //      the ctl: bounded JSON output, no thinking benefit.
+        if (url.startsWith('/api/corpus/nl') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          let body: { query?: unknown };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return; }
+          if (typeof body.query !== 'string' || !body.query.trim()) {
+            sendJson(res, 400, {
+              ok: false, error: 'query must be a non-empty string',
+            }); return;
+          }
+          // Cheap argv-budget sanity check before spawning. The ctl also
+          // enforces 2000 chars on its end as the source of truth.
+          if (body.query.length > 2000) {
+            sendJson(res, 400, {
+              ok: false, error: 'query too long (max 2000 chars)',
+            }); return;
+          }
+          const result = await runCtl(
+            CORPUS_NL_CTL,
+            [],
+            JSON.stringify({ query: body.query }),
+            CORPUS_NL_TIMEOUT_MS,
+          );
+          corpusNlResponse(res, result); return;
         }
 
         // ---- cv save (used by the onboarding flow instead of the old

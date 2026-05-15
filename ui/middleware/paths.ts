@@ -26,6 +26,7 @@ export const ONBOARDING_CTL = path.join(BACKEND_DIR, 'ctl', 'onboarding_ctl.py')
 export const CONFIG_SUGGEST_CTL = path.join(BACKEND_DIR, 'ctl', 'config_suggest_ctl.py');
 export const PROFILE_CTL = path.join(BACKEND_DIR, 'ctl', 'profile_ctl.py');
 export const CORPUS_CTL = path.join(BACKEND_DIR, 'ctl', 'corpus_ctl.py');
+export const CORPUS_NL_CTL = path.join(BACKEND_DIR, 'ctl', 'corpus_nl_ctl.py');
 export const PREFLIGHT_CTL = path.join(BACKEND_DIR, 'ctl', 'preflight_ctl.py');
 export const LLM_CTL = path.join(BACKEND_DIR, 'ctl', 'llm_ctl.py');
 export const CV_EXTRACT_CTL = path.join(BACKEND_DIR, 'ctl', 'cv_extract_ctl.py');
@@ -52,6 +53,12 @@ export const ONBOARDING_SAVE_TIMEOUT_MS = 10_000;
 export const CONFIG_SUGGEST_TIMEOUT_MS = 240_000;
 export const PROFILE_TIMEOUT_MS = 10_000;
 export const CORPUS_TIMEOUT_MS = 8_000;
+// corpus_nl_ctl is a single bounded-JSON LLM call with reasoning_effort
+// forced off. 30s is plenty for any provider's non-thinking single-shot
+// response; we deliberately don't reuse the 240s suggester budget because
+// this call should feel snappy from the user's perspective (one input,
+// one preview line). If it takes >30s something is wrong upstream.
+export const CORPUS_NL_TIMEOUT_MS = 30_000;
 export const PREFLIGHT_TIMEOUT_MS = 30_000;
 export const LLM_LIST_TIMEOUT_MS = 10_000;
 export const LLM_SAVE_TIMEOUT_MS = 10_000;
