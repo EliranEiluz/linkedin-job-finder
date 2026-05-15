@@ -599,8 +599,7 @@ export const CorpusPage = () => {
       try {
         const res = await fetch(`/api/config?t=${Date.now().toString()}`);
         if (!res.ok) return;
-        const rawJson = (await res.json()) as Record<string, unknown>;
-        const cfg = normalizeConfig(rawJson);
+        const cfg = normalizeConfig(await res.json());
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mutated by cleanup
         if (cancelled) return;
         const m = new Map<string, string>();
@@ -608,21 +607,9 @@ export const CorpusPage = () => {
           if (c.id && c.name) m.set(c.id, c.name);
         }
         setCategoryNamesById(m);
-        // Seed pinned set from the config. We read it OFF the raw json
-        // (not the normalized CrawlerConfig) so the read path stays
-        // independent of any future configMigrate decisions about how
-        // to expose this field — the source of truth on the wire is
-        // `pinned_examples: string[]`.
-        const pinnedRaw = rawJson.pinned_examples;
-        if (Array.isArray(pinnedRaw)) {
-          const cleaned = new Set<string>();
-          for (const entry of pinnedRaw) {
-            if (typeof entry === 'string' && entry.trim()) {
-              cleaned.add(entry.trim());
-            }
-          }
-          setPinnedFromConfig(cleaned);
-        }
+        // Seed pinned set from the config (already normalized to a
+        // deduped, trimmed list of non-empty strings).
+        setPinnedFromConfig(new Set(cfg.pinned_examples));
       } catch {
         // ignore — fallback display is fine
       } finally {

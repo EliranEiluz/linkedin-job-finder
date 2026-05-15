@@ -175,6 +175,54 @@ describe('JobsTable sort persistence', () => {
   });
 });
 
+// Issue #124 — pin badge rendering in the Title column.
+describe('JobsTable — pinned badge (#124)', () => {
+  beforeEach(() => { localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  it('renders a 📌 badge for rows whose id is in pinnedIds', () => {
+    render(
+      <JobsTable
+        data={baseData}
+        applied={new Set()}
+        onToggleApplied={() => undefined}
+        pinnedIds={new Set(['b'])}
+      />,
+    );
+    // Find the row containing "Job b" — it should have the pin badge.
+    // We can't reliably query for the emoji glyph alone (it's wrapped
+    // in a <span> with title), so query by aria-label which is stable.
+    const badges = screen.getAllByLabelText('Pinned as a few-shot example');
+    expect(badges).toHaveLength(1);
+    // Walk up to the row and confirm it's the b row.
+    const badge = badges[0];
+    if (!badge) throw new Error('badge not found');
+    const row = badge.closest('tr');
+    expect(row?.textContent).toMatch(/Job b/);
+  });
+
+  it('renders no badge when pinnedIds is empty / undefined', () => {
+    const { rerender } = render(
+      <JobsTable
+        data={baseData}
+        applied={new Set()}
+        onToggleApplied={() => undefined}
+      />,
+    );
+    expect(screen.queryAllByLabelText('Pinned as a few-shot example')).toHaveLength(0);
+
+    rerender(
+      <JobsTable
+        data={baseData}
+        applied={new Set()}
+        onToggleApplied={() => undefined}
+        pinnedIds={new Set()}
+      />,
+    );
+    expect(screen.queryAllByLabelText('Pinned as a few-shot example')).toHaveLength(0);
+  });
+});
+
 // Silence the noisy "Not implemented: HTMLCanvasElement" log happy-dom
 // emits when @tanstack/react-table probes layout. The tests don't assert
 // on canvas behavior — happy-dom's stub is fine.
