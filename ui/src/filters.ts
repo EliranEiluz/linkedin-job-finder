@@ -18,6 +18,10 @@ export interface FilterState {
   dateFrom: string; // ISO date (YYYY-MM-DD), only used if dateQuick === 'custom'
   dateTo: string;
   applied: Tri; // 'all' = both, 'yes' = only applied, 'no' = only not-applied
+  // Pinned-as-few-shot-example filter (#124). `true` narrows the table to
+  // rows whose id is in `pinnedIds` (resolved by the caller at filter
+  // time). `false` is the default — show everything.
+  pinnedOnly: boolean;
   search: string;
 }
 
@@ -82,6 +86,7 @@ export const defaultFilters = (): FilterState => ({
   dateFrom: '',
   dateTo: '',
   applied: 'all',
+  pinnedOnly: false,
   search: '',
 });
 
@@ -99,6 +104,7 @@ export const isDefault = (f: FilterState): boolean => {
     f.dateFrom === d.dateFrom &&
     f.dateTo === d.dateTo &&
     f.applied === d.applied &&
+    f.pinnedOnly === d.pinnedOnly &&
     f.search === d.search
   );
 };
@@ -129,6 +135,7 @@ export const toSearchParams = (f: FilterState): URLSearchParams => {
   if (f.dateFrom) p.set('df', f.dateFrom);
   if (f.dateTo) p.set('dt', f.dateTo);
   if (f.applied !== d.applied) p.set('applied', f.applied);
+  if (f.pinnedOnly !== d.pinnedOnly) p.set('pinned', '1');
   if (f.search) p.set('q', f.search);
   return p;
 };
@@ -200,6 +207,7 @@ export const fromSearchParams = (p: URLSearchParams): FilterState => {
 
   f.dateFrom = p.get('df') ?? '';
   f.dateTo = p.get('dt') ?? '';
+  if (p.get('pinned') === '1') f.pinnedOnly = true;
   f.search = p.get('q') ?? '';
   return f;
 };
@@ -217,6 +225,7 @@ export const applyFilters = (
   jobs: Job[],
   f: FilterState,
   applied: Set<string> = new Set(),
+  pinned: Set<string> = new Set(),
 ): Job[] => {
   const q = f.search.trim().toLowerCase();
   const cutoff = f.dateQuick === 'custom' ? null : quickCutoff(f.dateQuick);
@@ -262,6 +271,11 @@ export const applyFilters = (
     // Applied
     if (f.applied === 'yes' && !applied.has(j.id)) return false;
     if (f.applied === 'no' && applied.has(j.id)) return false;
+
+    // Pinned-as-few-shot-example. `pinnedOnly` is a single-direction
+    // narrowing filter — when checked, drop rows that aren't pinned.
+    // Default (unchecked) is "match all" — independent of pin state.
+    if (f.pinnedOnly && !pinned.has(j.id)) return false;
 
     // Date
     const ts = Date.parse(j.found_at);

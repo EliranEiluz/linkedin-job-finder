@@ -53,6 +53,11 @@ export const ONBOARDING_SAVE_TIMEOUT_MS = 10_000;
 export const CONFIG_SUGGEST_TIMEOUT_MS = 240_000;
 export const PROFILE_TIMEOUT_MS = 10_000;
 export const CORPUS_TIMEOUT_MS = 8_000;
+// Pin / unpin a single corpus row as a few-shot example (issue #124).
+// Pure config.json mutation — atomic temp+rename, no subprocess spawn.
+// 5s is generous for a local FS round-trip; the UI uses this as the
+// "give up and report failure" threshold.
+export const CORPUS_PIN_TIMEOUT_MS = 5_000;
 // corpus_nl_ctl is a single bounded-JSON LLM call with reasoning_effort
 // forced off. 30s is plenty for any provider's non-thinking single-shot
 // response; we deliberately don't reuse the 240s suggester budget because

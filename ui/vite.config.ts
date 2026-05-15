@@ -32,6 +32,7 @@ import {
   PROFILE_TIMEOUT_MS,
   CORPUS_TIMEOUT_MS,
   CORPUS_NL_TIMEOUT_MS,
+  CORPUS_PIN_TIMEOUT_MS,
   PREFLIGHT_TIMEOUT_MS,
   LLM_LIST_TIMEOUT_MS,
   LLM_MODELS_TIMEOUT_MS,
@@ -1846,6 +1847,139 @@ const configApiPlugin = (): Plugin => ({
             }); return;
           }
           sendJson(res, parsed.ok ? 200 : 400, parsed); return;
+        }
+
+        // ---- corpus pin-example (POST) -----------------------------------
+        // Toggle a job id in config.pinned_examples (issue #124). Body
+        // shape: { id: string, pinned: boolean }. When pinned=true the id
+        // is appended to the list (deduped). When pinned=false it's
+        // removed. Atomic write follows the same temp+rename pattern as
+        // the /api/config POST handler, including symlink resolution so
+        // multi-profile setups update the active profile rather than
+        // clobbering the symlink. We intentionally do NOT validate that
+        // the id exists in results.json — pinned ids that no longer
+        // exist are silently dropped at READ time by the few-shot picker
+        // (so a temporary corpus reset doesn't wipe pins).
+        if (url.startsWith('/api/corpus/pin-example') && req.method === 'POST') {
+          const raw = await readJsonBody(req);
+          let body: { id?: unknown; pinned?: unknown };
+          try { body = JSON.parse(raw) as typeof body; }
+          catch { sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return; }
+          if (typeof body.id !== 'string' || !body.id.trim()) {
+            sendJson(res, 400, {
+              ok: false, error: 'id must be a non-empty string',
+            }); return;
+          }
+          if (typeof body.pinned !== 'boolean') {
+            sendJson(res, 400, {
+              ok: false, error: 'pinned must be a boolean',
+            }); return;
+          }
+          const jobId = body.id.trim();
+          const setPinned = body.pinned;
+
+          // Run the whole read-modify-write under a single race-protected
+          // timeout. Failure modes: config.json missing/unreadable (404),
+          // disk write fails (500), op exceeds timeout (504).
+          const operation = (async (): Promise<{ status: number; body: Record<string, unknown> }> => {
+            if (!existsSync(CONFIG_PATH)) {
+              return {
+                status: 404,
+                body: { ok: false, error: 'config.json does not exist yet' },
+              };
+            }
+            let writeTarget = CONFIG_PATH;
+            try {
+              writeTarget = await fs.realpath(CONFIG_PATH);
+            } catch {
+              /* config.json present but realpath failed — fall back to the
+                 literal path */
+            }
+            const text = await fs.readFile(writeTarget, 'utf8');
+            let cfg: Record<string, unknown>;
+            try {
+              const parsed: unknown = JSON.parse(text);
+              cfg = (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+                ? (parsed as Record<string, unknown>)
+                : {};
+            } catch {
+              return {
+                status: 500,
+                body: { ok: false, error: 'config.json is not valid JSON' },
+              };
+            }
+            const rawList = cfg.pinned_examples;
+            // Normalize: must be array of non-empty strings, deduped,
+            // order preserved (first occurrence wins). Same rules as the
+            // Python backend's _normalize_pinned_examples so a config
+            // edited from either side round-trips identically.
+            const current: string[] = [];
+            const seen = new Set<string>();
+            if (Array.isArray(rawList)) {
+              for (const entry of rawList) {
+                if (typeof entry !== 'string') continue;
+                const trimmed = entry.trim();
+                if (!trimmed || seen.has(trimmed)) continue;
+                seen.add(trimmed);
+                current.push(trimmed);
+              }
+            }
+            let next: string[];
+            let changed: boolean;
+            if (setPinned) {
+              if (seen.has(jobId)) {
+                next = current;
+                changed = false;
+              } else {
+                next = [...current, jobId];
+                changed = true;
+              }
+            } else {
+              if (seen.has(jobId)) {
+                next = current.filter((x) => x !== jobId);
+                changed = true;
+              } else {
+                next = current;
+                changed = false;
+              }
+            }
+            cfg.pinned_examples = next;
+            if (changed) {
+              const tmp = writeTarget + '.tmp';
+              await fs.writeFile(tmp, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+              await fs.rename(tmp, writeTarget);
+            }
+            return {
+              status: 200,
+              body: {
+                ok: true,
+                id: jobId,
+                pinned: setPinned,
+                pinned_examples: next,
+                changed,
+              },
+            };
+          })();
+
+          const timeout = new Promise<{ status: number; body: Record<string, unknown> }>(
+            (resolve) => {
+              setTimeout(() => {
+                resolve({
+                  status: 504,
+                  body: { ok: false, error: 'pin-example timed out' },
+                });
+              }, CORPUS_PIN_TIMEOUT_MS);
+            },
+          );
+
+          try {
+            const result = await Promise.race([operation, timeout]);
+            sendJson(res, result.status, result.body); return;
+          } catch (e) {
+            sendJson(res, 500, {
+              ok: false, error: `pin-example failed: ${(e as Error).message}`,
+            }); return;
+          }
         }
 
         // ---- corpus natural-language filter translation. Single LLM

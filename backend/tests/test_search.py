@@ -705,6 +705,208 @@ def test_feedback_examples_zero_cap_skips_block(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue #124 — hard-pinned few-shot examples. Pinned ids prepended in
+# config order before the recency-sorted fillers; excess pinned beyond
+# the cap drops from the tail; pinned ids absent from results.json drop
+# silently; recency fillers exclude any id already in the pinned section.
+# ---------------------------------------------------------------------------
+
+
+def test_few_shot_includes_pinned_first(tmp_path: Path) -> None:
+    """3 pinned + a pool of recent rated jobs → the first 3 lines are the
+    pinned rows in config order, then the recency-sorted fillers.
+    """
+    p = tmp_path / "results.json"
+    rows: list[dict] = []
+    # 3 pinned positive jobs with older timestamps than the recent ones.
+    for pid in ("p1", "p2", "p3"):
+        rows.append(
+            {
+                "id": pid,
+                "title": f"Pinned {pid}",
+                "company": f"Co {pid}",
+                "rating": 5,
+                "rated_at": "2025-01-01T00:00:00",
+            },
+        )
+    # 10 recent positive jobs — newer timestamps so they'd otherwise dominate.
+    for i in range(10):
+        rows.append(
+            {
+                "id": f"r{i}",
+                "title": f"Recent {i}",
+                "company": f"Co r{i}",
+                "rating": 5,
+                "rated_at": f"2026-05-{(i % 28) + 1:02d}T10:00:00",
+            },
+        )
+    # Add some negative signals so the stratifier has something to do
+    # in the filler section.
+    for i in range(3):
+        rows.append(
+            {
+                "id": f"n{i}",
+                "title": f"Bad {i}",
+                "company": f"Co n{i}",
+                "rating": 1,
+                "rated_at": f"2026-04-{(i % 28) + 1:02d}T10:00:00",
+            },
+        )
+    p.write_text(json.dumps(rows))
+
+    out = search._build_user_feedback_examples(
+        corpus_path=p,
+        cap=8,
+        pinned_ids=["p1", "p2", "p3"],
+    )
+    lines = [ln for ln in out.splitlines() if ln.startswith('- "')]
+    # First three lines must be the three pinned rows, in pinned-order.
+    assert lines[0].startswith('- "Pinned p1"')
+    assert lines[1].startswith('- "Pinned p2"')
+    assert lines[2].startswith('- "Pinned p3"')
+    # Recency fillers come after — at least one and at most cap - pinned.
+    assert len(lines) <= 8
+
+
+def test_few_shot_drops_pinned_when_deleted(tmp_path: Path) -> None:
+    """A pinned id missing from results.json is silently dropped at READ time;
+    its slot is reclaimed by the recency-fill section so the prompt isn't
+    short-changed.
+    """
+    p = tmp_path / "results.json"
+    rows = [
+        {"id": "real", "title": "Real Pinned", "rating": 5, "rated_at": "2025-01-01"},
+        {"id": "f1", "title": "Filler 1", "rating": 5, "rated_at": "2026-05-01T10:00:00"},
+        {"id": "f2", "title": "Filler 2", "rating": 5, "rated_at": "2026-05-02T10:00:00"},
+    ]
+    p.write_text(json.dumps(rows))
+
+    out = search._build_user_feedback_examples(
+        corpus_path=p,
+        cap=5,
+        pinned_ids=["ghost", "real", "also-ghost"],
+    )
+    # `ghost` and `also-ghost` are dropped silently — they don't appear in
+    # the output at all (no "user-pinned (no rating)" placeholder for them).
+    assert "ghost" not in out
+    # `real` survived the resolution.
+    assert "Real Pinned" in out
+    # Fillers picked up to fill the remaining slots.
+    assert "Filler 1" in out
+    assert "Filler 2" in out
+
+
+def test_few_shot_pinned_excess_truncates_end(tmp_path: Path) -> None:
+    """pinned=8 with cap=5 → last 3 pinned dropped (tail), no recency-fillers."""
+    p = tmp_path / "results.json"
+    rows: list[dict] = []
+    for i in range(8):
+        rows.append(
+            {
+                "id": f"p{i}",
+                "title": f"Pin {i}",
+                "rating": 5,
+                "rated_at": f"2025-01-{(i % 28) + 1:02d}T00:00:00",
+            },
+        )
+    # Add a fresh recency-positive row that should NOT appear (no room).
+    rows.append(
+        {
+            "id": "fresh",
+            "title": "Fresh Filler",
+            "rating": 5,
+            "rated_at": "2026-12-31T23:59:59",
+        },
+    )
+    p.write_text(json.dumps(rows))
+
+    pinned = [f"p{i}" for i in range(8)]
+    out = search._build_user_feedback_examples(corpus_path=p, cap=5, pinned_ids=pinned)
+    lines = [ln for ln in out.splitlines() if ln.startswith('- "')]
+    # Exactly 5 example lines — pinned tail dropped, NO fillers.
+    assert len(lines) == 5
+    # The first 5 pinned (in pinned-order) are present; p5, p6, p7 are NOT.
+    assert all(f'"Pin {i}"' in lines[i] for i in range(5))
+    for dropped_idx in (5, 6, 7):
+        assert f'"Pin {dropped_idx}"' not in out
+    # The fresh row never reaches the prompt because pinned consumed every slot.
+    assert "Fresh Filler" not in out
+
+
+def test_normalize_pinned_examples_dedups_and_filters() -> None:
+    """The normalizer rejects non-strings, empties, whitespace-only, and
+    duplicates — preserving original (first-occurrence) order."""
+    assert search._normalize_pinned_examples(["", "  ", "a", "a", "b"]) == ["a", "b"]
+    # Mixed-type tolerance: numbers / dicts / None entries get dropped silently.
+    assert search._normalize_pinned_examples(["x", 7, None, {"id": "y"}, "y"]) == [
+        "x",
+        "y",
+    ]
+    # Order-preserving dedup — first occurrence wins.
+    assert search._normalize_pinned_examples(["b", "a", "b", "a"]) == ["b", "a"]
+    # Non-list payloads collapse to [].
+    assert search._normalize_pinned_examples("a,b,c") == []
+    assert search._normalize_pinned_examples(None) == []
+    assert search._normalize_pinned_examples({"a": 1}) == []
+
+
+def test_pin_example_endpoint_round_trip() -> None:
+    """Mirrors the /api/corpus/pin-example middleware logic at the unit level:
+    appending an id then removing it must round-trip through the normalizer
+    cleanly. Validates that pinning twice is idempotent (dedup at append
+    time) and that unpinning a non-pinned id is a no-op.
+    """
+    current = search._normalize_pinned_examples([])
+    assert current == []
+
+    # First POST with pinned=true → list is ["a"].
+    appended = current + ["a"]
+    after_pin = search._normalize_pinned_examples(appended)
+    assert after_pin == ["a"]
+
+    # Second POST with pinned=true (same id) → still ["a"] (idempotent).
+    appended_again = after_pin + ["a"]
+    assert search._normalize_pinned_examples(appended_again) == ["a"]
+
+    # Add a second id → list is ["a", "b"] (insertion order preserved).
+    after_pin = search._normalize_pinned_examples([*after_pin, "b"])
+    assert after_pin == ["a", "b"]
+
+    # POST with pinned=false on "a" → list is ["b"].
+    after_unpin = search._normalize_pinned_examples([x for x in after_pin if x != "a"])
+    assert after_unpin == ["b"]
+
+    # Unpinning an id that isn't in the list is a no-op (filter is a no-op).
+    no_op = search._normalize_pinned_examples([x for x in after_unpin if x != "ghost"])
+    assert no_op == ["b"]
+
+
+def test_pinned_unrated_labeled_correctly(tmp_path: Path) -> None:
+    """A pinned row with no rating / kanban / manual signal still reaches the
+    prompt, labelled with the canonical PINNED_UNRATED_SUMMARY."""
+    p = tmp_path / "results.json"
+    rows = [
+        # No rating, no app_status, no source="manual" — would normally be
+        # invisible to the few-shot loop. But because the user pinned it,
+        # the prompt must include it.
+        {"id": "naked", "title": "Naked Pin", "company": "X Co"},
+        # A positive filler so the prompt isn't empty regardless.
+        {"id": "p", "title": "Filler", "rating": 5, "rated_at": "2026-05-01T10:00:00"},
+    ]
+    p.write_text(json.dumps(rows))
+
+    out = search._build_user_feedback_examples(
+        corpus_path=p,
+        cap=5,
+        pinned_ids=["naked"],
+    )
+    assert "Naked Pin" in out
+    # The canonical "user-pinned (no rating)" marker reaches the prompt so
+    # the LLM can tell this example is curation, not classification.
+    assert search.PINNED_UNRATED_SUMMARY in out
+
+
+# ---------------------------------------------------------------------------
 # _normalize_categories / _normalize_llm_provider — config validation.
 # ---------------------------------------------------------------------------
 

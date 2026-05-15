@@ -209,6 +209,14 @@ interface Props {
   // and a row outside this set follows the natural applied-pinned sort.
   // Ephemeral (lives in CorpusPage state, not server-side).
   pushedToEndIds?: Set<string>;
+  // Job ids currently pinned as few-shot examples (#124). Drives both
+  // the title-cell 📌 badge and the popover's pin/unpin label. Mirrors
+  // the pushedToEndIds pattern — optimistic in CorpusPage, reconciled
+  // against the persisted config on reload.
+  pinnedIds?: Set<string>;
+  // Toggle a row's pin state. Optional — when absent, JobsTable forwards
+  // undefined to the popover and the affordance is hidden.
+  onTogglePin?: (id: string, pinned: boolean) => void;
   // Per-row push-to-end action; surfaced in JobActionsPopover.
   onPushToEnd?: (id: string) => void;
   // Inverse of onPushToEnd — clears the pushed_to_end flag.
@@ -288,7 +296,7 @@ const MOBILE_SORT_OPTIONS = [
 ] as const;
 
 export const JobsTable = ({
-  data, applied, pushedToEndIds,
+  data, applied, pushedToEndIds, pinnedIds, onTogglePin,
   onPushToEnd, onRestoreFromEnd, onPushManyToEnd, onSetAppliedMany,
   onApply, onUnapply, applyMovesToEnd = null, onSetApplyPref,
   onRate, onDelete, hasNonDefaultFilter = false, onDeleteAllFiltered,
@@ -513,9 +521,24 @@ export const JobsTable = ({
       }),
       columnHelper.accessor('title', {
         header: 'Title',
-        cell: (info) => (
-          <span className="text-slate-800">{info.getValue()}</span>
-        ),
+        cell: (info) => {
+          const j = info.row.original;
+          const pinned = pinnedIds?.has(j.id) ?? false;
+          return (
+            <span className="inline-flex items-center gap-1 text-slate-800">
+              {pinned && (
+                <span
+                  className="select-none text-xs leading-none"
+                  title="Pinned as a few-shot example for the LLM"
+                  aria-label="Pinned as a few-shot example"
+                >
+                  📌
+                </span>
+              )}
+              <span>{info.getValue()}</span>
+            </span>
+          );
+        },
       }),
       columnHelper.accessor('location', {
         header: 'Location',
@@ -709,7 +732,7 @@ export const JobsTable = ({
     ],
     [
       confirmDeleteId, handleInlineDelete, onDelete, onRate,
-      applied, pushedToEndIds,
+      applied, pushedToEndIds, pinnedIds,
       selectedIds, toggleSelected, categoryNamesById, configReady,
     ],
   );
@@ -939,6 +962,15 @@ export const JobsTable = ({
                   >
                     <div className="min-w-0 flex-1">
                       <div className="line-clamp-2 text-sm font-medium leading-snug text-slate-900">
+                        {pinnedIds?.has(j.id) && (
+                          <span
+                            className="mr-1 select-none align-middle text-xs leading-none"
+                            title="Pinned as a few-shot example for the LLM"
+                            aria-label="Pinned as a few-shot example"
+                          >
+                            📌
+                          </span>
+                        )}
                         {j.title}
                       </div>
                       <div className="mt-0.5 truncate text-xs text-slate-600">
@@ -1397,6 +1429,8 @@ export const JobsTable = ({
             onPushToEnd={onPushToEnd}
             onRestoreFromEnd={onRestoreFromEnd}
             isPushedToEnd={pushedToEndIds?.has(job.id) ?? false}
+            isPinned={pinnedIds?.has(job.id) ?? false}
+            onTogglePin={onTogglePin}
             applyMovesToEnd={applyMovesToEnd}
             onSetApplyPref={onSetApplyPref}
             onRate={onRate}

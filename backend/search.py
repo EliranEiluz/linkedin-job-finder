@@ -332,16 +332,57 @@ def _format_feedback_example(row: dict, summary: str) -> str:
     return _truncate(line, FEEDBACK_EXAMPLE_CHAR_CAP)
 
 
+# Label used when a pinned row has no rating / kanban / manual-add signal.
+# Routed through `_classify_feedback_row` would return (None, "") and skip
+# the row entirely — but the user explicitly pinned it, so we surface it
+# anyway with this neutral marker. The LLM gets the canonical example;
+# without sentiment to weight it, the example just demonstrates "this is
+# the kind of job the user cares about." See issue #124.
+PINNED_UNRATED_SUMMARY = "user-pinned (no rating)"
+
+
+def _resolve_pinned_rows(
+    corpus: list[dict],
+    pinned_ids: list[str],
+) -> list[tuple[dict, str]]:
+    """Match pinned_ids against the corpus and return (row, summary) tuples
+    in the SAME ORDER as pinned_ids. Ids not found in the corpus are
+    silently dropped (the config keeps them — only the prompt skips them).
+
+    A pinned row with a recognized rating / kanban / manual signal keeps
+    that signal's summary so the LLM sees the actual sentiment. A pinned
+    row with no signal gets `PINNED_UNRATED_SUMMARY` instead so it still
+    reaches the prompt.
+    """
+    if not pinned_ids:
+        return []
+    by_id = {r.get("id"): r for r in corpus if isinstance(r, dict) and r.get("id")}
+    out: list[tuple[dict, str]] = []
+    for pid in pinned_ids:
+        row = by_id.get(pid)
+        if row is None:
+            continue
+        _sentiment, summary = _classify_feedback_row(row)
+        out.append((row, summary or PINNED_UNRATED_SUMMARY))
+    return out
+
+
 def _build_user_feedback_examples(
     corpus_path: Path | None = None,
     cap: int | None = None,
+    pinned_ids: list[str] | None = None,
 ) -> str:
     """Return a `<user_feedback_examples>...</user_feedback_examples>` block
     (with leading + trailing newlines) summarizing the user's past
     ratings / kanban progress, OR "" if there's nothing to show.
 
-    Stratified pos/neg, recency-sorted, interleaved. See
-    DESIGN_FEW_SHOT.md §2 for the ordering rationale.
+    Output order: `[pinned_in_config_order..., recency_filler...]`, capped
+    at `cap`. Pinned ids not in `results.json` are silently dropped. When
+    `len(pinned) > cap` the EXCESS pinned rows from the end are dropped and
+    no recency-fillers are added. Recency-fillers exclude any id already
+    in the pinned section so the same job never appears twice. See
+    DESIGN_FEW_SHOT.md §2 for the recency-fill rationale and issue #124
+    for the pinning behavior.
     """
     path = corpus_path or RESULTS_FILE
     try:
@@ -366,38 +407,66 @@ def _build_user_feedback_examples(
     if cap == 0:
         return ""
 
+    # Resolve pinned ids. Prefer caller's value; else look at the active
+    # config; else fall back to []. Each entry is matched against the corpus
+    # — unknown ids are silently dropped at READ time (the config keeps
+    # them; only the prompt skips them) so a temporary corpus reset doesn't
+    # wipe the user's pins.
+    if pinned_ids is None:
+        cfg_pinned: Any = None
+        try:
+            cfg_pinned = _ACTIVE_CONFIG.get("pinned_examples")
+        except Exception:
+            cfg_pinned = None
+        pinned_ids = cfg_pinned if isinstance(cfg_pinned, list) else []
+    # Defensive: even if the caller passed a list, normalize so a hand-call
+    # from tests doesn't blow up on bogus entries.
+    pinned_ids = _normalize_pinned_examples(pinned_ids)
+
+    pinned_rows = _resolve_pinned_rows(corpus, pinned_ids)
+    # Cap pinned first — excess pinned at the tail is dropped, no recency
+    # filler runs.
+    pinned_take = pinned_rows[:cap]
+    pinned_id_set = {r.get("id") for r, _ in pinned_take}
+    remaining = cap - len(pinned_take)
+
     pos: list[tuple[str, dict, str]] = []  # (recency_key, row, summary)
     neg: list[tuple[str, dict, str]] = []
-    for row in corpus:
-        sentiment, summary = _classify_feedback_row(row)
-        if not sentiment:
-            continue
-        key = _example_recency_key(row)
-        bucket = pos if sentiment == "pos" else neg
-        bucket.append((key, row, summary))
+    if remaining > 0:
+        for row in corpus:
+            # Skip rows already in the pinned section so the LLM never sees
+            # the same example twice.
+            if row.get("id") in pinned_id_set:
+                continue
+            sentiment, summary = _classify_feedback_row(row)
+            if not sentiment:
+                continue
+            key = _example_recency_key(row)
+            bucket = pos if sentiment == "pos" else neg
+            bucket.append((key, row, summary))
 
-    if not pos and not neg:
-        return ""
+        # Recency-sort each bucket newest-first.
+        pos.sort(key=lambda t: t[0], reverse=True)
+        neg.sort(key=lambda t: t[0], reverse=True)
 
-    # Recency-sort each bucket newest-first.
-    pos.sort(key=lambda t: t[0], reverse=True)
-    neg.sort(key=lambda t: t[0], reverse=True)
-
-    # Stratify: try for half + half. If one side is shorter than `half`,
-    # let the other side take the leftover slots so we always fill `cap`
-    # when enough total signals exist.
-    half = cap // 2
-    pos_quota = min(len(pos), max(half, cap - min(half, len(neg))))
-    neg_quota = min(len(neg), cap - pos_quota)
-    # Edge case: pos_quota was so generous it left 0 for neg even though
-    # neg has rows and pos exceeds quota. Re-balance toward neg.
-    if neg_quota < min(len(neg), cap - half) and pos_quota > half:
-        slack = pos_quota - half
-        give = min(slack, min(len(neg), cap - half) - neg_quota)
-        pos_quota -= give
-        neg_quota += give
-    pos_take = pos[:pos_quota]
-    neg_take = neg[:neg_quota]
+        # Stratify: try for half + half within the REMAINING slots. If one
+        # side is shorter than `half`, let the other side take the leftover
+        # slots so we always fill `remaining` when enough total signals exist.
+        half = remaining // 2
+        pos_quota = min(len(pos), max(half, remaining - min(half, len(neg))))
+        neg_quota = min(len(neg), remaining - pos_quota)
+        # Edge case: pos_quota was so generous it left 0 for neg even though
+        # neg has rows and pos exceeds quota. Re-balance toward neg.
+        if neg_quota < min(len(neg), remaining - half) and pos_quota > half:
+            slack = pos_quota - half
+            give = min(slack, min(len(neg), remaining - half) - neg_quota)
+            pos_quota -= give
+            neg_quota += give
+        pos_take = pos[:pos_quota]
+        neg_take = neg[:neg_quota]
+    else:
+        pos_take = []
+        neg_take = []
 
     # Interleave (P, N, P, N, ...) to dodge LLM recency/majority bias —
     # neither sentiment dominates the tail of the example list.
@@ -407,14 +476,20 @@ def _build_user_feedback_examples(
             interleaved.append(pos_take[i])
         if i < len(neg_take):
             interleaved.append(neg_take[i])
-        if len(interleaved) >= cap:
+        if len(interleaved) >= remaining:
             break
-    interleaved = interleaved[:cap]
+    interleaved = interleaved[:remaining]
 
-    if not interleaved:
+    if not pinned_take and not interleaved:
         return ""
 
-    lines = [_format_feedback_example(row, summary) for _, row, summary in interleaved]
+    lines: list[str] = []
+    # Pinned section first, in the user's configured order.
+    for row, summary in pinned_take:
+        lines.append(_format_feedback_example(row, summary))
+    # Recency fillers next.
+    for _, row, summary in interleaved:
+        lines.append(_format_feedback_example(row, summary))
     body = "\n".join(lines)
     return (
         "\n<user_feedback_examples>\n"
@@ -891,6 +966,12 @@ def _hardcoded_defaults() -> dict:
         # disabled = pre-feature behavior. See `_passes_corpus_filter` for
         # the gate logic.
         "corpus_filter": {"min_fit": None, "min_score": None},
+        # Issue #124 — list of job ids the user has hard-pinned as few-shot
+        # examples. The picker (`_build_user_feedback_examples`) prepends
+        # these in config order before the recency-sorted fillers, so the
+        # user's canonical examples always reach the LLM. Empty list =
+        # pre-feature behavior (pure recency-sort).
+        "pinned_examples": [],
     }
 
 
@@ -1016,6 +1097,31 @@ def _normalize_corpus_filter(raw: Any) -> dict:
     return out
 
 
+def _normalize_pinned_examples(raw: Any) -> list[str]:
+    """Validate the pinned_examples block. Must be a list of non-empty strings;
+    deduplicate while preserving the user's original order (first occurrence
+    wins). Anything else returns []. We do NOT check whether the ids actually
+    exist in results.json — that resolution happens at READ time in
+    `_build_user_feedback_examples` so a temporary corpus reset doesn't wipe
+    the user's pins. See issue #124.
+
+    Accepted shape: ["job_id_1", "job_id_2", ...]
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        s = item.strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 def load_config() -> dict:
     """Load config.json if present; merge over the hardcoded defaults.
 
@@ -1104,6 +1210,10 @@ def load_config() -> dict:
         # Post-scoring corpus filter (issue #117). Validated; malformed
         # blocks fall back silently to "off".
         "corpus_filter": _normalize_corpus_filter(user_cfg.get("corpus_filter")),
+        # Issue #124 — hard-pinned few-shot example ids. Normalized to a
+        # deduped list of non-empty strings (preserving user order). An
+        # empty / missing list is identical to pre-feature behavior.
+        "pinned_examples": _normalize_pinned_examples(user_cfg.get("pinned_examples")),
     }
 
     # Mutate module-level constants in place so the rest of the file

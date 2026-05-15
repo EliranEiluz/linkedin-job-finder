@@ -317,6 +317,42 @@ describe('useCorpusActions', () => {
     const r = await result.current.pushToEndJobs([], true);
     expect(r).toEqual({ ok: true });
   });
+
+  // Issue #124 — pinExample wraps /api/corpus/pin-example.
+  it('pinExample forwards {id, pinned} and surfaces the new list', async () => {
+    let captured: Record<string, unknown> | null = null;
+    server.use(
+      http.post('*/api/corpus/pin-example', async ({ request }) => {
+        captured = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          ok: true,
+          id: captured.id,
+          pinned: captured.pinned,
+          pinned_examples: ['x', 'y'],
+        });
+      }),
+    );
+    const { result } = renderHook(() => useCorpusActions());
+    const r = await result.current.pinExample('x', true);
+    expect(captured).toEqual({ id: 'x', pinned: true });
+    expect(r.ok).toBe(true);
+    expect(r.pinned_examples).toEqual(['x', 'y']);
+  });
+
+  it('pinExample surfaces server-side errors', async () => {
+    server.use(
+      http.post('*/api/corpus/pin-example', () =>
+        HttpResponse.json(
+          { ok: false, error: 'id must be a non-empty string' },
+          { status: 400 },
+        ),
+      ),
+    );
+    const { result } = renderHook(() => useCorpusActions());
+    const r = await result.current.pinExample('', true);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('id must be a non-empty string');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────

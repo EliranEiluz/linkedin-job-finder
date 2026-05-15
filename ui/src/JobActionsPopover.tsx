@@ -22,6 +22,12 @@ interface Props {
   // Whether this row is currently flagged pushed_to_end (server-side or
   // optimistic). Drives which action the popover renders.
   isPushedToEnd?: boolean;
+  // Whether this row is currently pinned as a few-shot example (#124).
+  // Drives the popover's "📌 Pin as example" / "📌 Unpin example" label.
+  isPinned?: boolean;
+  // Toggle pin state. Optional — when absent, the popover hides the pin
+  // affordance entirely (callers that don't wire it can opt out).
+  onTogglePin?: (id: string, pinned: boolean) => void;
   // Global preference for whether Apply moves the row to the end of the
   // corpus. `null` = unset (user has not made an explicit choice yet — we
   // show both buttons every time + a "Remember" checkbox). `true|false` =
@@ -58,7 +64,8 @@ interface Props {
  */
 export const JobActionsPopover = ({
   job, isApplied, onApply, onUnapply, onPushToEnd, onRestoreFromEnd,
-  isPushedToEnd = false, applyMovesToEnd, onSetApplyPref,
+  isPushedToEnd = false, isPinned = false, onTogglePin,
+  applyMovesToEnd, onSetApplyPref,
   onRate, onDelete, anchorRef, onClose,
 }: Props) => {
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -176,6 +183,8 @@ export const JobActionsPopover = ({
             onPushToEnd={onPushToEnd}
             onRestoreFromEnd={onRestoreFromEnd}
             isPushedToEnd={isPushedToEnd}
+            isPinned={isPinned}
+            onTogglePin={onTogglePin}
             applyMovesToEnd={applyMovesToEnd}
             onSetApplyPref={onSetApplyPref}
             remember={remember}
@@ -214,6 +223,8 @@ export const JobActionsPopover = ({
         onPushToEnd={onPushToEnd}
         onRestoreFromEnd={onRestoreFromEnd}
         isPushedToEnd={isPushedToEnd}
+        isPinned={isPinned}
+        onTogglePin={onTogglePin}
         applyMovesToEnd={applyMovesToEnd}
         onSetApplyPref={onSetApplyPref}
         remember={remember}
@@ -234,7 +245,8 @@ export const JobActionsPopover = ({
 // and delete button. Only the wrapper (positioning + backdrop) differs.
 const PopoverBody = ({
   job, isApplied, onApply, onUnapply, onPushToEnd, onRestoreFromEnd,
-  isPushedToEnd, applyMovesToEnd, onSetApplyPref,
+  isPushedToEnd, isPinned, onTogglePin,
+  applyMovesToEnd, onSetApplyPref,
   remember, setRemember, onRate, onClose,
   confirmDelete, deleting, err, handleDelete,
 }: {
@@ -245,6 +257,8 @@ const PopoverBody = ({
   onPushToEnd?: (id: string) => void;
   onRestoreFromEnd?: (id: string) => void;
   isPushedToEnd: boolean;
+  isPinned: boolean;
+  onTogglePin?: (id: string, pinned: boolean) => void;
   applyMovesToEnd: boolean | null;
   onSetApplyPref: (v: boolean | null) => void;
   remember: boolean;
@@ -350,6 +364,25 @@ const PopoverBody = ({
               ↓ Move to end
             </button>
           )
+        )}
+        {/* Pin / unpin as a few-shot example (#124). When the user pins
+            a job, its id is added to config.pinned_examples so the
+            scoring + suggester LLM calls always include this job as
+            calibration evidence — prepended before the recency-sorted
+            fillers. Toggle label flips based on current state. */}
+        {onTogglePin && (
+          <button
+            type="button"
+            onClick={() => { onTogglePin(job.id, !isPinned); onClose(); }}
+            className="mt-1 self-start text-[11px] font-medium text-slate-500 hover:text-brand-700"
+            title={
+              isPinned
+                ? 'Remove this row from the LLM few-shot examples'
+                : 'Always include this row in the LLM few-shot examples'
+            }
+          >
+            {isPinned ? '📌 Unpin example' : '📌 Pin as example'}
+          </button>
         )}
       </div>
 

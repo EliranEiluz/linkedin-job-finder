@@ -36,6 +36,25 @@ const VALID_PROVIDER_NAMES: ReadonlySet<LLMProviderName> = new Set([
   'ollama',
 ]);
 
+// Issue #124 — pinned_examples normalizer. Mirrors the Python side
+// (`_normalize_pinned_examples`): list of non-empty strings, deduped,
+// first-occurrence order preserved. Anything else collapses to []. This
+// runs on EVERY config load so a hand-edited config can't poison the
+// list with empty strings or duplicates.
+const normalizePinnedExamples = (v: unknown): string[] => {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of v) {
+    if (typeof entry !== 'string') continue;
+    const trimmed = entry.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+};
+
 // Defensive corpus_filter normalizer. Older configs (pre-#117) won't have
 // this key at all; legacy configs with bogus values (e.g. min_score=42 or
 // min_fit="bad") get silently squashed back to the disabled-filter shape.
@@ -277,6 +296,10 @@ export const normalizeConfig = (raw: unknown): CrawlerConfig => {
     // which the backend treats as "filter disabled" — identical behavior
     // to pre-#117.
     corpus_filter: normalizeCorpusFilter(r.corpus_filter),
+    // Issue #124 — always materialize as an array (possibly empty) so
+    // the PinnedExamplesCard can render its empty state without
+    // handling undefined.
+    pinned_examples: normalizePinnedExamples(r.pinned_examples),
   };
 };
 
@@ -336,5 +359,8 @@ export const serializeConfig = (cfg: CrawlerConfig): Record<string, unknown> => 
       min_score: cfg.corpus_filter.min_score,
     };
   }
+  // Always write pinned_examples back (even when empty) so the json on
+  // disk is self-describing — same convention as corpus_filter above.
+  out.pinned_examples = cfg.pinned_examples;
   return out;
 };
