@@ -52,9 +52,11 @@ from _common import read_stdin_json  # noqa: E402  (sys.path shim above)
 from backend.llm import complete as llm_complete  # noqa: E402  (sys.path shim above)
 from backend.llm import get_provider  # noqa: E402  (sys.path shim above)
 from backend.search import (  # noqa: E402  (sys.path shim above)
+    PINNED_UNRATED_SUMMARY,
     _classify_feedback_row,
     _clean_title,
     _example_recency_key,
+    _normalize_pinned_examples,
     _parse_claude_json,
 )
 
@@ -107,10 +109,32 @@ def _format_row_for_prompt(row: dict, summary: str) -> dict:
     }
 
 
+def _read_pinned_ids() -> list[str]:
+    """Read config.json and return the normalized pinned_examples list, or
+    [] on anything malformed. Read-only — never mutates the file."""
+    if not CONFIG_PATH.exists():
+        return []
+    try:
+        cfg = json.loads(CONFIG_PATH.read_text())
+    except Exception:
+        return []
+    if not isinstance(cfg, dict):
+        return []
+    return _normalize_pinned_examples(cfg.get("pinned_examples"))
+
+
 def _gather_signals() -> tuple[list[dict], list[dict]]:
     """Return (positive_rows, negative_rows), each pre-formatted for the prompt
     and capped to PER_BUCKET_CAP newest-first. Empty lists on missing /
-    unparseable corpus."""
+    unparseable corpus.
+
+    Issue #124 — pinned jobs are PREPENDED to their sentiment bucket so the
+    suggester sees them before the recency-sorted fillers. A pinned row
+    with no rating / kanban / manual signal goes to the positive bucket
+    with the `user-pinned (no rating)` label (the user pinned it, so it's
+    the kind of job they care about). Recency fillers are de-duplicated
+    against the pinned section so the same job never appears twice.
+    """
     if not RESULTS_PATH.exists():
         return [], []
     try:
@@ -120,9 +144,30 @@ def _gather_signals() -> tuple[list[dict], list[dict]]:
     if not isinstance(corpus, list):
         return [], []
 
+    pinned_ids = _read_pinned_ids()
+    by_id = {r.get("id"): r for r in corpus if isinstance(r, dict) and r.get("id")}
+    pinned_pos: list[tuple[dict, str]] = []
+    pinned_neg: list[tuple[dict, str]] = []
+    pinned_id_set: set[str] = set()
+    for pid in pinned_ids:
+        row = by_id.get(pid)
+        if row is None:
+            continue
+        pinned_id_set.add(pid)
+        sentiment, summary = _classify_feedback_row(row)
+        if sentiment == "neg":
+            pinned_neg.append((row, summary))
+        else:
+            # No sentiment OR positive sentiment both land in pos. The
+            # unrated label is applied here so the LLM sees the explicit
+            # "user pinned this" signal even without a rating.
+            pinned_pos.append((row, summary or PINNED_UNRATED_SUMMARY))
+
     pos: list[tuple[str, dict, str]] = []
     neg: list[tuple[str, dict, str]] = []
     for row in corpus:
+        if row.get("id") in pinned_id_set:
+            continue  # already in pinned section
         sentiment, summary = _classify_feedback_row(row)
         if not sentiment:
             continue
@@ -134,8 +179,23 @@ def _gather_signals() -> tuple[list[dict], list[dict]]:
     pos.sort(key=lambda t: t[0], reverse=True)
     neg.sort(key=lambda t: t[0], reverse=True)
 
-    pos_take = [_format_row_for_prompt(r, s) for _, r, s in pos[:PER_BUCKET_CAP]]
-    neg_take = [_format_row_for_prompt(r, s) for _, r, s in neg[:PER_BUCKET_CAP]]
+    # Pinned first (in user's configured order), then recency-fillers.
+    # Cap each bucket to PER_BUCKET_CAP — pinned excess goes through the
+    # tail-drop, then recency fillers take whatever room is left.
+    pos_pinned_take = pinned_pos[:PER_BUCKET_CAP]
+    pos_filler_room = PER_BUCKET_CAP - len(pos_pinned_take)
+    pos_rows: list[tuple[dict, str]] = list(pos_pinned_take)
+    if pos_filler_room > 0:
+        pos_rows.extend((r, s) for _, r, s in pos[:pos_filler_room])
+
+    neg_pinned_take = pinned_neg[:PER_BUCKET_CAP]
+    neg_filler_room = PER_BUCKET_CAP - len(neg_pinned_take)
+    neg_rows: list[tuple[dict, str]] = list(neg_pinned_take)
+    if neg_filler_room > 0:
+        neg_rows.extend((r, s) for _, r, s in neg[:neg_filler_room])
+
+    pos_take = [_format_row_for_prompt(r, s) for r, s in pos_rows]
+    neg_take = [_format_row_for_prompt(r, s) for r, s in neg_rows]
     return pos_take, neg_take
 
 
