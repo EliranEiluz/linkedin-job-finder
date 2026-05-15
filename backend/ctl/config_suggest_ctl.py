@@ -51,6 +51,54 @@ from _common import read_stdin_json  # noqa: E402  (sys.path shim above)
 
 from backend.llm import complete as llm_complete  # noqa: E402  (sys.path shim above)
 from backend.llm import get_provider  # noqa: E402  (sys.path shim above)
+
+# Inline JSON Schema for the suggester envelope. Lives here (not in
+# shared/) because the UI only renders the response — there's no
+# round-trip type contract to centralize. Same schema-driven pattern
+# as corpus_nl_ctl: when the provider declares supports_structured_output,
+# the schema goes upstream and the model is enforced to match.
+_SUGGESTER_SCHEMA: dict = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "add_queries": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1},
+                    "category_id": {"type": "string", "minLength": 1},
+                    "reason": {"type": "string"},
+                },
+                "required": ["query", "category_id"],
+            },
+        },
+        "add_companies": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "reason": {"type": "string"},
+                },
+                "required": ["name"],
+            },
+        },
+        "regex_tweaks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "minLength": 1},
+                    "action": {"type": "string", "enum": ["add_to_off_topic"]},
+                    "reason": {"type": "string"},
+                },
+                "required": ["pattern"],
+            },
+        },
+        "reasoning": {"type": "string"},
+    },
+}
 from backend.search import (  # noqa: E402  (sys.path shim above)
     PINNED_UNRATED_SUMMARY,
     _classify_feedback_row,
@@ -337,10 +385,17 @@ def _build_prompt(pos: list[dict], neg: list[dict], cfg_summary: dict) -> str:
 
 
 def _call_llm(prompt: str) -> tuple[int, str, str]:
-    """Route through backend.llm.complete so any configured provider works
-    (claude_cli / claude_sdk / gemini / openai / openrouter / ollama). Same
-    (rc, out, err) shape callers already expect. rc=0 success, rc=1 any
-    failure."""
+    """Route through backend.llm so any configured provider works
+    (claude_cli / claude_sdk / gemini / openai / openrouter / ollama).
+
+    Same gated-structured-output pattern as corpus_nl_ctl: providers
+    declaring supports_structured_output=True get the schema upstream
+    via complete_structured(); the rest fall back to complete() with
+    json_mode=True (the prompt already includes the JSON shape in its
+    OUTPUT FORMAT section, so the LLM has the contract either way).
+
+    Returns (rc, stdout, stderr). rc=0 success, rc=1 any failure.
+    """
     provider = get_provider()
     if provider is None:
         return (
@@ -353,8 +408,17 @@ def _call_llm(prompt: str) -> tuple[int, str, str]:
                 "`ollama serve` locally with a model pulled."
             ),
         )
+    use_structured = bool(getattr(provider, "supports_structured_output", False))
     try:
-        text = llm_complete(prompt, max_tokens=LLM_MAX_TOKENS, json_mode=True)
+        if use_structured:
+            text = provider.complete_structured(
+                prompt,
+                schema=_SUGGESTER_SCHEMA,
+                schema_name="ConfigSuggestions",
+                max_tokens=LLM_MAX_TOKENS,
+            )
+        else:
+            text = llm_complete(prompt, max_tokens=LLM_MAX_TOKENS, json_mode=True)
     except Exception as e:
         return 1, "", f"[{provider.name}] {type(e).__name__}: {e}"
     if not text or not text.strip():
