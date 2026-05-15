@@ -891,6 +891,12 @@ def _hardcoded_defaults() -> dict:
         # disabled = pre-feature behavior. See `_passes_corpus_filter` for
         # the gate logic.
         "corpus_filter": {"min_fit": None, "min_score": None},
+        # Issue #124 — list of job ids the user has hard-pinned as few-shot
+        # examples. The picker (`_build_user_feedback_examples`) prepends
+        # these in config order before the recency-sorted fillers, so the
+        # user's canonical examples always reach the LLM. Empty list =
+        # pre-feature behavior (pure recency-sort).
+        "pinned_examples": [],
     }
 
 
@@ -1016,6 +1022,31 @@ def _normalize_corpus_filter(raw: Any) -> dict:
     return out
 
 
+def _normalize_pinned_examples(raw: Any) -> list[str]:
+    """Validate the pinned_examples block. Must be a list of non-empty strings;
+    deduplicate while preserving the user's original order (first occurrence
+    wins). Anything else returns []. We do NOT check whether the ids actually
+    exist in results.json — that resolution happens at READ time in
+    `_build_user_feedback_examples` so a temporary corpus reset doesn't wipe
+    the user's pins. See issue #124.
+
+    Accepted shape: ["job_id_1", "job_id_2", ...]
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        s = item.strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 def load_config() -> dict:
     """Load config.json if present; merge over the hardcoded defaults.
 
@@ -1104,6 +1135,10 @@ def load_config() -> dict:
         # Post-scoring corpus filter (issue #117). Validated; malformed
         # blocks fall back silently to "off".
         "corpus_filter": _normalize_corpus_filter(user_cfg.get("corpus_filter")),
+        # Issue #124 — hard-pinned few-shot example ids. Normalized to a
+        # deduped list of non-empty strings (preserving user order). An
+        # empty / missing list is identical to pre-feature behavior.
+        "pinned_examples": _normalize_pinned_examples(user_cfg.get("pinned_examples")),
     }
 
     # Mutate module-level constants in place so the rest of the file
