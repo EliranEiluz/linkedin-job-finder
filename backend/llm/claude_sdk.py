@@ -17,6 +17,9 @@ _VALID_EFFORT_LEVELS: frozenset[str] = frozenset({"low", "medium", "high", "max"
 
 class ClaudeSDKProvider(LLMProvider):
     name = "claude_sdk"
+    # Anthropic's tool-use API enforces `tool.input_schema`; the model is
+    # forced to produce output that matches. See complete_structured below.
+    supports_structured_output = True
 
     def __init__(
         self,

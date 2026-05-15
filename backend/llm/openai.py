@@ -19,6 +19,11 @@ _VALID_EFFORT_LEVELS: frozenset[str] = frozenset({"low", "medium", "high", "xhig
 
 class OpenAIProvider(LLMProvider):
     name = "openai"
+    # response_format={"type": "json_schema", strict: true} enforces the
+    # schema on gpt-5*, gpt-4.1*, gpt-4o*. Older models silently drop
+    # the unknown response_format type — the caller still gets back a
+    # parseable JSON object from json_mode fallback.
+    supports_structured_output = True
 
     def __init__(
         self,

@@ -38,6 +38,11 @@ def _reasoning_for_gemini_model(model_id: str) -> ReasoningCapability:
 
 class GeminiProvider(LLMProvider):
     name = "gemini"
+    # Gemini accepts generationConfig.responseSchema (OpenAPI-flavored
+    # subset of JSON Schema) when paired with responseMimeType=
+    # application/json. We adapt the Draft-2020-12 JSON Schema into
+    # Gemini's expected shape in complete_structured below.
+    supports_structured_output = True
 
     def __init__(
         self,

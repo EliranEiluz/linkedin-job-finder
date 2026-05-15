@@ -75,6 +75,20 @@ class ModelInfo:
 class LLMProvider:
     name: str = "base"
 
+    # Whether this provider exposes a native "constrain output to this JSON
+    # Schema" API the caller can pass a schema to. Set True on providers
+    # where the SDK enforces the schema server-side (Anthropic tool-use
+    # input_schema, OpenAI response_format=json_schema, Gemini
+    # responseSchema). False on providers that either lack the surface
+    # (claude_cli) or implement it too unreliably across upstreams
+    # (openrouter, ollama) — callers fall back to embedding the schema
+    # text into the prompt and validating client-side.
+    #
+    # The ctl scripts (corpus_nl_ctl, config_suggest_ctl) gate their
+    # structured-output path on this flag — they pass a `schema` kwarg to
+    # `complete_structured()` instead of `complete()` when True.
+    supports_structured_output: bool = False
+
     def score_batch(self, cv_text: str, batch: list[dict]) -> list | None:
         """Return parsed JSON array (one entry per job) or None on failure."""
         raise NotImplementedError
@@ -98,6 +112,40 @@ class LLMProvider:
         Ollama). Callers are still expected to parse the returned text
         themselves (use backend.llm._shared.parse_json_response if needed)."""
         raise NotImplementedError
+
+    def complete_structured(
+        self,
+        prompt: str,
+        *,
+        schema: dict,
+        schema_name: str = "FilterEnvelope",
+        system: str | None = None,
+        max_tokens: int = 4096,
+    ) -> str | None:
+        """Single-shot completion with a JSON Schema constraint.
+
+        Default implementation falls back to `complete()` with `json_mode=True`
+        — the caller has already embedded the schema text into the prompt
+        (the prompt-embed path). Providers with native structured-output
+        support override this and pass the schema directly to their API.
+
+        Returns the model's JSON text output (no parsing) or None on
+        failure. Callers should still parse + validate the result; even
+        the native-structured-output providers can hallucinate a field
+        the schema doesn't enforce (e.g. a non-empty string when the
+        schema only says `string`).
+
+        `schema_name` is used by providers that need a name for the
+        constraint (OpenAI's response_format.json_schema.name, Anthropic's
+        tool.name). Defaults match the corpus_nl_ctl envelope; the
+        suggester passes its own name.
+        """
+        # Default: fall back to the prompt-embed path. The caller is
+        # expected to have already inlined the schema text into `prompt`
+        # for providers without native enforcement. `schema` / `schema_name`
+        # are unused in this path — listed here purely for API symmetry.
+        del schema, schema_name
+        return self.complete(prompt, system=system, max_tokens=max_tokens, json_mode=True)
 
     def list_models(self) -> list[ModelInfo]:
         """Return this provider's available models + their reasoning shape.
