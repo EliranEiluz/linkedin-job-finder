@@ -63,6 +63,7 @@ from backend.llm import PROVIDERS, get_provider  # noqa: E402
 from backend.search import _parse_claude_json  # noqa: E402
 
 CONFIG_PATH = ROOT / "config.json"
+RESULTS_PATH = ROOT / "results.json"
 
 LLM_MAX_TOKENS = 1024
 
@@ -82,29 +83,56 @@ VALID_SOURCES: frozenset[str] = frozenset({"loggedin", "guest", "manual", "unkno
 
 
 def _load_categories() -> list[dict]:
-    """Read live config.json categories so the LLM knows the valid ids +
-    names. Returns [] on missing / unparseable config. Each entry has
-    at least `id`; `name` is best-effort."""
-    if not CONFIG_PATH.exists():
-        return []
-    try:
-        cfg = json.loads(CONFIG_PATH.read_text())
-    except Exception:
-        return []
-    if not isinstance(cfg, dict):
-        return []
-    cats = cfg.get("categories")
-    if not isinstance(cats, list):
-        return []
-    out: list[dict] = []
-    for c in cats:
-        if not isinstance(c, dict):
-            continue
-        cid = str(c.get("id") or "").strip()
-        if not cid:
-            continue
-        out.append({"id": cid, "name": str(c.get("name") or cid).strip()})
-    return out
+    """Return the UNION of (categories declared in config.json) and
+    (distinct category ids actually present in results.json). The corpus
+    can contain rows tagged with categories that are no longer in the
+    active config — e.g. after a profile switch, a category rename, or
+    an import. Without including those, the LLM never learns they exist
+    and refuses to filter on them.
+
+    Entries have `id` (always) and `name` (config name when known, else
+    the id itself). Returns [] only when both sources are unavailable.
+    """
+    out: dict[str, dict] = {}  # id → {id, name}; dict so we dedupe by id.
+
+    # Source 1: config.json categories (authoritative for names).
+    if CONFIG_PATH.exists():
+        try:
+            cfg = json.loads(CONFIG_PATH.read_text())
+            if isinstance(cfg, dict):
+                cats = cfg.get("categories")
+                if isinstance(cats, list):
+                    for c in cats:
+                        if not isinstance(c, dict):
+                            continue
+                        cid = str(c.get("id") or "").strip()
+                        if not cid:
+                            continue
+                        out[cid] = {
+                            "id": cid,
+                            "name": str(c.get("name") or cid).strip(),
+                        }
+        except Exception:
+            pass
+
+    # Source 2: results.json distinct category ids (so orphan/legacy
+    # categories — present in corpus but absent from current config —
+    # are still visible to the LLM). Soft-fail on any read/parse error.
+    if RESULTS_PATH.exists():
+        try:
+            rows = json.loads(RESULTS_PATH.read_text())
+            if isinstance(rows, list):
+                for r in rows:
+                    if not isinstance(r, dict):
+                        continue
+                    cid = str(r.get("category_id") or "").strip()
+                    if not cid or cid in out:
+                        continue
+                    out[cid] = {"id": cid, "name": cid}  # no name available
+        except Exception:
+            pass
+
+    return list(out.values())
 
 
 # ---------- LLM prompt ----------------------------------------------------

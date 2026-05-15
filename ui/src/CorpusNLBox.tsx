@@ -148,7 +148,7 @@ export const CorpusNLBox = ({ onApply }: Props) => {
             }}
             onKeyDown={onKeyDown}
             disabled={submitting}
-            placeholder="Filter by typing: 'security jobs from priority companies, last week'"
+            placeholder="Ask AI: 'security jobs from priority companies, last week'"
             // Full-width on mobile; flex-1 takes the remaining row on >=sm.
             className="w-full flex-1 rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:bg-slate-100 disabled:text-slate-500"
             autoComplete="off"
@@ -163,13 +163,15 @@ export const CorpusNLBox = ({ onApply }: Props) => {
             // button on desktop is comfortable at the default text size.
             className="inline-flex min-h-[44px] items-center justify-center gap-2 whitespace-nowrap rounded border border-brand-700 bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 focus:outline-none focus:ring-2 focus:ring-brand-600 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
           >
-            {submitting && (
+            {submitting ? (
               <span
                 className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white"
                 aria-hidden="true"
               />
+            ) : (
+              <span aria-hidden="true">✨</span>
             )}
-            <span>{submitting ? 'Parsing…' : 'Filter'}</span>
+            <span>{submitting ? 'Asking AI…' : 'Filter with AI'}</span>
           </button>
         </div>
       )}

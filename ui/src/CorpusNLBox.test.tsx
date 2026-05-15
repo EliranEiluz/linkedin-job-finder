@@ -57,10 +57,10 @@ describe('CorpusNLBox', () => {
     render(<CorpusNLBox onApply={() => undefined} />);
 
     expect(
-      screen.getByPlaceholderText(/Filter by typing/i),
+      screen.getByPlaceholderText(/Ask AI/i),
     ).toBeInTheDocument();
     // Filter button visible, but disabled while the input is empty.
-    const btn = screen.getByRole('button', { name: 'Filter' });
+    const btn = screen.getByRole('button', { name: /Filter with AI/ });
     expect(btn).toBeInTheDocument();
     expect(btn).toBeDisabled();
   });
@@ -79,7 +79,7 @@ describe('CorpusNLBox', () => {
     const user = userEvent.setup();
     render(<CorpusNLBox onApply={() => undefined} />);
 
-    const input = screen.getByPlaceholderText(/Filter by typing/i);
+    const input = screen.getByPlaceholderText(/Ask AI/i);
     // Press Enter on an empty input.
     await user.click(input);
     await user.keyboard('{Enter}');
@@ -91,7 +91,7 @@ describe('CorpusNLBox', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(onCall).not.toHaveBeenCalled();
     // Button is still disabled (only whitespace typed).
-    expect(screen.getByRole('button', { name: 'Filter' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Filter with AI/ })).toBeDisabled();
   });
 
   it('shows the parse_summary + Apply/Cancel on a successful parse', async () => {
@@ -105,10 +105,10 @@ describe('CorpusNLBox', () => {
     render(<CorpusNLBox onApply={() => undefined} />);
 
     await user.type(
-      screen.getByPlaceholderText(/Filter by typing/i),
+      screen.getByPlaceholderText(/Ask AI/i),
       'security jobs last week',
     );
-    await user.click(screen.getByRole('button', { name: 'Filter' }));
+    await user.click(screen.getByRole('button', { name: /Filter with AI/ }));
 
     // Preview line renders the server-side summary verbatim.
     const summary = await screen.findByTestId('corpus-nl-preview-summary');
@@ -117,7 +117,7 @@ describe('CorpusNLBox', () => {
     expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Filter' }),
+      screen.queryByRole('button', { name: /Filter with AI/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -141,10 +141,10 @@ describe('CorpusNLBox', () => {
     render(<CorpusNLBox onApply={onApply} />);
 
     await user.type(
-      screen.getByPlaceholderText(/Filter by typing/i),
+      screen.getByPlaceholderText(/Ask AI/i),
       'security sre priority last week score 7+',
     );
-    await user.click(screen.getByRole('button', { name: 'Filter' }));
+    await user.click(screen.getByRole('button', { name: /Filter with AI/ }));
     await screen.findByRole('button', { name: 'Apply' });
     await user.click(screen.getByRole('button', { name: 'Apply' }));
 
@@ -181,18 +181,18 @@ describe('CorpusNLBox', () => {
     render(<CorpusNLBox onApply={onApply} />);
 
     await user.type(
-      screen.getByPlaceholderText(/Filter by typing/i),
+      screen.getByPlaceholderText(/Ask AI/i),
       'last day',
     );
-    await user.click(screen.getByRole('button', { name: 'Filter' }));
+    await user.click(screen.getByRole('button', { name: /Filter with AI/ }));
     await screen.findByRole('button', { name: 'Cancel' });
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     // Back to the input state — Filter button is back, Apply is gone.
-    expect(screen.getByRole('button', { name: 'Filter' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Filter with AI/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument();
     // Query stays in the input so the user can tweak-and-resend.
-    expect(screen.getByPlaceholderText(/Filter by typing/i)).toHaveValue(
+    expect(screen.getByPlaceholderText(/Ask AI/i)).toHaveValue(
       'last day',
     );
     expect(onApply).not.toHaveBeenCalled();
@@ -208,17 +208,17 @@ describe('CorpusNLBox', () => {
     render(<CorpusNLBox onApply={() => undefined} />);
 
     await user.type(
-      screen.getByPlaceholderText(/Filter by typing/i),
+      screen.getByPlaceholderText(/Ask AI/i),
       'whatever',
     );
-    await user.click(screen.getByRole('button', { name: 'Filter' }));
+    await user.click(screen.getByRole('button', { name: /Filter with AI/ }));
 
     const errBox = await screen.findByTestId('corpus-nl-error');
     expect(errBox).toHaveTextContent(/llm error: rate limit/);
     // Retry affordance is part of the error block.
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     // And the input + Filter button are still visible so the user can edit.
-    expect(screen.getByRole('button', { name: 'Filter' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Filter with AI/ })).toBeInTheDocument();
   });
 
   it('drops invalid enum values from the server response before Apply', async () => {
@@ -245,10 +245,10 @@ describe('CorpusNLBox', () => {
     render(<CorpusNLBox onApply={onApply} />);
 
     await user.type(
-      screen.getByPlaceholderText(/Filter by typing/i),
+      screen.getByPlaceholderText(/Ask AI/i),
       'noisy query',
     );
-    await user.click(screen.getByRole('button', { name: 'Filter' }));
+    await user.click(screen.getByRole('button', { name: /Filter with AI/ }));
     await screen.findByRole('button', { name: 'Apply' });
     await user.click(screen.getByRole('button', { name: 'Apply' }));
 
