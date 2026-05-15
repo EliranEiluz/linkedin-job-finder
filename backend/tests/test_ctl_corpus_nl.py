@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 # Each test seeds a single-file mock LLM module that the ctl will pick
 # up via PYTHONPATH (the run_ctl fixture already sets PYTHONPATH=tmp_path
 # so the fake backend.llm package takes precedence over the real one).
@@ -189,7 +188,13 @@ def test_provider_not_configured_returns_auth_error(run_ctl, tmp_path: Path) -> 
     # Body must mention at least one of the credential env vars / install paths.
     assert any(
         token in out["error"]
-        for token in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "claude", "ollama")
+        for token in (
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "claude",
+            "ollama",
+        )
     )
 
 
