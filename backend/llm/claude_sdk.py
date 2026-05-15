@@ -145,6 +145,70 @@ class ClaudeSDKProvider(LLMProvider):
             print(f"    SDK error: {str(e)[:150]}")
             return None
 
+    def complete_structured(
+        self,
+        prompt: str,
+        *,
+        schema: dict,
+        schema_name: str = "FilterEnvelope",
+        system: str | None = None,
+        max_tokens: int = 4096,
+    ) -> str | None:
+        """Anthropic structured output via tool_choice.
+
+        We model the schema as a single tool and force the model to call it
+        via tool_choice={'type':'tool','name':...}. Anthropic enforces the
+        tool's `input_schema` server-side; the model's response_format is
+        a tool_use block whose `input` matches the schema. We serialize
+        that input back to a JSON string so the caller's existing
+        `_parse_claude_json(raw)` path works unchanged.
+
+        On any transport error or unexpected response shape we return
+        None — the caller already has the prompt-embed fallback as the
+        second path in its rc handling. We do NOT silently fall back to
+        complete() here; the structured-output gate is meant to be visible.
+        """
+        client = self._ensure_client()
+        if client is None:
+            return None
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+            "tools": [
+                {
+                    "name": schema_name,
+                    "description": (
+                        "Translate the user's natural-language filter request "
+                        "into the structured JSON the UI consumes."
+                    ),
+                    "input_schema": schema,
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": schema_name},
+        }
+        if system:
+            kwargs["system"] = system
+        try:
+            msg = client.messages.create(**kwargs)
+        except Exception as e:
+            print(f"    SDK structured error: {str(e)[:200]}")
+            return None
+        # Find the tool_use block — there must be exactly one because
+        # tool_choice forced a single call. Its `input` is the parsed
+        # JSON object we want; serialize back to a string so downstream
+        # parsing is uniform.
+        import json as _json
+
+        for block in getattr(msg, "content", None) or []:
+            if getattr(block, "type", "") == "tool_use":
+                inp = getattr(block, "input", None)
+                if isinstance(inp, dict):
+                    return _json.dumps(inp)
+        # Some SDKs return the input dict on .input directly when the
+        # response is single-block; final fall-through just in case.
+        return None
+
     def list_models(self) -> list[ModelInfo]:
         """Call `client.models.list(limit=1000)` and map the rich capability
         block onto our ModelInfo shape. Each Anthropic model includes a

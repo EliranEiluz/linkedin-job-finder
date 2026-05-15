@@ -181,6 +181,78 @@ class OpenAIProvider(LLMProvider):
             print(f"    openai error: {str(e)[:200]}")
             return None
 
+    def complete_structured(
+        self,
+        prompt: str,
+        *,
+        schema: dict,
+        schema_name: str = "FilterEnvelope",
+        system: str | None = None,
+        max_tokens: int = 4096,
+    ) -> str | None:
+        """OpenAI structured output via response_format=json_schema.
+
+        Available on gpt-5*, gpt-4.1*, gpt-4o* (and the o-series). Older
+        models silently ignore the unknown type and produce free-form text;
+        we leave that case to the caller's validator since hard-gating per
+        model would duplicate the capability map.
+
+        OpenAI's strict JSON Schema flavor requires `additionalProperties:
+        false` AND `required: [<all keys>]`. Our schema already declares
+        additionalProperties: false at the top level; partial-output
+        support means we DON'T set `required` — we instead pass strict=
+        false so the model can omit fields the user didn't mention.
+        Without strict=false the model would have to invent values for
+        every key, which is the opposite of the partial-output contract.
+        """
+        key = self._api_key()
+        if not key:
+            return None
+        try:
+            import requests
+        except Exception:
+            print("    openai: requests not installed")
+            return None
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        body: dict = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": max_tokens,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name,
+                    "schema": schema,
+                    # strict=False allows partial output. See docstring.
+                    "strict": False,
+                },
+            },
+        }
+        eff = self._effort_for_body()
+        if eff is not None:
+            body["reasoning_effort"] = eff
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            r = requests.post(ENDPOINT, headers=headers, json=body, timeout=240)
+            if r.status_code != 200:
+                print(f"    openai structured http {r.status_code}: {r.text[:200]}")
+                return None
+            data = r.json()
+            choices = data.get("choices") or []
+            if not choices:
+                return None
+            return (choices[0].get("message") or {}).get("content") or ""
+        except Exception as e:
+            print(f"    openai structured error: {str(e)[:200]}")
+            return None
+
     def list_models(self) -> list[ModelInfo]:
         """GET /v1/models — sparse response (id/owned_by only). Cross-
         reference against the in-repo capability map for the reasoning
