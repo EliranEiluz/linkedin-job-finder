@@ -12,6 +12,7 @@ import {
 import { useAppStatus, useCorpusActions, useDebounced, useUrlSync } from './hooks';
 import { StatsBar } from './StatsBar';
 import { FilterPanel } from './FilterPanel';
+import { CorpusNLBox } from './CorpusNLBox';
 import { JobsTable } from './JobsTable';
 import { AddManualModal } from './AddManualModal';
 import { normalizeConfig } from './configMigrate';
@@ -730,6 +731,15 @@ export const CorpusPage = () => {
           categoryNamesById={categoryNamesById}
         />
       )}
+
+      {/* NL filter box — a SECOND filtering surface that coexists with
+          FilterPanel. Above the flex wrapper so on desktop it sits above
+          both the sidebar and the table; on mobile (where FilterPanel
+          collapses into a drawer) it stays visible and becomes the
+          primary filter affordance. Pasting "Apply" replaces the
+          parent's FilterState wholesale; FilterPanel keeps its own
+          ticks in sync because it reads from the same `filters` state. */}
+      {state.kind === 'ok' && <CorpusNLBox onApply={setFilters} />}
 
       {/* On mobile, FilterPanel renders a horizontal toggle bar (md:hidden)
           that must stack ABOVE the table — not sit beside it. flex-col on
