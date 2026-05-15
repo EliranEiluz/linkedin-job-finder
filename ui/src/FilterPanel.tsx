@@ -28,6 +28,10 @@ interface Props {
   // Live count of jobs marked applied — rendered next to the Applied
   // tri-toggle so "0 applied" is obvious when the filter returns empty.
   appliedCount?: number;
+  // Live count of jobs currently pinned as few-shot examples (#124).
+  // Rendered next to the "Pinned only" checkbox so "0 pinned" is obvious
+  // when checking the box would empty the table.
+  pinnedCount?: number;
   // category-id → human-readable name from /api/config. When the id is
   // present in the map we render the name ("Security"); otherwise we fall
   // back to the LEGACY_CAT_LABELS table or id-de-snaking.
@@ -449,12 +453,13 @@ const countActive = (f: FilterState): number => {
   if (f.scoreMin !== d.scoreMin || f.scoreMax !== d.scoreMax) n++;
   if (f.dateQuick !== d.dateQuick || f.dateFrom || f.dateTo) n++;
   if (f.applied !== d.applied) n++;
+  if (f.pinnedOnly !== d.pinnedOnly) n++;
   return n;
 };
 
 export const FilterPanel = ({
   value, onChange, searchRef, availableCategories, appliedCount = 0,
-  categoryNamesById,
+  pinnedCount = 0, categoryNamesById,
 }: Props) => {
   const [open, setOpen] = useState(false);
   // Desktop-only collapse. Mobile keeps the drawer (`open`) untouched.
@@ -923,6 +928,22 @@ export const FilterPanel = ({
           labels={['All', 'Applied', 'Open']}
           ariaLabel="Applied filter"
         />
+      </Section>
+
+      {/* Pinned-only filter (#124). Narrows the table to rows currently
+          pinned as few-shot examples — a single-direction toggle (no
+          "Hide pinned" inverse; pinned is a positive-signal field). */}
+      <Section title="Pinned examples" hint={`${pinnedCount} pinned`}>
+        <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-700">
+          <input
+            type="checkbox"
+            checked={f.pinnedOnly}
+            onChange={(e) => { onChange({ ...f, pinnedOnly: e.target.checked }); }}
+            className="h-3.5 w-3.5 cursor-pointer rounded border-slate-300 text-brand-700 focus:ring-brand-700"
+            aria-label="Show only pinned few-shot examples"
+          />
+          <span>Show only pinned</span>
+        </label>
       </Section>
     </div>
   );

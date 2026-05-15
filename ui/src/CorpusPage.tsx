@@ -116,6 +116,7 @@ const activeFilterChips = (f: FilterState): string[] => {
   if (f.priority !== d.priority) chips.push(`Priority: ${f.priority}`);
   if (f.applied !== d.applied)
     chips.push(`Applied: ${f.applied === 'yes' ? 'only' : 'hide'}`);
+  if (f.pinnedOnly !== d.pinnedOnly) chips.push('Pinned only');
   if (f.categories.size !== d.categories.size)
     chips.push(`Categories: ${f.categories.size}`);
   if (f.scoredBy.size !== d.scoredBy.size)
@@ -173,7 +174,7 @@ export const CorpusPage = () => {
   const [configReady, setConfigReady] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const { setAppStatus } = useAppStatus();
-  const { rateJob, deleteJobs, rescoreJobs, pushToEndJobs } = useCorpusActions();
+  const { rateJob, deleteJobs, rescoreJobs, pushToEndJobs, pinExample } = useCorpusActions();
   // Set of job ids currently being rescored. Tied to ids (not the checkbox
   // selection) so unchecking a row mid-rescore doesn't make the loading
   // indicator vanish — the row stays visually "in flight" until the POST
@@ -237,6 +238,55 @@ export const CorpusPage = () => {
     }
     return result;
   }, [allJobs, pushedPending]);
+
+  // Pinned-as-few-shot-example state (#124). Source of truth is
+  // config.pinned_examples (read on mount + after each /api/corpus/pin-
+  // example round-trip). The pending map gives optimistic flips like
+  // pushedPending: clicks feel instant, the persisted set reconciles on
+  // success.
+  const [pinnedFromConfig, setPinnedFromConfig] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  const [pinnedPending, setPinnedPending] = useState<
+    Map<string, 'add' | 'remove'>
+  >(new Map());
+  const pinnedIds = useMemo(() => {
+    const result = new Set<string>(pinnedFromConfig);
+    for (const [id, op] of pinnedPending) {
+      if (op === 'add') result.add(id);
+      else result.delete(id);
+    }
+    return result;
+  }, [pinnedFromConfig, pinnedPending]);
+
+  const togglePin = useCallback(
+    (id: string, pinned: boolean) => {
+      setPinnedPending((m) => new Map(m).set(id, pinned ? 'add' : 'remove'));
+      void pinExample(id, pinned).then((r) => {
+        if (r.ok) {
+          // Reconcile from the server's authoritative list so the
+          // pending mark and the from-config set agree.
+          if (r.pinned_examples) {
+            setPinnedFromConfig(new Set(r.pinned_examples));
+          }
+          setPinnedPending((m) => {
+            const next = new Map(m);
+            next.delete(id);
+            return next;
+          });
+        } else {
+          // Roll back optimistic flip on failure.
+          setPinnedPending((m) => {
+            const next = new Map(m);
+            next.delete(id);
+            return next;
+          });
+          window.alert(`Pin update failed: ${r.error ?? 'unknown error'}`);
+        }
+      });
+    },
+    [pinExample],
+  );
 
   const pushToEnd = useCallback(
     (id: string) => {
@@ -540,14 +590,17 @@ export const CorpusPage = () => {
   // Fetch /api/config once so we can render category names ("Security",
   // "Companies") instead of de-snaked ids ("Cat Mobyb81c 5"). Best-effort:
   // any failure leaves the map empty. The configReady flag flips either
-  // way so the table stops showing the loading placeholder.
+  // way so the table stops showing the loading placeholder. Also seeds
+  // the pinned-examples set (#124) so the 📌 badge appears immediately
+  // on mount without waiting for the user to toggle anything.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch(`/api/config?t=${Date.now().toString()}`);
         if (!res.ok) return;
-        const cfg = normalizeConfig(await res.json());
+        const rawJson = (await res.json()) as Record<string, unknown>;
+        const cfg = normalizeConfig(rawJson);
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mutated by cleanup
         if (cancelled) return;
         const m = new Map<string, string>();
@@ -555,6 +608,21 @@ export const CorpusPage = () => {
           if (c.id && c.name) m.set(c.id, c.name);
         }
         setCategoryNamesById(m);
+        // Seed pinned set from the config. We read it OFF the raw json
+        // (not the normalized CrawlerConfig) so the read path stays
+        // independent of any future configMigrate decisions about how
+        // to expose this field — the source of truth on the wire is
+        // `pinned_examples: string[]`.
+        const pinnedRaw = rawJson.pinned_examples;
+        if (Array.isArray(pinnedRaw)) {
+          const cleaned = new Set<string>();
+          for (const entry of pinnedRaw) {
+            if (typeof entry === 'string' && entry.trim()) {
+              cleaned.add(entry.trim());
+            }
+          }
+          setPinnedFromConfig(cleaned);
+        }
       } catch {
         // ignore — fallback display is fine
       } finally {
@@ -629,8 +697,8 @@ export const CorpusPage = () => {
   // (allJobs is declared up top — used by both the `applied` derivation
   // and the filter pipeline below.)
   const filtered = useMemo(
-    () => applyFilters(allJobs, effectiveFilters, applied),
-    [allJobs, effectiveFilters, applied],
+    () => applyFilters(allJobs, effectiveFilters, applied, pinnedIds),
+    [allJobs, effectiveFilters, applied, pinnedIds],
   );
   // Dynamic category list for the filter sidebar — unions whatever category
   // ids the loaded corpus contains (so user-defined categories auto-surface).
@@ -752,6 +820,7 @@ export const CorpusPage = () => {
             searchRef={searchRef}
             availableCategories={availableCategories}
             appliedCount={applied.size}
+            pinnedCount={pinnedIds.size}
             categoryNamesById={categoryNamesById}
           />
         )}
@@ -765,6 +834,8 @@ export const CorpusPage = () => {
               data={filtered}
               applied={applied}
               pushedToEndIds={pushedToEndIds}
+              pinnedIds={pinnedIds}
+              onTogglePin={togglePin}
               onPushToEnd={pushToEnd}
               onRestoreFromEnd={restoreFromEnd}
               onPushManyToEnd={pushManyToEnd}

@@ -133,7 +133,34 @@ export const useCorpusActions = () => {
     [fireStale],
   );
 
-  return { deleteJobs, rateJob, rescoreJobs, pushToEndJobs };
+  // Toggle a job id in `config.pinned_examples` (issue #124). Writes a
+  // single-row config mutation through /api/corpus/pin-example; the
+  // server normalizes (dedups + drops empties) and returns the post-
+  // mutation list. We do NOT fire corpus-stale here — pinning doesn't
+  // change any row field, only the config — so other Corpus surfaces
+  // that already render the pin state via the optimistic Set don't need
+  // to re-fetch. Callers that mount config (PinnedExamplesCard, the
+  // wizard) read /api/config separately and pick up the new list there.
+  const pinExample = useCallback(
+    async (id: string, pinned: boolean): Promise<CorpusActionsResult & {
+      pinned_examples?: string[];
+    }> => {
+      try {
+        const res = await postJson('/api/corpus/pin-example', { id, pinned });
+        const body = (await res.json()) as {
+          ok?: boolean; error?: string;
+          pinned_examples?: string[];
+        };
+        if (!body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status.toString()}` };
+        return { ok: true, pinned_examples: body.pinned_examples };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    },
+    [],
+  );
+
+  return { deleteJobs, rateJob, rescoreJobs, pushToEndJobs, pinExample };
 };
 
 /** Application-tracker mutation hook. Wraps `/api/corpus/app-status` and
