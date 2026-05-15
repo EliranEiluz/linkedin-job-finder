@@ -1,0 +1,107 @@
+{
+  "_meta": {
+    "generated_by": "ui/scripts/dumpFilterSchema.ts",
+    "source": "ui/src/filterStateSchema.ts",
+    "source_mtime_unix": 1778885970
+  },
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "categories": {
+        "description": "Category ids from the user-defined catalog (filled in at prompt time). Match by name OR id (case-insensitive). Empty / omitted means \"no category filter\".",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "fits": {
+        "description": "Subset of allowed fit buckets. Omitted means \"no fit filter\".",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "good",
+            "ok",
+            "skip",
+            "unscored"
+          ]
+        }
+      },
+      "scoredBy": {
+        "description": "Subset of allowed scorer ids. \"claude\" = LLM-scored (any provider). \"none\" = unscored.",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "claude",
+            "regex",
+            "title-filter",
+            "none"
+          ]
+        }
+      },
+      "sources": {
+        "description": "Subset of allowed corpus sources. \"manual\" = user-added via \"+ Add Job\".",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "loggedin",
+            "guest",
+            "manual",
+            "unknown"
+          ]
+        }
+      },
+      "priority": {
+        "description": "Tri-state on priority-company flag. \"yes\" narrows to priority only.",
+        "type": "string",
+        "enum": [
+          "all",
+          "yes",
+          "no"
+        ]
+      },
+      "applied": {
+        "description": "Tri-state on the application-tracker flag. \"no\" = not-yet-applied.",
+        "type": "string",
+        "enum": [
+          "all",
+          "yes",
+          "no"
+        ]
+      },
+      "scoreMin": {
+        "description": "Integer 1-10. Combined with scoreMax to form a closed range.",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10
+      },
+      "scoreMax": {
+        "description": "Integer 1-10. Combined with scoreMin to form a closed range.",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10
+      },
+      "dateQuick": {
+        "description": "\"24h\" / \"7d\" / \"30d\" map to the same buckets the UI quick-filter offers. \"custom\" is reserved for the date-picker — the LLM should not emit it.",
+        "type": "string",
+        "enum": [
+          "all",
+          "24h",
+          "7d",
+          "30d",
+          "custom"
+        ]
+      },
+      "search": {
+        "description": "Free-text keyword matched against job title / company / fit-reasons. Extract specific tech/product nouns only — do not dump the whole query here.",
+        "type": "string",
+        "maxLength": 2000
+      }
+    },
+    "additionalProperties": false
+  }
+}

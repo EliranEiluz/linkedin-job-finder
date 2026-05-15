@@ -36,15 +36,32 @@ validation — the UI's `normalizeFilters()` then maps each known field
 onto its FilterState slot, dropping anything alien. Defaults are
 preserved by omitting fields the LLM didn't set.
 
-Routes through `backend.llm.complete` so any configured provider
-(claude_cli / claude_sdk / gemini / openai / openrouter / ollama)
-works. Reasoning effort is forced to "off" for this call: structured
+Schema-centralize (task #125): the field set, allowed enums, and
+score range are no longer hardcoded here — they're loaded from
+shared/filterStateSchema.json, which is dumped from the UI's Zod
+source of truth. Adding/removing/renaming a static filter field is
+now a one-file edit (ui/src/filterStateSchema.ts).
+
+Provider routing — if the resolved provider declares
+supports_structured_output=True (claude_sdk, openai, gemini) the
+call goes through complete_structured() and the LLM is constrained
+to the schema upstream. Otherwise the schema TEXT is embedded into
+the prompt and the local validator enforces it. The dynamic-vocab
+fields (categories, scoredBy, sources) still come from the live
+corpus + config — the static schema's enums are the floor, not the
+ceiling, for those.
+
+Routes through `backend.llm.complete_structured` / fallback to
+`provider.complete()` so any configured provider (claude_cli /
+claude_sdk / gemini / openai / openrouter / ollama) works.
+Reasoning effort is forced to "off" for this call: structured
 bounded JSON output doesn't benefit from thinking and would inflate
 latency 3-10x.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -64,19 +81,70 @@ from backend.search import _parse_claude_json  # noqa: E402
 
 CONFIG_PATH = ROOT / "config.json"
 RESULTS_PATH = ROOT / "results.json"
+SCHEMA_PATH = ROOT / "shared" / "filterStateSchema.json"
 
 LLM_MAX_TOKENS = 1024
 
-# Mirrored from ui/src/filters.ts so we validate the LLM's output against
-# the SAME enum the UI's FilterState accepts. If filters.ts grows a new
-# allowed value, update both sides — this is the source of truth for the
-# ctl envelope, the UI's normalizeFilters is the source of truth for
-# what actually lands in state.
-VALID_FITS: frozenset[str] = frozenset({"good", "ok", "skip", "unscored"})
-VALID_TRI: frozenset[str] = frozenset({"all", "yes", "no"})
-VALID_DATE_QUICK: frozenset[str] = frozenset({"all", "24h", "7d", "30d", "custom"})
-VALID_SCORED_BY: frozenset[str] = frozenset({"claude", "regex", "title-filter", "none"})
-VALID_SOURCES: frozenset[str] = frozenset({"loggedin", "guest", "manual", "unknown"})
+# Schema name passed to provider.complete_structured(). Used by:
+#   - Anthropic tool-use: tool.name
+#   - OpenAI response_format: json_schema.name
+# Must match a regex like ^[a-zA-Z0-9_-]+$ for both.
+SCHEMA_NAME = "FilterEnvelope"
+
+
+# ---------- schema-derived validation surface ----------------------------
+
+
+def _load_schema() -> dict:
+    """Load the JSON Schema dumped from ui/src/filterStateSchema.ts.
+
+    Soft-fails to an empty schema if the file is missing — callers see
+    a noisy but non-crashing fallback (every LLM field gets dropped by
+    validation since the schema has no properties, but the envelope
+    still emits ok=true). Tests that need the schema seed it explicitly.
+    """
+    if not SCHEMA_PATH.exists():
+        return {"type": "object", "properties": {}, "additionalProperties": False}
+    try:
+        payload = json.loads(SCHEMA_PATH.read_text())
+    except Exception:
+        return {"type": "object", "properties": {}, "additionalProperties": False}
+    if isinstance(payload, dict):
+        wrapped = payload.get("schema")
+        if isinstance(wrapped, dict):
+            return wrapped
+        if payload.get("type") == "object":
+            # Plain-schema fallback (no _meta header).
+            return payload
+    return {"type": "object", "properties": {}, "additionalProperties": False}
+
+
+def _enum_set(schema: dict, field: str) -> frozenset[str]:
+    """Resolve the enum allowed for `field`. Works for both scalar
+    enum fields (priority/applied/dateQuick) and array-of-enum fields
+    (fits/scoredBy/sources — the enum lives on items)."""
+    props = (schema.get("properties") or {}).get(field) or {}
+    if not isinstance(props, dict):
+        return frozenset()
+    if isinstance(props.get("enum"), list):
+        return frozenset(str(x) for x in props["enum"] if isinstance(x, str))
+    items = props.get("items")
+    if isinstance(items, dict) and isinstance(items.get("enum"), list):
+        return frozenset(str(x) for x in items["enum"] if isinstance(x, str))
+    return frozenset()
+
+
+def _int_range(schema: dict, field: str) -> tuple[int, int] | None:
+    """Resolve (min, max) on an integer field. None if the field isn't
+    int-typed or the bounds are missing."""
+    props = (schema.get("properties") or {}).get(field) or {}
+    if not isinstance(props, dict) or props.get("type") != "integer":
+        return None
+    mn = props.get("minimum")
+    mx = props.get("maximum")
+    if isinstance(mn, int) and isinstance(mx, int):
+        return mn, mx
+    return None
 
 
 # ---------- config-derived category catalog ------------------------------
@@ -138,6 +206,11 @@ def _load_categories() -> list[dict]:
 # ---------- LLM prompt ----------------------------------------------------
 
 
+# Trimmed META prompt — the schema text + enum lists come from the
+# centralized schema dump, no longer duplicated here. The mapping rules
+# stay (those are interpretation hints the schema can't express in JSON
+# Schema form) but the rules' enum references resolve from the live
+# schema at prompt-build time.
 META_PROMPT_TEMPLATE = """You translate natural-language filter requests for \
 a LinkedIn job corpus into a strict JSON object.
 
@@ -146,19 +219,12 @@ KNOWN CATEGORIES (the user's config):
 {categories_json}
 </categories>
 
-OUTPUT SCHEMA (every field is OPTIONAL — omit fields the user didn't mention):
-{{
-  "categories": string[],     // category ids from the list above. Match by name OR id (case-insensitive).
-  "fits": string[],           // subset of: "good", "ok", "skip", "unscored"
-  "scoredBy": string[],       // subset of: "claude", "regex", "title-filter", "none"
-  "sources": string[],        // subset of: "loggedin", "guest", "manual", "unknown"
-  "priority": "all" | "yes" | "no",
-  "applied": "all" | "yes" | "no",
-  "scoreMin": integer 1-10,
-  "scoreMax": integer 1-10,
-  "dateQuick": "24h" | "7d" | "30d" | "all",
-  "search": string            // free-text keyword to match against title/company/reasons
-}}
+OUTPUT SCHEMA — every field is OPTIONAL. Match this JSON Schema exactly. \
+The model MUST omit fields the user didn't mention rather than emit defaults.
+
+<schema>
+{schema_json}
+</schema>
 
 MAPPING RULES (concrete):
 - "last week" / "past week" / "1w" → dateQuick: "7d"
@@ -174,12 +240,12 @@ MAPPING RULES (concrete):
 - "already applied" / "I applied to" → applied: "yes"
 - "score >= 7" / "7 or higher" / "high score" → scoreMin: 7
 - "score <= 3" → scoreMax: 3
-- "scored by gemini" — note: scored_by enum is claude/regex/title-filter/none. \
-"gemini" / "openai" / "the LLM" all map to "claude" (the field marks LLM-scored jobs).
+- "scored by gemini" / "scored by openai" / "scored by the LLM" → scoredBy: ["claude"] \
+(the field marks any LLM-scored job, not provider-specific).
 - "scored by regex" / "regex-scored" → scoredBy: ["regex"]
-- "unscored" → scoredBy: ["none"]  (different from fits=unscored, but usually equivalent)
-- Category names may include synonyms — try to match the user's words to the closest \
-listed category by name. If multiple match, include all. If NONE match clearly, omit \
+- "unscored" → scoredBy: ["none"]
+- Category names may include synonyms — match user's words to the closest listed \
+category by name. If multiple match, include all. If NONE match clearly, omit \
 the `categories` field entirely (don't guess).
 
 KEYWORD search:
@@ -198,21 +264,58 @@ User query: "{user_query}"
 """
 
 
-def _build_prompt(user_query: str, categories: list[dict]) -> str:
+def _build_prompt(user_query: str, categories: list[dict], schema: dict) -> str:
     return META_PROMPT_TEMPLATE.format(
         categories_json=json.dumps(categories, indent=2, ensure_ascii=False),
+        schema_json=json.dumps(schema, indent=2, ensure_ascii=False),
         user_query=user_query.replace('"', "'"),
     )
+
+
+def _categories_schema(schema: dict, categories: list[dict]) -> dict:
+    """Return a copy of `schema` with the dynamic-vocabulary `categories`
+    field constrained to the actual id catalog. The structured-output
+    providers (Anthropic/OpenAI/Gemini) enforce this constraint upstream,
+    which means the model can't even emit an unknown id — saving a
+    validation round-trip.
+
+    Mutates a deep copy so subsequent calls (e.g. another query under the
+    same process) see the original unconstrained schema.
+    """
+    out = copy.deepcopy(schema)
+    props = out.get("properties")
+    if not isinstance(props, dict):
+        return out
+    cat_prop = props.get("categories")
+    if not isinstance(cat_prop, dict):
+        return out
+    ids = sorted({c["id"] for c in categories if isinstance(c, dict) and c.get("id")})
+    if not ids:
+        # Empty enum is invalid in JSON Schema — leave the field as a
+        # plain string[] so the model can still emit (and the validator
+        # then drops everything since the dynamic vocabulary is empty).
+        return out
+    items = cat_prop.get("items")
+    if isinstance(items, dict):
+        items["enum"] = ids
+    else:
+        cat_prop["items"] = {"type": "string", "enum": ids}
+    return out
 
 
 # ---------- LLM invocation ------------------------------------------------
 
 
-def _call_llm(prompt: str) -> tuple[int, str, str]:
+def _call_llm(prompt: str, schema: dict | None) -> tuple[int, str, str]:
     """Force reasoning_effort=off for this call: bounded JSON output, no
     benefit from thinking. We re-instantiate the configured provider with
     reasoning_effort="off" rather than using the cached one (which inherits
     the user's persisted reasoning level).
+
+    If the provider supports structured output AND we have a schema in
+    hand, route through complete_structured(). Otherwise fall back to
+    complete(json_mode=True) — the prompt-embed path that already
+    contains the schema text.
 
     Returns (rc, stdout, stderr). rc=0 success, rc=1 any failure."""
     base = get_provider()
@@ -247,8 +350,20 @@ def _call_llm(prompt: str) -> tuple[int, str, str]:
         # call may incur reasoning latency, but correctness is preserved.
         provider = base
 
+    # Structured-output gate. complete_structured falls back to
+    # complete(json_mode=True) at the LLMProvider base — so the
+    # gating logic stays here, in the caller, where we can log it.
+    use_structured = bool(getattr(provider, "supports_structured_output", False) and schema)
     try:
-        text = provider.complete(prompt, max_tokens=LLM_MAX_TOKENS, json_mode=True)
+        if use_structured:
+            text = provider.complete_structured(
+                prompt,
+                schema=schema,  # type: ignore[arg-type]  # narrowed by use_structured guard
+                schema_name=SCHEMA_NAME,
+                max_tokens=LLM_MAX_TOKENS,
+            )
+        else:
+            text = provider.complete(prompt, max_tokens=LLM_MAX_TOKENS, json_mode=True)
     except Exception as e:
         return 1, "", f"[{provider.name}] {type(e).__name__}: {e}"
     if not text or not text.strip():
@@ -259,15 +374,28 @@ def _call_llm(prompt: str) -> tuple[int, str, str]:
 # ---------- LLM output validation ----------------------------------------
 
 
-def _validate_filters(parsed: Any, category_ids: set[str]) -> dict:
+def _validate_filters(parsed: Any, schema: dict, category_ids: set[str]) -> dict:
     """Coerce the LLM's output into the FilterState shape, dropping any
     field that fails validation. Partial outputs are fine — the UI fills
     in defaults for omitted fields.
 
-    Returns a dict with only the fields that passed validation."""
+    All enum / range constraints come from the loaded JSON Schema (see
+    _load_schema) so adding a new field is a one-file edit in
+    ui/src/filterStateSchema.ts.
+
+    Returns a dict with only the fields that passed validation.
+    """
     out: dict[str, Any] = {}
     if not isinstance(parsed, dict):
         return out
+
+    valid_fits = _enum_set(schema, "fits")
+    valid_scored_by = _enum_set(schema, "scoredBy")
+    valid_sources = _enum_set(schema, "sources")
+    valid_priority = _enum_set(schema, "priority")
+    valid_applied = _enum_set(schema, "applied")
+    valid_date_quick = _enum_set(schema, "dateQuick")
+    score_range = _int_range(schema, "scoreMin") or (1, 10)
 
     # categories — list of strings, each must be a known id.
     raw_cats = parsed.get("categories")
@@ -279,30 +407,25 @@ def _validate_filters(parsed: Any, category_ids: set[str]) -> dict:
         if valid:
             out["categories"] = sorted(set(valid))
 
-    # fits — list of strings from VALID_FITS.
-    raw_fits = parsed.get("fits")
-    if isinstance(raw_fits, list):
-        valid_fits = sorted({f for f in raw_fits if isinstance(f, str) and f in VALID_FITS})
-        if valid_fits:
-            out["fits"] = valid_fits
+    def _coerce_str_array(raw: Any, allowed: frozenset[str]) -> list[str]:
+        if not isinstance(raw, list) or not allowed:
+            return []
+        return sorted({s for s in raw if isinstance(s, str) and s in allowed})
 
-    # scoredBy
-    raw_sb = parsed.get("scoredBy")
-    if isinstance(raw_sb, list):
-        valid_sb = sorted({s for s in raw_sb if isinstance(s, str) and s in VALID_SCORED_BY})
-        if valid_sb:
-            out["scoredBy"] = valid_sb
-
-    # sources
-    raw_src = parsed.get("sources")
-    if isinstance(raw_src, list):
-        valid_src = sorted({s for s in raw_src if isinstance(s, str) and s in VALID_SOURCES})
-        if valid_src:
-            out["sources"] = valid_src
+    # Array enum fields (fits / scoredBy / sources).
+    fits_out = _coerce_str_array(parsed.get("fits"), valid_fits)
+    if fits_out:
+        out["fits"] = fits_out
+    sb_out = _coerce_str_array(parsed.get("scoredBy"), valid_scored_by)
+    if sb_out:
+        out["scoredBy"] = sb_out
+    src_out = _coerce_str_array(parsed.get("sources"), valid_sources)
+    if src_out:
+        out["sources"] = src_out
 
     # priority — tri-state.
     raw_pri = parsed.get("priority")
-    if isinstance(raw_pri, str) and raw_pri in VALID_TRI:
+    if isinstance(raw_pri, str) and raw_pri in valid_priority:
         out["priority"] = raw_pri
     elif isinstance(raw_pri, bool):
         # LLMs sometimes ignore the tri-state convention and return a bool;
@@ -312,10 +435,12 @@ def _validate_filters(parsed: Any, category_ids: set[str]) -> dict:
 
     # applied — tri-state.
     raw_app = parsed.get("applied")
-    if isinstance(raw_app, str) and raw_app in VALID_TRI:
+    if isinstance(raw_app, str) and raw_app in valid_applied:
         out["applied"] = raw_app
 
-    # score range — integers 1..10. Swap if min > max.
+    # score range — integers from schema bounds. Swap if min > max.
+    lo, hi = score_range
+
     def _coerce_score(v: Any) -> int | None:
         if isinstance(v, bool):
             return None
@@ -327,7 +452,7 @@ def _validate_filters(parsed: Any, category_ids: set[str]) -> dict:
             n = int(v.strip())
         else:
             return None
-        if 1 <= n <= 10:
+        if lo <= n <= hi:
             return n
         return None
 
@@ -342,7 +467,7 @@ def _validate_filters(parsed: Any, category_ids: set[str]) -> dict:
 
     # dateQuick
     raw_dq = parsed.get("dateQuick")
-    if isinstance(raw_dq, str) and raw_dq in VALID_DATE_QUICK:
+    if isinstance(raw_dq, str) and raw_dq in valid_date_quick:
         out["dateQuick"] = raw_dq
 
     # search — free-text, trim + drop empty.
@@ -439,10 +564,17 @@ def main() -> None:
         _emit({"ok": False, "error": "query too long (max 2000 chars)"}, 1)
         return
 
+    schema = _load_schema()
     categories = _load_categories()
-    prompt = _build_prompt(query, categories)
+    # The schema we send to the LLM has the dynamic `categories` vocab
+    # baked in. The validation schema below stays unconstrained — the
+    # validator uses `category_ids` directly to enforce membership, and
+    # we want it to keep working even when the structured-output API
+    # didn't enforce the enum (older models / non-strict response_format).
+    prompt_schema = _categories_schema(schema, categories)
+    prompt = _build_prompt(query, categories, prompt_schema)
 
-    rc, stdout, stderr = _call_llm(prompt)
+    rc, stdout, stderr = _call_llm(prompt, prompt_schema)
     raw = (stdout or "").strip()
 
     if rc != 0:
@@ -469,7 +601,7 @@ def main() -> None:
         return
 
     category_ids = {c["id"] for c in categories}
-    filters = _validate_filters(parsed, category_ids)
+    filters = _validate_filters(parsed, schema, category_ids)
     parse_summary = _build_parse_summary(filters, categories)
 
     _emit(

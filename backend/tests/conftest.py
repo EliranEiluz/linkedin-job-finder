@@ -113,6 +113,15 @@ def run_ctl(tmp_path: Path):
     # Empty package marker so `import backend.X` works.
     (fake_backend / "__init__.py").touch(exist_ok=True)
 
+    # Mirror shared/filterStateSchema.json — corpus_nl_ctl reads it for
+    # the schema-driven validator. Tests that need a custom schema can
+    # overwrite the file via `extra_files`.
+    shared_src = ROOT / "shared" / "filterStateSchema.json"
+    if shared_src.exists():
+        fake_shared = tmp_path / "shared"
+        fake_shared.mkdir(exist_ok=True)
+        shutil.copy2(shared_src, fake_shared / "filterStateSchema.json")
+
     def _run(
         script: str,
         argv: list[str] | None = None,

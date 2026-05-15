@@ -19,6 +19,41 @@ _GEMINI_25_PRO_RANGE: tuple[int, int] = (128, 32768)
 _GEMINI_25_FLASH_RANGE: tuple[int, int] = (0, 24576)
 
 
+# Keys in our dumped JSON Schema that Gemini's responseSchema rejects.
+# We strip these in _to_gemini_schema; everything else passes through.
+_GEMINI_REJECTED_KEYS: frozenset[str] = frozenset(
+    {"additionalProperties", "$schema", "$id", "$comment", "default", "examples"}
+)
+
+
+def _to_gemini_schema(schema: dict) -> dict:
+    """Translate a Draft-2020-12 JSON Schema into Gemini's OpenAPI subset.
+
+    Recursive: descends into `properties`, `items`, `oneOf`/`anyOf`/`allOf`.
+    Drops keys Gemini rejects; passes the rest through unmodified. The
+    translator is intentionally conservative — we only handle the shapes
+    our FilterStateSchema actually emits (object with scalar / array
+    properties, enums on string types, integer min/max). If Zod grows a
+    feature this doesn't handle, the test_structured_output_gemini case
+    will catch the regression and we extend here.
+    """
+    if not isinstance(schema, dict):
+        return schema
+    out: dict = {}
+    for k, v in schema.items():
+        if k in _GEMINI_REJECTED_KEYS:
+            continue
+        if k == "properties" and isinstance(v, dict):
+            out["properties"] = {pk: _to_gemini_schema(pv) for pk, pv in v.items()}
+        elif k == "items":
+            out["items"] = _to_gemini_schema(v) if isinstance(v, dict) else v
+        elif k in ("oneOf", "anyOf", "allOf") and isinstance(v, list):
+            out[k] = [_to_gemini_schema(x) if isinstance(x, dict) else x for x in v]
+        else:
+            out[k] = v
+    return out
+
+
 def _reasoning_for_gemini_model(model_id: str) -> ReasoningCapability:
     """Map a model id to its reasoning shape. Returns "none" for any
     Gemini model that doesn't declare a thinkingConfig surface."""
@@ -38,6 +73,11 @@ def _reasoning_for_gemini_model(model_id: str) -> ReasoningCapability:
 
 class GeminiProvider(LLMProvider):
     name = "gemini"
+    # Gemini accepts generationConfig.responseSchema (OpenAPI-flavored
+    # subset of JSON Schema) when paired with responseMimeType=
+    # application/json. We adapt the Draft-2020-12 JSON Schema into
+    # Gemini's expected shape in complete_structured below.
+    supports_structured_output = True
 
     def __init__(
         self,
@@ -193,6 +233,72 @@ class GeminiProvider(LLMProvider):
             return "".join(p.get("text", "") for p in parts if isinstance(p, dict))
         except Exception as e:
             print(f"    gemini error: {str(e)[:200]}")
+            return None
+
+    def complete_structured(
+        self,
+        prompt: str,
+        *,
+        schema: dict,
+        schema_name: str = "FilterEnvelope",  # noqa: ARG002 — Gemini doesn't name schemas
+        system: str | None = None,
+        max_tokens: int = 4096,
+    ) -> str | None:
+        """Gemini structured output via responseSchema.
+
+        Gemini wants the OpenAPI-flavor subset of JSON Schema (not full
+        Draft 2020-12). We translate the dumped schema here rather than
+        emitting OpenAPI from Zod directly — only this provider needs it,
+        and the JSON Schema source is authoritative.
+
+        Differences vs. Draft-2020-12:
+          - `additionalProperties` is rejected (Gemini infers strictness
+            from `propertyOrdering` instead — we don't set it, so partial
+            output is allowed).
+          - `enum` lives ON the field type, not nested under items.type.
+          - `description`, `type`, `properties`, `required`, `items`,
+            `nullable` are accepted as-is.
+          - Numeric `minimum`/`maximum` are accepted on type=integer/number.
+          - `minLength`/`maxLength` are accepted on type=string.
+        """
+        key = self._api_key()
+        if not key:
+            return None
+        try:
+            import requests
+        except Exception:
+            print("    gemini: requests not installed")
+            return None
+        translated = _to_gemini_schema(schema)
+        url = ENDPOINT.format(model=self.model)
+        gen_cfg: dict = {
+            "temperature": 0.2,
+            "maxOutputTokens": max_tokens,
+            "responseMimeType": "application/json",
+            "responseSchema": translated,
+        }
+        # Honor the configured thinking config — structured-output works
+        # alongside thinking on gemini-2.5-pro and gemini-3.
+        thinking = self._thinking_config()
+        if thinking is not None:
+            gen_cfg["thinkingConfig"] = thinking
+        body: dict = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": gen_cfg,
+        }
+        if system:
+            body["system_instruction"] = {"parts": [{"text": system}]}
+        try:
+            r = requests.post(url, params={"key": key}, json=body, timeout=240)
+            if r.status_code != 200:
+                print(f"    gemini structured http {r.status_code}: {r.text[:200]}")
+                return None
+            data = r.json()
+            cand = (data.get("candidates") or [{}])[0]
+            parts = (cand.get("content") or {}).get("parts") or []
+            return "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+        except Exception as e:
+            print(f"    gemini structured error: {str(e)[:200]}")
             return None
 
     def list_models(self) -> list[ModelInfo]:
