@@ -85,6 +85,12 @@ export interface CrawlerConfig {
   // fully-populated {min_fit: null, min_score: null} so React state
   // doesn't have to handle the undefined case in the editor card.
   corpus_filter?: CorpusFilter;
+  // Issue #124 — hard-pinned few-shot example ids. Prepended (in order)
+  // before the recency-sorted fillers in the LLM scoring prompt + the
+  // config suggester. normalizeConfig() always materializes this as a
+  // (possibly empty) list of strings so the management card doesn't
+  // have to handle the undefined case.
+  pinned_examples: string[];
 
   // --- legacy (one-time migrate via normalizeConfig) ---------------------
   // Kept optional so older config.json files load without a type error.
@@ -158,5 +164,6 @@ export const configsEqual = (a: CrawlerConfig, b: CrawlerConfig): boolean => {
   const bf = b.corpus_filter ?? { min_fit: null, min_score: null };
   if (af.min_fit !== bf.min_fit) return false;
   if (af.min_score !== bf.min_score) return false;
+  if (!eqStrArr(a.pinned_examples, b.pinned_examples)) return false;
   return true;
 };

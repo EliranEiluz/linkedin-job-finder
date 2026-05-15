@@ -15,6 +15,7 @@ import { LLMProviderCard } from './LLMProviderCard';
 import { RemoteAccessCard } from './RemoteAccessCard';
 import { NotificationsCard } from './NotificationsCard';
 import { CorpusFilterCard } from './CorpusFilterCard';
+import { PinnedExamplesCard } from './PinnedExamplesCard';
 import { CategoryManager } from './CategoryManager';
 import { ChipInput } from './ChipInput';
 import { ProfileSwitcher } from './ProfileSwitcher';
@@ -667,6 +668,36 @@ export const ConfigPage = () => {
             <LLMProviderCard
               current={draft.llm_provider}
               onChange={(next) => { void saveConfig({ ...draft, llm_provider: next }); }}
+            />
+
+            {/* Pinned few-shot examples (#124). Management surface for the
+                user's hard-pinned example ids. The card hits
+                /api/corpus/pin-example directly on unpin (same endpoint
+                the Corpus row popover uses) so the backend's atomic
+                writer is the single source of truth — we just sync the
+                returned list back into the draft so the count + list
+                update without a /api/config reload. Cap is the few-shot
+                count knob (feedback_examples_max); when undefined the
+                card falls back to the same default the picker uses. */}
+            <PinnedExamplesCard
+              pinnedIds={draft.pinned_examples}
+              cap={draft.feedback_examples_max}
+              onPinnedChange={(next) => {
+                // The card already persisted this change through
+                // /api/corpus/pin-example, so we sync BOTH the draft
+                // and the loaded snapshot. That keeps the section's
+                // dirty indicator quiet (the user didn't make an
+                // unsaved change — the backend already wrote it).
+                setDraft({ ...draft, pinned_examples: next });
+                setState((prev) =>
+                  prev.kind === 'ready'
+                    ? {
+                        ...prev,
+                        config: { ...prev.config, pinned_examples: next },
+                      }
+                    : prev,
+                );
+              }}
             />
 
             {/* Corpus filter — post-scoring gate that drops low-fit/score
